@@ -1,0 +1,59 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  color: light-dark(#252525, #ececec);
+  background: light-dark(#fff, #191919);
+}
+body {
+  margin: 0;
+}
+.GmailPage {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px;
+  overflow-wrap: anywhere;
+}
+h1 {
+  margin: 0 0 16px;
+  font-size: 22px;
+  font-weight: 600;
+}
+h2 {
+  font-size: 18px;
+  font-weight: 600;
+}
+p {
+  color: light-dark(#575757, #b8b8b8);
+}
+button,
+input {
+  font: inherit;
+}
+button {
+  font-size: 14px;
+  min-height: 36px;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid #619ef7;
+  outline-offset: 3px;
+}
+input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px;
+}
+@media (max-width: 480px) {
+  .GmailPage {
+    padding: 16px;
+  }
+}

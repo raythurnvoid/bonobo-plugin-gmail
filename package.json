@@ -1,0 +1,42 @@
+{
+	"name": "@bonobo/plugin-gmail",
+	"private": true,
+	"version": "0.1.0",
+	"type": "module",
+	"packageManager": "pnpm@10.33.0",
+	"scripts": {
+		"build": "vite build && prettier --write dist/frontend/assets/index.js dist/frontend/assets/index.css && node scripts/build-manifest.mjs",
+		"build:manifest": "node scripts/build-manifest.mjs",
+		"dev": "vite",
+		"lint": "oxlint src shared convex scripts --ignore-pattern convex/_generated/**",
+		"typecheck": "tsc --noEmit && tsc --noEmit -p convex/tsconfig.json",
+		"test:once": "vitest run --testTimeout 30000 --hookTimeout 30000 --teardownTimeout 30000"
+	},
+	"dependencies": {
+		"@convex-dev/workpool": "0.4.12",
+		"bonobo-plugin-sdk": "github:raythurnvoid/bonobo-plugin-sdk#c004e90d8ec9f91e25c25494d287da7198485870",
+		"convex": "1.42.2",
+		"convex-helpers": "0.1.106",
+		"email-addresses": "5.0.0",
+		"he": "1.2.0",
+		"react": "19.2.7",
+		"react-dom": "19.2.7",
+		"zod": "4.3.5"
+	},
+	"devDependencies": {
+		"@edge-runtime/vm": "5.0.0",
+		"@testing-library/react": "16.3.2",
+		"@types/he": "1.2.3",
+		"@types/node": "24.13.3",
+		"@types/react": "19.2.17",
+		"@types/react-dom": "19.2.3",
+		"@vitejs/plugin-react": "6.0.4",
+		"convex-test": "0.0.53",
+		"happy-dom": "20.0.11",
+		"oxlint": "1.86.0",
+		"prettier": "3.8.3",
+		"typescript": "7.0.2",
+		"vite": "8.1.5",
+		"vitest": "4.1.10"
+	}
+}

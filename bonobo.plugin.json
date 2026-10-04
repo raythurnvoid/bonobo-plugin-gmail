@@ -1,0 +1,18 @@
+{
+	"schemaVersion": 1,
+	"name": "gmail",
+	"displayName": "Gmail",
+	"version": "0.1.0",
+	"description": "Save sent and received Gmail emails and attachments in Press Files.",
+	"compatibility": { "bonoboPluginRuntime": "1" },
+	"events": [],
+	"pages": [{ "id": "gmail", "title": "Gmail", "entry": "dist/frontend/index.html", "navItem": { "label": "Gmail" } }],
+	"capabilities": ["plugin.service.connect", "ui.outbound.fetch", "workspace.files.write"],
+	"outboundOrigins": [],
+	"uiOutboundOrigins": ["https://kindhearted-mallard-511.convex.site"],
+	"files": [
+		{ "path": "dist/frontend/index.html", "sha256": "sha256:99030b4beedd15922de9a5d2159784fc26246da2158050107260d66adf9ed731", "bytes": 358, "contentType": "text/html" },
+		{ "path": "dist/frontend/assets/index.js", "sha256": "sha256:e73d7e269a46fab4f186e9f9f781829566a2120b1cab6f0832399b63be3d7971", "bytes": 479050, "contentType": "application/javascript" },
+		{ "path": "dist/frontend/assets/index.css", "sha256": "sha256:702fccdf323889682d63704321d56bd5a9dce2a2f2d394958f8218388b338610", "bytes": 905, "contentType": "text/css" }
+	]
+}
