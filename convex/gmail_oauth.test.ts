@@ -93,6 +93,20 @@ describe("gmail_start", () => {
 		await expect(t.action(ctx => gmail_callback(ctx, state, "late-code", false))).rejects.toThrow("invalid_callback");
 		expect((await t.query(internal.gmail_oauth.get_attempt, { ...actor, attemptId: first.attemptId }))?.status).toBe("cancelled");
 	});
+	test("a second account attempt gets a separate chain from the same page", async () => {
+		const { t, stage } = setup();
+		const staged = await stage();
+		const first = await t.action(ctx => gmail_finish(ctx, actor, { attemptId: staged.attemptId, finishCode: staged.finishCode }));
+		const account = (await t.run(ctx => ctx.db.get(first.accountId)))!;
+		const before = await t.run(ctx => ctx.db.get(account.hostGrantId!));
+		const second = await t.mutation(internal.gmail_oauth.prepare_start, {
+			...actor, clientRequestId: gmail_random_secret(), accountId: null, pageToken: plu,
+		});
+		if (!("_yay" in second)) throw new Error("Expected a second attempt");
+		const attempt = (await t.query(internal.gmail_oauth.get_attempt, { ...actor, attemptId: second._yay }))!;
+		expect(attempt.grantId).not.toBe(account.hostGrantId);
+		expect(await t.run(ctx => ctx.db.get(account.hostGrantId!))).toEqual(before);
+	});
 	test("bounds ten new attempts per hour without charging exact recovery", async () => {
 		const { start } = setup(); const id = gmail_random_secret(); await start(id);
 		for (let i = 0; i < 10; i++) await start(id);

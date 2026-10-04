@@ -138,6 +138,26 @@ describe("GmailPage", () => {
     expect(screen.getByText(/Checking for new mail/)).toBeTruthy();
     expect(screen.queryByText(/service is unavailable/)).toBeNull();
   });
+  test("unavailable status shows one notice after a failed Connect", async () => {
+    let unavailable = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        unavailable || url.endsWith("/start")
+          ? new Response("disabled", { status: 503 })
+          : Response.json(status()),
+      ),
+    );
+    render(<GmailPage client={client} />);
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "Connect Gmail" }));
+    await settle();
+    expect(screen.getAllByText(/Gmail service is unavailable/)).toHaveLength(1);
+    unavailable = true;
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(screen.getAllByText(/Gmail service is unavailable/)).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+  });
   test("a blocked Press grant shows attention instead of ongoing connection", async () => {
     vi.stubGlobal(
       "fetch",
@@ -303,6 +323,55 @@ describe("GmailPage", () => {
     expect(sessionStorage.getItem("gmail-connect-retry")).not.toContain(
       "private",
     );
+  });
+  test("reload after a lost Start request reuses its saved inputs", async () => {
+    const requests: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        if (url.endsWith("/status"))
+          return Response.json({
+            ...status(),
+            attempt:
+              requests.length < 2
+                ? null
+                : {
+                    attemptId: "attempt",
+                    status: "pending",
+                    clientRequestId: requests[1],
+                    accountId: null,
+                    expiresAt: Date.now() + 60_000,
+                  },
+          });
+        const body = JSON.parse(String(init.body)) as {
+          clientRequestId: string;
+        };
+        requests.push(body.clientRequestId);
+        if (requests.length === 1)
+          throw new Error("Start request lost before the server saved it");
+        return Response.json({
+          attemptId: "attempt",
+          status: "pending",
+          consentUrl:
+            "https://accounts.google.com/o/oauth2/v2/auth?state=recovered",
+        });
+      }),
+    );
+    const view = render(<GmailPage client={client} />);
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "Connect Gmail" }));
+    await settle();
+    view.unmount();
+    render(<GmailPage client={client} />);
+    await settle();
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toBe(requests[0]);
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(
+      screen.getByText(
+        "https://accounts.google.com/o/oauth2/v2/auth?state=recovered",
+      ),
+    ).toBeTruthy();
   });
   test("a changed workspace discards stored Start without replay", async () => {
     sessionStorage.setItem(

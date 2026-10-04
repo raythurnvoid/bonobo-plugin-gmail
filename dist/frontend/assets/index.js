@@ -3706,6 +3706,7 @@ function Dn({ client: e }) {
         children: `Save sent and received emails in Files. People with file access can read them.`,
       }),
       a &&
+        r === `ready` &&
         (0, Q.jsx)(`p`, {
           role: `alert`,
           className: `GmailError`,

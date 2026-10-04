@@ -299,7 +299,7 @@ export function GmailPage({
         Save sent and received emails in Files. People with file access can read
         them.
       </p>
-      {error && (
+      {error && service === "ready" && (
         <p role="alert" className="GmailError">
           {error}
         </p>

@@ -2,7 +2,7 @@
 
 Gmail is a Press plugin with its own Convex backend. It saves received and sent mail as Markdown files. Attachments are saved beside each email. Press owns Files, permissions, billing, and installation.
 
-The build follows plan v4. Version 0.2.0 includes the connection page and background sync. Live Gmail and hosting checks are still open. The integration is not release ready yet.
+The build follows plan v4. Version 0.2.1 includes the connection page and background sync. Live Gmail and hosting checks are still open. The integration is not release ready yet.
 
 The frontend build keeps the page, React, and Zod in separate files. Each file is formatted and listed in the manifest with its hash. This lets the publisher read the page code within its scan limit.
 
@@ -82,3 +82,7 @@ Local Disconnect and Cancel never revoke Google access. Removing this app in Goo
 ## Release checks
 
 Code completion and release readiness are separate. Release needs all plan tests, guard-removal proofs, installed-frame Playwriter checks, and a real 24-hour hosting measurement. The Free byte-limit gap remains open. No capacity claim is made yet.
+
+The installed dev frame has passed status, update, narrow-layout, and simulated unavailable/hidden-page checks. Google client settings and real consent are still missing. No real email or attachment save has been verified. Local fixtures cover receipt isolation, crash checkpoints, long backfill with parallel history, and access holds. They do not replace mailbox or hosted workload checks.
+
+The dev cap is 1. Monthly disable limits are 400,000 calls and 4 GB-hours for each action runtime. The required fractional byte limits could not be saved on the Free dashboard. Do not raise those limits or the account cap as a workaround. Keep release open until the required limits and measured shared-team budget fit plan v4. Work-alone checks are self-review; independent review has not run.

@@ -2,7 +2,7 @@
 	"schemaVersion": 1,
 	"name": "gmail",
 	"displayName": "Gmail",
-	"version": "0.2.0",
+	"version": "0.2.1",
 	"description": "Save sent and received Gmail emails and attachments in Press Files.",
 	"compatibility": { "bonoboPluginRuntime": "1" },
 	"events": [],
@@ -12,7 +12,7 @@
 	"uiOutboundOrigins": ["https://kindhearted-mallard-511.convex.site"],
 	"files": [
 		{ "path": "dist/frontend/index.html", "sha256": "sha256:d3de3f73d9f4c10c05441a5b96f084b2696c77785aa8c6d979ae123c75d2c562", "bytes": 565, "contentType": "text/html" },
-		{ "path": "dist/frontend/assets/index.js", "sha256": "sha256:b824bbee57553366a850a94109a10ae4d00033fe03582319b00f009730263a2c", "bytes": 136224, "contentType": "application/javascript" },
+		{ "path": "dist/frontend/assets/index.js", "sha256": "sha256:0d46108967185ba4dbe4247ecfab04b55e44ad1b9a65b7da5bf9e2927364ad6d", "bytes": 136249, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/index.css", "sha256": "sha256:0080682c7f1a01d174fa68c5c7d93a9480e6f8ca30a9e0b9ec1aa7b5947c5de5", "bytes": 1517, "contentType": "text/css" },
 		{ "path": "dist/frontend/assets/react.js", "sha256": "sha256:174b76e9a14572ed536406ddae59e27ecc91a59c258854e86f64fa10b6bc689e", "bytes": 368202, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/zod.js", "sha256": "sha256:c6fe91e3fd954ba609ed0856f4c7596e55c0e70d13095e16c7d5458cc0335214", "bytes": 92851, "contentType": "application/javascript" },
