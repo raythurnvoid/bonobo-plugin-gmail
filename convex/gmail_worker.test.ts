@@ -759,6 +759,91 @@ describe("work_account_slice", () => {
 			permissionProbeNotBefore: null,
 		});
 	});
+	test("a held reinstall collision keeps its claim until pending create and PUT finish", async () => {
+		const f = await fixture({ held: true });
+		await f.t.run(async (ctx) => {
+			const row = (await ctx.db.get(f.ledgerId))!;
+			await ctx.db.patch(row._id, {
+				attachments: row.attachments.map((task) => ({
+					...task,
+					request: { ...task.request!, installationId: "old-installation" },
+				})),
+			});
+		});
+		let creates = 0;
+		let deadline = 0;
+		const calls = network(async (path, body) => {
+			if (path.endsWith("/messages/ab")) return Response.json(source);
+			if (path.endsWith("/create-target")) {
+				creates++;
+				const account = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+				if (creates === 1) deadline = account.permissionProbeNotBefore!;
+				expect(deadline).toBeGreaterThan(Date.now());
+				expect(account).toMatchObject({ permissionProbeNotBefore: deadline, ledgerCounts: { permissionHeld: 1 } });
+				expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({
+					permissionHeld: true,
+					attempts: 0,
+					fileAccessOperation: { kind: "attachment", index: 0, operation: "create" },
+					attachments: [{ suffix: creates, deliveries: 2, sourceUnavailablePendingChecks: 3,
+						request: { installationId: "installation", path: expect.stringContaining(`invoice-${creates + 1}.pdf`) } }],
+				});
+				expect(body).toMatchObject({ path: expect.stringContaining(`invoice-${creates + 1}.pdf`) });
+				return creates === 1
+					? Response.json({ message: "A file already exists at this path" }, { status: 409 })
+					: Response.json(transport);
+			}
+			if (path === "/object") {
+				expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({
+					permissionProbeNotBefore: null, ledgerCounts: { permissionHeld: 0 },
+				});
+				expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({
+					permissionHeld: false, error: null, attachments: [{ suffix: 2, deliveries: 3 }],
+				});
+				return new Response(null, { status: 200 });
+			}
+			return path.endsWith("/finalize") ? Response.json(committed) : Response.json({}, { status: 500 });
+		});
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		expect(creates).toBe(2);
+		expect(calls.filter((call) => call.path === "/object")).toHaveLength(1);
+		expect(calls.filter((call) => call.path.endsWith("/finalize"))).toHaveLength(1);
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({
+			status: "done", permissionHeld: false, attachments: [{ suffix: 2, state: "saved", deliveries: 3 }],
+		});
+	});
+	test.each([
+		[409, "This item is read-only."],
+		[409, "Request fingerprint does not match"],
+		[403, "Forbidden"],
+	])("reinstall refusal %i %s cannot advance the suffix or release its claim", async (status, message) => {
+		const f = await fixture({ held: true });
+		await f.t.run(async (ctx) => {
+			const row = (await ctx.db.get(f.ledgerId))!;
+			await ctx.db.patch(row._id, { attachments: row.attachments.map((task) => ({
+				...task, request: { ...task.request!, installationId: "old-installation" },
+			})) });
+		});
+		let deadline = 0;
+		const calls = network(async (path) => {
+			if (path.endsWith("/messages/ab")) return Response.json(source);
+			if (path.endsWith("/create-target")) {
+				deadline = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!.permissionProbeNotBefore!;
+				return Response.json({ message }, { status });
+			}
+			return Response.json({}, { status: 500 });
+		});
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		expect(calls.filter((call) => call.path.endsWith("/create-target"))).toHaveLength(1);
+		expect(calls.some((call) => /finalize|remint|object/.test(call.path))).toBe(false);
+		expect(deadline).toBeGreaterThan(Date.now());
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({
+			permissionProbeNotBefore: deadline, ledgerCounts: { permissionHeld: 1 },
+		});
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({
+			permissionHeld: true, attempts: status === 403 ? 0 : 1,
+			attachments: [{ suffix: 1, deliveries: 2, sourceUnavailablePendingChecks: 3 }],
+		});
+	});
 	test("reinstall without source keeps the old receipt unconfirmed", async () => {
 		const f = await fixture({ held: true, sourceError: "google_revoked" });
 		await f.t.run(async (ctx) => {
@@ -872,6 +957,78 @@ describe("work_account_slice", () => {
 			historyPageToken: null,
 		});
 		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(row);
+	});
+	test.each(["spam", "trash"] as const)("expired history backfill saves an offline %s rescue", async (skipReason) => {
+		const f = await fixture({ fresh: true });
+		await f.t.run(async (ctx) => {
+			await ctx.db.patch(f.ledgerId, { status: "skipped", skipReason, nextAttemptAt: null });
+			await ctx.db.patch(f.accountId, { nextSliceKind: "history", historyPageToken: "expired-page",
+				messagesSkipped: 1, ledgerCounts: { pending: 0, done: 0, skipped: 1, failed: 0,
+					given_up: 0, emailAssumed: 0, permissionHeld: 0 } });
+		});
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		const calls = network((path) => {
+			now += 1000;
+			if (path.endsWith("/history")) return Response.json({}, { status: 404 });
+			if (path.endsWith("/profile")) return Response.json({ ...profile, historyId: "200" });
+			if (path.endsWith("/messages")) return Response.json({ messages: [{ id: "ab" }] });
+			if (path.endsWith("/messages/ab")) return Response.json({ ...source, payload: source.payload.parts[0] });
+			return path.endsWith("/files/write") ? Response.json({ nodeId: "email-node" }) : Response.json({}, { status: 500 });
+		});
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ historyId: "200", backfillComplete: false });
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({ status: "skipped", skipReason });
+		await f.t.run((ctx) => ctx.db.patch(f.accountId, { nextSliceKind: "backfill" }));
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		expect(calls.filter((call) => call.path.endsWith("/history"))).toHaveLength(2);
+		expect(calls.filter((call) => call.path.endsWith("/files/write"))).toHaveLength(1);
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({ status: "done", skipReason: null, emailWritten: true });
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({
+			historyId: "200", backfillComplete: true, messagesSynced: 1, messagesSkipped: 0, ledgerCounts: { done: 1, skipped: 0 },
+		});
+	});
+	test("a history rescue moved back to trash is skipped before writing", async () => {
+		const f = await fixture({ fresh: true });
+		await f.t.run(async (ctx) => {
+			await ctx.db.patch(f.ledgerId, { status: "skipped", skipReason: "spam", nextAttemptAt: null });
+			await ctx.db.patch(f.accountId, { nextSliceKind: "history", messagesSkipped: 1,
+				ledgerCounts: { pending: 0, done: 0, skipped: 1, failed: 0, given_up: 0, emailAssumed: 0, permissionHeld: 0 } });
+		});
+		const calls = network((path) => path.endsWith("/history")
+			? Response.json({ historyId: "11", history: [{ id: "11", labelsRemoved: [{ message: { id: "ab" }, labelIds: ["SPAM"] }] }] })
+			: path.endsWith("/messages/ab") ? Response.json({ ...source, labelIds: ["TRASH"] }) : Response.json({}, { status: 500 }));
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		expect(calls.filter((call) => call.path.endsWith("/messages/ab"))).toHaveLength(1);
+		expect(calls.some((call) => call.path.includes("/files/"))).toBe(false);
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({ status: "skipped", skipReason: "trash", emailWritten: false });
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ historyId: "11", messagesSynced: 0, messagesSkipped: 1 });
+	});
+	test("a sent draft keeps the old id deleted and saves only the new SENT id", async () => {
+		const f = await fixture({ fresh: true });
+		await f.t.run(async (ctx) => {
+			await ctx.db.patch(f.ledgerId, { status: "skipped", skipReason: "draft", nextAttemptAt: null });
+			await ctx.db.patch(f.accountId, { nextSliceKind: "history", messagesSkipped: 1,
+				ledgerCounts: { pending: 0, done: 0, skipped: 1, failed: 0, given_up: 0, emailAssumed: 0, permissionHeld: 0 } });
+		});
+		const calls = network((path) => path.endsWith("/history")
+			? Response.json({ historyId: "11", history: [{ id: "11", messagesDeleted: [{ message: { id: "ab" } }],
+				messagesAdded: [{ message: { id: "ac" } }] }] })
+			: path.endsWith("/messages/ac") ? Response.json({ ...source, id: "ac", labelIds: ["SENT"], payload: source.payload.parts[0] })
+				: path.endsWith("/files/write") ? Response.json({ nodeId: "sent-node" }) : Response.json({}, { status: 500 }));
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		expect(calls.some((call) => call.path.endsWith("/messages/ab"))).toBe(false);
+		const writes = calls.filter((call) => call.path.endsWith("/files/write"));
+		expect(writes).toHaveLength(1);
+		expect(writes[0].body).toMatchObject({ content: expect.stringContaining('direction: "sent"') });
+		expect(writes[0].body).toMatchObject({ content: expect.stringContaining('gmail-message-id: "ac"') });
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({
+			status: "skipped", skipReason: "deleted_before_fetch", emailWritten: false, deletedAt: expect.any(Number),
+		});
+		expect(await f.t.run((ctx) => ctx.db.query("messages_ledger").withIndex("by_account_gmailMessageId",
+			(q) => q.eq("accountId", f.accountId).eq("gmailMessageId", "ac")).unique())).toMatchObject({
+			status: "done", emailWritten: true, fileNodeId: "sent-node",
+		});
 	});
 	test("a completed backfill replay makes no source or Files calls", async () => {
 		const f = await fixture({ fresh: true });

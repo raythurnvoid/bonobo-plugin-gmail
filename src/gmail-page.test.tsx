@@ -194,6 +194,45 @@ describe("GmailPage", () => {
     ).toBeTruthy();
     expect(screen.queryByText(/Checking for new mail/)).toBeNull();
   });
+  test.each([null, 1_800_000_000_000 - 11 * 60_000])(
+    "saved backoff keeps its retry message with check time %s",
+    async (lastSyncedAt) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () =>
+          Response.json({
+            ...status(),
+            accounts: [{ ...account(), syncStatus: "error", syncError: "gmail_temporary", lastSyncedAt }],
+          }),
+        ),
+      );
+      render(<GmailPage client={client} />);
+      await settle();
+      expect(screen.getByText(/^Retrying at/)).toBeTruthy();
+      expect(screen.getByText(lastSyncedAt === null ? "No mail check completed yet" : /Sync is delayed/)).toBeTruthy();
+      expect(screen.queryByText(/Checking for new mail/)).toBeNull();
+    },
+  );
+  test("returning visible hides cached health when its refresh fails", async () => {
+    let unavailable = false;
+    const fetch = vi.fn(async () => unavailable
+      ? new Response("disabled", { status: 503 })
+      : Response.json({ ...status(), accounts: [account()] }));
+    vi.stubGlobal("fetch", fetch);
+    render(<GmailPage client={client} />);
+    await settle();
+    expect(screen.getByText(/Checking for new mail/)).toBeTruthy();
+    visible("hidden");
+    await act(() => vi.advanceTimersByTimeAsync(11 * 60_000));
+    expect(fetch).toHaveBeenCalledTimes(1);
+    unavailable = true;
+    visible("visible");
+    await settle();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(screen.queryByText(/Checking for new mail/)).toBeNull();
+    expect(document.querySelector("[data-gmail-service-status='unavailable']")).toBeTruthy();
+  });
   test("a recent check keeps Files attention visible", async () => {
     const item = account();
     item.ledgerCounts.permissionHeld = 2;
