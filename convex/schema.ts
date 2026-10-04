@@ -6,6 +6,9 @@ const nullableNumber = v.union(v.number(), v.null());
 export const gmail_host_binding = {
 	organizationId: v.string(), workspaceId: v.string(), installationId: v.string(), actorUserId: v.string(),
 };
+export const gmail_worker_context = v.object({
+	accountId: v.id("gmail_accounts"), generation: v.number(), requestId: v.string(), grantId: v.id("host_grants"),
+});
 export const gmail_history_event = v.object({
 	historyId: v.string(), gmailMessageId: v.string(),
 	kind: v.union(v.literal("added"), v.literal("rescue_spam"), v.literal("rescue_trash"), v.literal("deleted")),
@@ -25,6 +28,7 @@ export const gmail_file_access_operation = v.union(
 	v.object({ kind: v.literal("email_write") }),
 	v.object({ kind: v.literal("attachment"), index: v.number(), operation: v.union(v.literal("create"), v.literal("finalize")) }),
 );
+export const gmail_permission_claim = v.object({ deadline: v.number(), operation: gmail_file_access_operation });
 export const gmail_ledger_status = v.union(v.literal("pending"), v.literal("done"), v.literal("skipped"), v.literal("failed"), v.literal("given_up"));
 export const gmail_ledger_counts = v.object({
 	pending: v.number(), done: v.number(), skipped: v.number(), failed: v.number(), given_up: v.number(), emailAssumed: v.number(), permissionHeld: v.number(),

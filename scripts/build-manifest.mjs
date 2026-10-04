@@ -92,6 +92,15 @@ for (const file of manifest.files) {
 	} catch {
 		fail(`Manifest file is missing on disk: "${file.path}"`);
 	}
+	if (file.contentType === "application/javascript") {
+		// Zod emits blank code lines with spaces. Keep generated diffs clean.
+		const text = fileBytes.toString("utf8");
+		const clean = text.replace(/^[\t ]+(?=\r?$)/gm, "");
+		if (clean !== text) {
+			fileBytes = Buffer.from(clean);
+			writeFileSync(join(repoRoot, file.path), fileBytes);
+		}
+	}
 	// Publishing rejects files over its per-file cap, so fail the build first.
 	if (fileBytes.byteLength > MAX_FILE_BYTES) {
 		fail(`Manifest file is ${fileBytes.byteLength} bytes (cap ${MAX_FILE_BYTES}): "${file.path}"`);

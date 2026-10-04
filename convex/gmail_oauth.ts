@@ -6,7 +6,7 @@ import type { Doc } from "./_generated/dataModel";
 import { internalMutation, internalQuery, type ActionCtx, type MutationCtx, type QueryCtx } from "./_generated/server";
 import schema, { gmail_host_binding } from "./schema";
 import { gmail_decrypt, gmail_encrypt, gmail_google_token_purpose, gmail_random_secret, gmail_sha256 } from "./gmail_secrets";
-import { gmail_PageError, gmail_rate_limit, gmail_verify_live } from "./gmail_page";
+import { gmail_cleanup_page_rows, gmail_PageError, gmail_rate_limit, gmail_verify_live } from "./gmail_page";
 import { gmail_HostError } from "./press";
 import { gmail_grant_step } from "./gmail_grants";
 import { gmail_consent_url, gmail_google_get, gmail_google_token, gmail_profile_response } from "./gmail_google";
@@ -331,6 +331,7 @@ export const cancel = internalMutation({
 export const cleanup = internalMutation({
 	args: {}, returns: v.null(),
 	handler: async ctx => {
+		await gmail_cleanup_page_rows(ctx);
 		for (const attempt of await ctx.db.query("oauth_states").withIndex("by_status_processingDeadline", q =>
 			q.eq("status", "exchanging").gt("processingDeadline", null).lte("processingDeadline", Date.now())).take(25)) {
 			await gmail_close_attempt(ctx, attempt, "failed", "exchange_interrupted");

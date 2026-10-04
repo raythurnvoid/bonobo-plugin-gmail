@@ -2,7 +2,7 @@
 
 Gmail is a Press plugin with its own Convex backend. It saves received and sent mail as Markdown files. Attachments are saved beside each email. Press owns Files, permissions, billing, and installation.
 
-The build follows plan v4. Setup shell 0.1.0 is published on Press dev. Sync implementation and live checks are in progress. The full integration is not ready yet.
+The build follows plan v4. Version 0.2.0 includes the connection page and background sync. Live Gmail and hosting checks are still open. The integration is not release ready yet.
 
 ## Setup
 
@@ -40,6 +40,26 @@ Email paths use UTC: `/emails/<saved-address-slug>/<year>/<month>/<day>-<subject
 The parser prefers plain text. It uses HTML as text when no plain body exists. Attached messages do not become the email body. Inline images with Content-ID are skipped. Other attachments keep their order. Only the first 16 are planned for saving. Attachment names cannot become AGENTS, README, or SKILL files.
 
 Limits: 48 MiB of streamed source JSON, 32 MiB per decoded attachment, 2 MiB of selected body bytes, 8 body parts, 60 seconds for body loading, 4,096 MIME parts, and depth 32. Complete Markdown is capped at 800,000 UTF-8 bytes. Header and recipient limits keep search data small. Planned attachment names in the email do not prove later upload success.
+
+Current Press attachment billing is one cent per started 20 MiB. A 32 MiB attachment uses two cents. The upload plan must also allow Files uploads. A new plan or storage refusal skips that email's new attachments. The next email checks again. Existing pending receipts remain available for finalize-only recovery if create or remint is refused. Never replace a refused receipt or delete its placeholder to avoid the check.
+
+## Sync and recovery
+
+A minute dispatcher queues one slice per account. One Workpool runs with parallelism 1 and five crash attempts. Each source or save slice starts at most 25 complete steps in 40 seconds. A started step finishes its preparation, one attachment delivery, and checkpoint before yielding. It can cross the time limit. Calls have finite timeouts. Each Press Files route is paced at least 0.6 seconds apart per installation.
+
+Backfill, history, and due retries take turns from the start. A fresh profile baseline is saved before listing. Backfill stores at most 25 IDs and its position. History stores only a cursor and event anchor; batches contain at most 25 events. A completed history page owns durable queue entries before its cursor moves. Only a completed final history page changes the last-check time. History JSON is limited to 16 MiB; an oversized page retries with one record, then stops visibly if needed.
+
+The ledger keeps file and attachment progress separately. Email writes use the saved path and `overwrite: fail`. An exact existing-path conflict assumes the email exists and still handles attachments. A lost write reply followed by a member move can create a second email copy. The plugin cannot prove who created a colliding path. This is an accepted v1 limit.
+
+Attachment requests are frozen before create. Accepted or uncertain targets finalize before Google reads. A pending create without a PUT marker recovers transport and sends the whole file. PUT markers and delivery counts are saved first. Pending checks wait one minute; replacement delivery waits at least three minutes. Five deliveries or five source-free pending checks require Retry failed emails. Receipts stay. Reinstall may need a new suffix path; an old accepted upload may later produce a second copy.
+
+A Files refusal with valid member and grant authority holds only that message. Ordinary and held retries use separate indexes. The oldest held unit claims one account-wide hour before any effect. Matching successful email or upload write proof may release it early. A collision, released target, source read, or unrelated save cannot do so. Other folders and new mail still get their normal attempts. Repair and Reconnect keep the holds, count, and clock.
+
+Google source errors stop source reads but leave indexed attachment settlement available. Invalid Google access clears that saved token and needs Reconnect. Request or history-size errors offer Retry sync. Credits wait an hour; shared outages save account backoff without spending message attempts. Disconnect, replaced grants, and newer work requests stop later effects and stale lifecycle saves.
+
+The page polls every five seconds only while visible. Its last-check label comes from the saved completed history time. Ten minutes without a check shows delayed. Files attention stays visible even beside a recent mail check. The page keeps tokens and finish codes in memory, and stores only bound Start retry IDs in session storage. Failure lists show message IDs and fixed reasons, not private subject paths or attachment names.
+
+The public upload routes are typed locally in `convex/press.ts` because the pinned SDK does not list them. Replies are runtime-validated. Press source and its SDK generator remain unchanged.
 
 The small address parser follows [email-addresses](https://github.com/jackbearheart/email-addresses). HTML entities use [he](https://github.com/mathiasbynens/he), as in the Zero MIME reference.
 
