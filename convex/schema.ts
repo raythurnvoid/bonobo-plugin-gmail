@@ -87,6 +87,7 @@ export default defineSchema({
 		.index("by_stateHash", ["stateHash"])
 		.index("by_actorUser_installation_clientRequestId", ["actorUserId", "installationId", "clientRequestId"])
 		.index("by_actorUser_installation_status", ["actorUserId", "installationId", "status"])
+		.index("by_status_processingDeadline", ["status", "processingDeadline"])
 		.index("by_expiresAt", ["expiresAt"]),
 	page_tokens: defineTable({
 		tokenHash: v.string(), exchangeRequestId: v.string(), sourceSecret: nullableString, grantSecret: nullableString,

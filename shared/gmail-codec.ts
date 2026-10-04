@@ -2,6 +2,9 @@ import { Buffer } from "node:buffer";
 import emailAddresses from "email-addresses";
 import he from "he";
 import { z } from "zod";
+import { gmail_slug } from "./gmail-paths";
+
+export { gmail_slug } from "./gmail-paths";
 
 export const GMAIL_BODY_BYTES = 2 * 1024 * 1024;
 export const GMAIL_ATTACHMENT_BYTES = 32 * 1024 * 1024;
@@ -20,13 +23,6 @@ export function gmail_cap_text(text: string, bytes: number) {
 	let end = bytes;
 	while (end > 0 && (encoded[end] & 0xc0) === 0x80) end--;
 	return encoded.subarray(0, end).toString("utf8");
-}
-
-// Same separator rules as Press shared/files.ts. Trim again after cutting.
-export function gmail_slug(text: string, limit = 120) {
-	return text.normalize("NFKD").replace(/\p{Mark}/gu, "").toLowerCase()
-		.replace(/[^a-z0-9._-]+/g, "-").replace(/[._-]{2,}/g, "-")
-		.replace(/^[._-]+|[._-]+$/g, "").slice(0, limit).replace(/[._-]+$/g, "") || "untitled";
 }
 
 export function gmail_attachment_name(name: string) {
