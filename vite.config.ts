@@ -1,7 +1,7 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
-// Press publishes these three fixed files. Keep one JS chunk.
+// Keep the page separate from libraries so the publisher can read it.
 export default defineConfig({
 	plugins: [
 		react(),
@@ -16,16 +16,20 @@ export default defineConfig({
 		},
 	],
 	base: "./",
-	esbuild: { minifyIdentifiers: true, minifySyntax: true, minifyWhitespace: true },
 	build: {
 		outDir: "dist/frontend",
 		cssMinify: false,
-		minify: "esbuild",
-		rollupOptions: { output: {
+		minify: "oxc",
+		rolldownOptions: { output: {
 			entryFileNames: "assets/index.js",
 			chunkFileNames: "assets/[name].js",
 			assetFileNames: "assets/index[extname]",
-			codeSplitting: false,
+			codeSplitting: {
+				groups: [
+					{ name: "react", test: /node_modules[\\/](?:react(?:-dom)?|scheduler)[\\/]/ },
+					{ name: "zod", test: /node_modules[\\/]zod[\\/]/ },
+				],
+			},
 		} },
 	},
 });

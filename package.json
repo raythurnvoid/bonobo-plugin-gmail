@@ -5,7 +5,7 @@
 	"type": "module",
 	"packageManager": "pnpm@10.33.0",
 	"scripts": {
-		"build": "vite build && prettier --write dist/frontend/assets/index.js dist/frontend/assets/index.css && node scripts/build-manifest.mjs",
+		"build": "vite build && prettier --write \"dist/frontend/assets/*.js\" dist/frontend/assets/index.css && node scripts/build-manifest.mjs",
 		"build:manifest": "node scripts/build-manifest.mjs",
 		"dev": "vite",
 		"lint": "oxlint src shared convex scripts --ignore-pattern convex/_generated/**",

@@ -4,6 +4,8 @@ Gmail is a Press plugin with its own Convex backend. It saves received and sent 
 
 The build follows plan v4. Version 0.2.0 includes the connection page and background sync. Live Gmail and hosting checks are still open. The integration is not release ready yet.
 
+The frontend build keeps the page, React, and Zod in separate files. Each file is formatted and listed in the manifest with its hash. This lets the publisher read the page code within its scan limit.
+
 ## Setup
 
 Use Node 24.16.0 through Vite Plus and pnpm. Run commands with `vp env exec`.

@@ -11,8 +11,11 @@
 	"outboundOrigins": [],
 	"uiOutboundOrigins": ["https://kindhearted-mallard-511.convex.site"],
 	"files": [
-		{ "path": "dist/frontend/index.html", "sha256": "sha256:99030b4beedd15922de9a5d2159784fc26246da2158050107260d66adf9ed731", "bytes": 358, "contentType": "text/html" },
-		{ "path": "dist/frontend/assets/index.js", "sha256": "sha256:ba30b9716534c48859bd96a75fb0c35154d9321e903bbb8e0138d5fb8f032add", "bytes": 605491, "contentType": "application/javascript" },
-		{ "path": "dist/frontend/assets/index.css", "sha256": "sha256:0080682c7f1a01d174fa68c5c7d93a9480e6f8ca30a9e0b9ec1aa7b5947c5de5", "bytes": 1517, "contentType": "text/css" }
+		{ "path": "dist/frontend/index.html", "sha256": "sha256:d3de3f73d9f4c10c05441a5b96f084b2696c77785aa8c6d979ae123c75d2c562", "bytes": 565, "contentType": "text/html" },
+		{ "path": "dist/frontend/assets/index.js", "sha256": "sha256:b824bbee57553366a850a94109a10ae4d00033fe03582319b00f009730263a2c", "bytes": 136224, "contentType": "application/javascript" },
+		{ "path": "dist/frontend/assets/index.css", "sha256": "sha256:0080682c7f1a01d174fa68c5c7d93a9480e6f8ca30a9e0b9ec1aa7b5947c5de5", "bytes": 1517, "contentType": "text/css" },
+		{ "path": "dist/frontend/assets/react.js", "sha256": "sha256:174b76e9a14572ed536406ddae59e27ecc91a59c258854e86f64fa10b6bc689e", "bytes": 368202, "contentType": "application/javascript" },
+		{ "path": "dist/frontend/assets/zod.js", "sha256": "sha256:c6fe91e3fd954ba609ed0856f4c7596e55c0e70d13095e16c7d5458cc0335214", "bytes": 92851, "contentType": "application/javascript" },
+		{ "path": "dist/frontend/assets/rolldown-runtime.js", "sha256": "sha256:320ac1c898c1aa30c21383fddb8070e7888b57dca34de38cb915ba06ebf01b97", "bytes": 890, "contentType": "application/javascript" }
 	]
 }
