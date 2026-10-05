@@ -105,6 +105,8 @@ Local tests prove full status pages despite more than one page of other accounts
 
 Lost write/create reply tests also run completion and the minute dispatcher. They wait for account backoff, use a new work request, keep frozen paths/keys and send one PUT. Late old completion cannot clear the new request. These are local reply-loss checks, not a live process crash or a complete audit of every checkpoint.
 
+Local stop tests also cover the frozen request, accepted create and saved PUT marker. Recovery first checks the same receipt. Without a PUT marker, it sends the exact create fields and makes one first PUT. A saved marker keeps the three-minute wait before getting a fresh upload link and sending once. Each test uses completion and newly dispatched work. Removing each recovery rule fails its named check; restoring it passes. Live verification remains open.
+
 The last resolved attachment and its message status now save together. A stopped worker could previously leave a saved attachment on a pending message that could not finish after Google access stopped. Local tests stop after committed create/finalize saves, then record revocation and run completion/dispatch. They keep the message complete with no new calls. Deploy and verify this fix after the current idle measurement.
 
 An unconfirmed attachment now saves with its message's needs-Retry status too. The local stop test runs five pending checks through completion and dispatch. No automatic work follows the fifth result. Explicit Retry keeps the same receipt and finishes with one finalize call, without Google, create or PUT calls. Live verification remains open.

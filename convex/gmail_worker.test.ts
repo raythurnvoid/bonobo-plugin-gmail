@@ -154,7 +154,11 @@ function network(answer: (path: string, body: unknown, url: URL) => Response | P
 	return calls;
 }
 
-async function stop_after_task_save(f: Awaited<ReturnType<typeof fixture>>, state: "saved" | "unconfirmed") {
+async function stop_after_task_save(
+	f: Awaited<ReturnType<typeof fixture>>,
+	state: "uncertain" | "pending" | "saved" | "unconfirmed",
+	deliveries: number | null = null,
+) {
 	// Convex-test calls this internal handler. Stop after its mutation commits.
 	const registered = work_account_slice as typeof work_account_slice & {
 		_handler: (ctx: ActionCtx, args: { work: typeof f.work }) => Promise<null>;
@@ -168,7 +172,8 @@ async function stop_after_task_save(f: Awaited<ReturnType<typeof fixture>>, stat
 			const result = await ctx.runMutation(reference, ...values);
 			if (getFunctionName(reference) === "gmail_accounts:save_message") {
 				const saved = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
-				if (saved.attachments.length === 1 && saved.attachments[0].state === state) {
+				if (saved.attachments.length === 1 && saved.attachments[0].state === state &&
+					(deliveries === null || saved.attachments[0].deliveries === deliveries)) {
 					stopped = true;
 					throw crash;
 				}
@@ -374,6 +379,146 @@ describe("work_account_slice", () => {
 		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({
 			status: "done",
 			attachments: [{ deliveries: 1 }],
+		});
+	});
+	test.each(["frozen", "accepted"] as const)("a stop after the %s target save resumes with one first PUT", async (step) => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		// Pause queued actions while running their saved work requests.
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const f = await fixture({ fresh: true });
+		let finalizes = 0;
+		const calls = network((path) => {
+			now += 600;
+			if (path.endsWith("/messages/ab")) return Response.json(source);
+			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
+			if (path.endsWith("/create-target")) return Response.json({ ...transport, uploadUrlExpiresAt: now + 3600_000 });
+			if (path.endsWith("/finalize") && ++finalizes === 1) return step === "frozen"
+				? Response.json({ message: "Target not found" }, { status: 404 }) : Response.json(pending);
+			if (path.endsWith("/finalize")) return Response.json(committed);
+			if (path === "/object") return new Response(null, { status: 200 });
+			return Response.json({}, { status: 500 });
+		});
+		const crash = await stop_after_task_save(f, step === "frozen" ? "uncertain" : "pending");
+		expect(calls.map(call => call.path)).toEqual([
+			"/token", "/gmail/v1/users/me/messages/ab", "/api/v1/files/write",
+			...(step === "accepted" ? ["/api/v1/files/service-uploads/create-target"] : []),
+		]);
+		const checkpoint = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		expect(checkpoint).toMatchObject({
+			status: "pending", emailWritten: true, settlementNeeded: true, attempts: 0,
+			attachments: [{ state: step === "frozen" ? "uncertain" : "pending", accepted: step === "accepted",
+				nodeId: step === "frozen" ? null : pending.nodeId, livePath: step === "frozen" ? null : pending.path,
+				deliveries: 0, uploadAttemptedAt: null, request: { idempotencyKey: `${f.accountId}:ab`, targetKey: "ab:att-0" } }],
+		});
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: f.workId, context: f.work, result: { kind: "failed", error: crash.message } });
+		const stopped = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(stopped).toMatchObject({ syncStatus: "blocked", syncError: "sync_error", temporaryFailures: 1 });
+		expect(stopped.nextSyncAt).toBeGreaterThan(now);
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ syncWorkId: null, syncRequestId: null });
+		now = stopped.nextSyncAt!;
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		const queued = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(queued.syncWorkId).not.toBeNull();
+		expect(queued.syncRequestId).not.toBe(f.work.requestId);
+		const work = { ...f.work, requestId: queued.syncRequestId! };
+		const before = calls.length;
+		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		expect(calls.slice(before).map(call => call.path)).toEqual([
+			"/api/v1/files/service-uploads/finalize", "/token", "/gmail/v1/users/me/messages/ab",
+			"/api/v1/files/service-uploads/create-target", "/object", "/api/v1/files/service-uploads/finalize",
+		]);
+		const creates = calls.filter(call => call.path.endsWith("/create-target"));
+		expect(creates).toHaveLength(step === "accepted" ? 2 : 1);
+		const { installationId: _installationId, ...request } = checkpoint.attachments[0].request!;
+		expect(creates.map(call => call.body)).toEqual(step === "accepted" ? [request, request] : [request]);
+		expect(calls.filter(call => call.path.endsWith("/finalize")).map(call => call.body))
+			.toEqual(Array.from({ length: 2 }, () => ({ idempotencyKey: request.idempotencyKey, targetKey: request.targetKey })));
+		expect(calls.filter(call => call.path === "/object")).toHaveLength(1);
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({
+			status: "done", filePath: checkpoint.filePath, emailWritten: true, fileNodeId: checkpoint.fileNodeId,
+			attempts: 0, settlementNeeded: false, nextAttemptAt: null,
+			attachments: [{ state: "saved", accepted: true, nodeId: committed.nodeId, livePath: committed.path,
+				deliveries: 1, uploadAttemptedAt: expect.any(Number), request: checkpoint.attachments[0].request }],
+		});
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: f.workId, context: f.work, result: { kind: "failed", error: crash.message } });
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ syncRequestId: work.requestId, syncWorkId: queued.syncWorkId });
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: queued.syncWorkId! as typeof f.workId, context: work, result: { kind: "success", returnValue: null } });
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({
+			messagesSynced: 1, syncStatus: "live", syncError: null, syncWorkId: null, syncRequestId: null,
+			ledgerCounts: { pending: 0, done: 1 },
+		});
+	});
+	test("a stop after the PUT marker waits before one remint delivery", async () => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		// Keep the queue paused so each retry uses its saved due time.
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const f = await fixture({ fresh: true });
+		let delivered = false;
+		const calls = network((path) => {
+			now += 600;
+			if (path.endsWith("/messages/ab")) return Response.json(source);
+			if (path.endsWith("/history")) return Response.json({ historyId: "11", history: [] });
+			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
+			if (path.endsWith("/create-target") || path.endsWith("/remint")) return Response.json({ ...transport, uploadUrlExpiresAt: now + 3600_000 });
+			if (path.endsWith("/finalize")) return Response.json(delivered ? committed : pending);
+			if (path === "/object") {
+				delivered = true;
+				return new Response(null, { status: 200 });
+			}
+			return Response.json({}, { status: 500 });
+		});
+		// The saved marker counts an attempt even when the worker stops before PUT.
+		const crash = await stop_after_task_save(f, "pending", 1);
+		expect(calls.map(call => call.path)).toEqual([
+			"/token", "/gmail/v1/users/me/messages/ab", "/api/v1/files/write", "/api/v1/files/service-uploads/create-target",
+		]);
+		const checkpoint = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		expect(checkpoint).toMatchObject({ status: "pending", settlementNeeded: true, attempts: 0,
+			attachments: [{ state: "pending", accepted: true, deliveries: 1, uploadAttemptedAt: now, request: expect.any(Object) }] });
+		const request = checkpoint.attachments[0].request!;
+		const keys = { idempotencyKey: request.idempotencyKey, targetKey: request.targetKey };
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: f.workId, context: f.work, result: { kind: "failed", error: crash.message } });
+		let work = f.work;
+		for (let retry = 1; retry <= 3; retry++) {
+			const account = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+			expect(account.nextSyncAt).not.toBeNull();
+			now = account.nextSyncAt!;
+			await f.t.mutation(internal.gmail_accounts.dispatch, {});
+			const queued = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+			expect(queued.syncWorkId).not.toBeNull();
+			expect(queued.syncRequestId).not.toBe(work.requestId);
+			work = { ...work, requestId: queued.syncRequestId! };
+			const before = calls.length;
+			await f.t.action(internal.gmail_worker.work_account_slice, { work });
+			if (retry < 3) {
+				expect(now - checkpoint.attachments[0].uploadAttemptedAt!).toBeLessThan(180_000);
+				expect(calls.slice(before).some(call => /create-target|remint|object/.test(call.path))).toBe(false);
+				expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({
+					status: "pending", settlementNeeded: true, attempts: 0, attachments: [{ deliveries: 1,
+						uploadAttemptedAt: checkpoint.attachments[0].uploadAttemptedAt, request, nextAttemptAt: expect.any(Number) }],
+				});
+			} else {
+				expect(now - checkpoint.attachments[0].uploadAttemptedAt!).toBeGreaterThanOrEqual(180_000);
+				expect(calls.slice(before).filter(call => /service-uploads|object/.test(call.path)).map(call => call.path)).toEqual([
+					"/api/v1/files/service-uploads/finalize", "/api/v1/files/service-uploads/remint", "/object", "/api/v1/files/service-uploads/finalize",
+				]);
+			}
+			await f.t.mutation(internal.gmail_accounts.on_complete, { workId: queued.syncWorkId! as typeof f.workId, context: work, result: { kind: "success", returnValue: null } });
+		}
+		expect(calls.filter(call => call.path.endsWith("/create-target"))).toHaveLength(1);
+		expect(calls.filter(call => call.path === "/object")).toHaveLength(1);
+		expect(calls.filter(call => call.path.endsWith("/remint")).map(call => call.body)).toEqual([keys]);
+		expect(calls.filter(call => call.path.endsWith("/finalize")).map(call => call.body)).toEqual(Array.from({ length: 4 }, () => keys));
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({
+			status: "done", emailWritten: true, settlementNeeded: false, nextAttemptAt: null, attempts: 0,
+			attachments: [{ state: "saved", deliveries: 2, request, nodeId: committed.nodeId, livePath: committed.path }],
+		});
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({
+			messagesSynced: 1, syncStatus: "live", syncError: null, syncWorkId: null, syncRequestId: null,
+			ledgerCounts: { pending: 0, done: 1 },
 		});
 	});
 	test.each([
