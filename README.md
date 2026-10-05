@@ -31,6 +31,20 @@ Set these on the plugin backend. Never commit them or put them on Press.
 
 Google uses only the Gmail read-only scope. Connecting requires Google consent and an authenticated Finish step on the original Press page. Disconnect clears saved Gmail access and keeps Files. Disconnect before uninstalling.
 
+## Google configuration
+
+Create a Google Cloud project and enable the Gmail API. Configure Google Auth Platform with an External audience. Set the app name and support contact, then add only `https://www.googleapis.com/auth/gmail.readonly` in Data Access. In Testing, add the account used for the dev connection as a test user.
+
+Create a Web application OAuth client. Its only redirect URI is `https://<plugin-deployment>.convex.site/oauth/google/callback`. Use the plugin backend deployment, not the Press deployment. The server handles consent, token exchange, and background reads. No separate Clerk or Polar project is needed.
+
+Download the newly issued client JSON. Save its client ID and client secret in the ignored `.env.local` as `GMAIL_OAUTH_CLIENT_ID` and `GMAIL_OAUTH_CLIENT_SECRET`. Set the same two keys on the plugin Convex deployment. Use file or stdin input to keep secret values out of shell history. Do not commit the JSON, `.env.local`, account addresses, or private setup notes.
+
+After the real connection works, move the OAuth audience to Production as specified by the hosting plan. The app can still require Google's unverified-app consent step. Public verification is a separate release task. Record the private project and client details outside tracked files.
+
+See Google's [consent setup](https://developers.google.com/workspace/guides/configure-oauth-consent) and [server authorization guide](https://developers.google.com/workspace/gmail/api/auth/web-server).
+
+The public home and privacy pages are in `docs/`. GitHub Pages serves them from `main` at `/docs`. Set the app home URL to `https://raythurnvoid.github.io/bonobo-plugin-gmail/` and the privacy URL to `https://raythurnvoid.github.io/bonobo-plugin-gmail/privacy.html`. Keep account contacts and client values in Google configuration and local private notes.
+
 Start saves one attempt per member and installation. Exact retries recover the same consent link. Google callback stages access and shows a finish code for ten minutes. It shows the verified organization and workspace IDs so the member can compare them with Press. Status never reveals this code, the staged address, or tokens. Finish checks the original member, current write access, and the attempt's own Press grant. Callback alone cannot start sync.
 
 The account occupies its slot before the first seal completes. No source work starts until the grant is ready. Finish receipt retries work for 24 hours with fresh page auth. Disconnect or a newer connection makes an old receipt unusable. Cancel, failure, and expiry clear staged secrets. The Google OAuth client must be configured before Start; other backend checks can run before that user setup step.
@@ -83,6 +97,6 @@ Local Disconnect and Cancel never revoke Google access. Removing this app in Goo
 
 Code completion and release readiness are separate. Release needs all plan tests, guard-removal proofs, installed-frame Playwriter checks, and a real 24-hour hosting measurement. The Free byte-limit gap remains open. No capacity claim is made yet.
 
-The installed dev frame has passed status, update, narrow-layout, and simulated unavailable/hidden-page checks. Google client settings and real consent are still missing. No real email or attachment save has been verified. Local fixtures cover receipt isolation, crash checkpoints, long backfill with parallel history, and access holds. Recovery tests also cover offline spam/trash rescue after history expiry, a rescue moved back to trash, sent draft IDs, reinstall filename conflicts, and failed refresh after returning visible. They do not replace mailbox or hosted workload checks.
+The installed dev frame has passed status, update, narrow-layout, and simulated unavailable/hidden-page checks. Google client settings are saved on the plugin backend. Real read-only consent and Finish succeeded, and the page reports saved emails. File content, attachment bytes, and the remaining live recovery checks are still open. Local fixtures cover receipt isolation, crash checkpoints, long backfill with parallel history, and access holds. Recovery tests also cover offline spam/trash rescue after history expiry, a rescue moved back to trash, sent draft IDs, reinstall filename conflicts, and failed refresh after returning visible. They do not replace mailbox or hosted workload checks.
 
 The dev cap is 1. Monthly disable limits are 400,000 calls and 4 GB-hours for each action runtime. The required fractional byte limits could not be saved on the Free dashboard. Do not raise those limits or the account cap as a workaround. Keep release open until the required limits and measured shared-team budget fit plan v4. Work-alone checks are self-review; independent review has not run.

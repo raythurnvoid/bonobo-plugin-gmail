@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Privacy policy · Bonobo Gmail</title>
+	<style>
+		body { font: 17px/1.6 system-ui, sans-serif; max-width: 720px; margin: 48px auto; padding: 0 24px; color: #222; background: #fff; }
+		h1, h2 { line-height: 1.2; }
+		a { color: #174ea6; }
+		code { overflow-wrap: anywhere; }
+	</style>
+</head>
+<body>
+	<main>
+		<p><a href="index.html">Bonobo Gmail</a></p>
+		<h1>Privacy policy</h1>
+		<p>Updated 5 October 2026. This page covers the Bonobo Gmail plugin. Your Press workspace and its other features have their own data controls.</p>
+		<h2>What the plugin accesses</h2>
+		<p>With your Google consent, the plugin reads your Gmail address, email headers, message bodies, attachments, labels, and change history. It uses only the <code>gmail.readonly</code> scope. It does not send email or change your Gmail mailbox.</p>
+		<h2>Why it uses this data</h2>
+		<p>The plugin backs up sent and received email as Markdown files and attachments in the Press workspace you choose. It checks for new mail and keeps progress records so it can resume after a failure.</p>
+		<p>Our use of Google user data follows the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a> and its Limited Use requirements.</p>
+		<h2>Where data is stored and shared</h2>
+		<p>The plugin's Convex backend stores your Gmail address, encrypted access credentials, workspace and account IDs, sync cursors, message IDs, saved file paths, attachment names, and retry or upload records. It reads message content while processing it. It saves email content and attachments in Press Files.</p>
+		<p>Google provides the mail data. Convex runs the plugin backend. Press and its storage services hold the copied files. Saved mail uses ordinary workspace file permissions. Other members with file access can read it. Check the workspace and these permissions before connecting.</p>
+		<p>If you ask a Press agent to read saved files, Press handles that request using its configured AI services. The Gmail plugin does not train AI models. It does not sell Google user data or use it for advertising, credit decisions, or general AI model training.</p>
+		<h2>Security and retention</h2>
+		<p>Requests use HTTPS. Saved Google refresh tokens and Press grants are encrypted on the plugin backend. Short-lived access tokens are used during requests. Connection requires Google consent, a callback finish code, and a current Press write check.</p>
+		<p>Disconnect clears saved Gmail access and stops later sync work. It keeps copied files and progress records. Those records include message IDs, file paths, and attachment names. They let a later connection resume safely. Uninstall alone does not notify the plugin backend, so disconnect first.</p>
+		<h2>Your controls</h2>
+		<p>Use Disconnect on the Gmail page to stop sync. Delete copied files through Press Files when you no longer want them. Ask the backend operator to remove retained plugin records if needed. File removal follows Press's deletion process.</p>
+		<p>You can also remove this app in Google Account Security. That stops all of its Gmail connections under the same Google project. It does not delete files already copied to Press.</p>
+		<h2>Contact and changes</h2>
+		<p>Use the support email shown on Google's consent screen for private data questions. For code issues, use the <a href="https://github.com/raythurnvoid/bonobo-plugin-gmail/issues">project issue tracker</a>. Do not post emails, attachments, tokens, finish codes, or private logs in a public issue.</p>
+		<p>This page will be updated when the plugin's data use changes. A wider Gmail permission will require new Google consent.</p>
+	</main>
+</body>
+</html>
