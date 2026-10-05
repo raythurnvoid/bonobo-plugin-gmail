@@ -154,30 +154,25 @@ function network(answer: (path: string, body: unknown, url: URL) => Response | P
 	return calls;
 }
 
-async function stop_after_task_save(
+async function stop_after_mutation(
 	f: Awaited<ReturnType<typeof fixture>>,
-	state: "unstarted" | "uncertain" | "pending" | "saved" | "unconfirmed",
-	progress: { deliveries?: number; emailWritten?: boolean } = {},
+	mutation: "save_message" | "save_traversal" | "discover_message",
+	reached: () => Promise<boolean>,
 ) {
 	// Convex-test calls this internal handler. Stop after its mutation commits.
 	const registered = work_account_slice as typeof work_account_slice & {
 		_handler: (ctx: ActionCtx, args: { work: typeof f.work }) => Promise<null>;
 	};
 	const handler = registered._handler;
-	const crash = new Error("Worker stopped after task save");
+	const crash = new Error("Worker stopped after saved checkpoint");
 	let stopped = false;
 	const interrupted = vi.spyOn(registered, "_handler").mockImplementation(async (ctx, args) => {
 		const runMutation: ActionCtx["runMutation"] = async (reference, ...values) => {
 			if (stopped) throw crash;
 			const result = await ctx.runMutation(reference, ...values);
-			if (getFunctionName(reference) === "gmail_accounts:save_message") {
-				const saved = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
-				if (saved.attachments.length === 1 && saved.attachments[0].state === state &&
-					(progress.deliveries === undefined || saved.attachments[0].deliveries === progress.deliveries) &&
-					(progress.emailWritten === undefined || saved.emailWritten === progress.emailWritten)) {
-					stopped = true;
-					throw crash;
-				}
+			if (getFunctionName(reference) === `gmail_accounts:${mutation}` && await reached()) {
+				stopped = true;
+				throw crash;
 			}
 			return result;
 		};
@@ -190,6 +185,19 @@ async function stop_after_task_save(
 	}
 	expect(stopped).toBe(true);
 	return crash;
+}
+
+async function stop_after_task_save(
+	f: Awaited<ReturnType<typeof fixture>>,
+	state: "unstarted" | "uncertain" | "pending" | "saved" | "unconfirmed",
+	progress: { deliveries?: number; emailWritten?: boolean } = {},
+) {
+	return stop_after_mutation(f, "save_message", async () => {
+		const saved = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		return saved.attachments.length === 1 && saved.attachments[0].state === state &&
+			(progress.deliveries === undefined || saved.attachments[0].deliveries === progress.deliveries) &&
+			(progress.emailWritten === undefined || saved.emailWritten === progress.emailWritten);
+	});
 }
 
 describe("work_account_slice", () => {
@@ -1755,6 +1763,69 @@ describe("work_account_slice", () => {
 			messagesSynced: ids.length,
 		});
 		expect((await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!.deletedAt).not.toBeNull();
+	});
+	test.each(["baseline", "page", "discovery"] as const)("a stop after the %s checkpoint resumes saved backfill", async (step) => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		// Pause the queue so completion and dispatch choose each next request.
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const f = await fixture({ fresh: true });
+		await f.t.run(async (ctx) => {
+			await ctx.db.delete(f.ledgerId);
+			const account = (await ctx.db.get(f.accountId))!;
+			await ctx.db.patch(f.accountId, { nextSliceKind: "backfill", historyId: null, backfillComplete: false,
+				backfillPage: null, backfillPageToken: null, lastSyncedAt: null, ledgerCounts: { ...account.ledgerCounts, pending: 0 } });
+		});
+		const calls = network((path) => {
+			now += 600;
+			if (path.endsWith("/profile")) return Response.json(profile);
+			if (path.endsWith("/messages")) return Response.json({ messages: [{ id: "ab" }], nextPageToken: "list-next" });
+			if (path.endsWith("/messages/ab")) return Response.json({ ...source,
+				payload: { ...source.payload, parts: [source.payload.parts[0]] } });
+			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
+			return Response.json({}, { status: 500 });
+		});
+		const crash = await stop_after_mutation(f, step === "discovery" ? "discover_message" : "save_traversal", async () => {
+			const account = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+			return step === "baseline" ? account.historyId === "10" && account.backfillPage === null
+				: account.backfillPage?.index === 0;
+		});
+		expect(calls.map(call => call.path)).toEqual([
+			"/token", "/gmail/v1/users/me/profile", ...(step === "baseline" ? [] : ["/gmail/v1/users/me/messages"]),
+		]);
+		// Read this one message key fully so a duplicate doc fails the check.
+		const discovered = await f.t.run((ctx) => ctx.db.query("messages_ledger").withIndex("by_account_gmailMessageId",
+			(q) => q.eq("accountId", f.accountId).eq("gmailMessageId", "ab")).collect());
+		expect(discovered).toHaveLength(step === "discovery" ? 1 : 0);
+		if (step === "discovery") expect(discovered[0]).toMatchObject({ status: "pending", emailWritten: false, filePath: null });
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ historyId: "10", backfillComplete: false,
+			backfillPage: step === "baseline" ? null : { ids: ["ab"], nextPageToken: "list-next", index: 0 },
+			lastSyncedAt: null, ledgerCounts: { pending: step === "discovery" ? 1 : 0, done: 0 } });
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: f.workId, context: f.work, result: { kind: "failed", error: crash.message } });
+		const stopped = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(stopped.nextSyncAt).toBeGreaterThan(now);
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ syncWorkId: null, syncRequestId: null });
+		now = stopped.nextSyncAt!;
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		const queued = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(queued.syncWorkId).not.toBeNull();
+		expect(queued.syncRequestId).not.toBe(f.work.requestId);
+		const work = { ...f.work, requestId: queued.syncRequestId! };
+		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		const messages = await f.t.run((ctx) => ctx.db.query("messages_ledger").withIndex("by_account_gmailMessageId",
+			(q) => q.eq("accountId", f.accountId).eq("gmailMessageId", "ab")).collect());
+		expect(messages).toHaveLength(1);
+		expect(messages[0]).toMatchObject({ status: "done", emailWritten: true, fileNodeId: "email-node" });
+		if (step === "discovery") expect(messages[0]._id).toBe(discovered[0]._id);
+		expect(calls.filter(call => call.path.endsWith("/profile"))).toHaveLength(1);
+		expect(calls.filter(call => call.path.endsWith("/messages"))).toHaveLength(1);
+		expect(calls.filter(call => call.path.endsWith("/messages/ab"))).toHaveLength(1);
+		expect(calls.filter(call => call.path.endsWith("/files/write"))).toHaveLength(1);
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: queued.syncWorkId! as typeof f.workId, context: work, result: { kind: "success", returnValue: null } });
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ historyId: "10", backfillPage: null,
+			backfillPageToken: "list-next", backfillComplete: false, lastSyncedAt: null, messagesSynced: 1,
+			syncStatus: "backfilling", syncError: null, syncWorkId: null, syncRequestId: null, ledgerCounts: { pending: 0, done: 1 } });
 	});
 	test("the first baseline is saved before backfill listing", async () => {
 		const f = await fixture();
