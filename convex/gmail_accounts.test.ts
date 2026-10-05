@@ -7,6 +7,38 @@ import { gmail_workpool } from "./gmail_workpool";
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(1_800_000_000_000); });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
+describe("status", () => {
+	test("fills each page from the exact organization and workspace", async () => {
+		const { t, actor, accountId } = await gmail_test_fixture();
+		const account = (await t.run(ctx => ctx.db.get(accountId)))!;
+		const matchingIds = await t.run(async ctx => {
+			const { _id, _creationTime, ...fields } = account;
+			const disconnected = { ...fields, googleRefreshToken: null, hostGrantId: null, syncStatus: "disconnected" as const,
+				nextSyncAt: null, permissionProbeNotBefore: null,
+				ledgerCounts: { pending: 0, done: 0, skipped: 0, failed: 0, given_up: 0, emailAssumed: 0, permissionHeld: 0 } };
+			// More than one page of other accounts must not shorten the matching page.
+			for (let i = 0; i < 30; i++) {
+				const emailAddress = `a-${i.toString().padStart(2, "0")}@example.com`;
+				await ctx.db.insert("gmail_accounts", { ...disconnected, emailAddress, hostOrganizationId: "other-org" });
+				await ctx.db.insert("gmail_accounts", { ...disconnected, emailAddress, hostWorkspaceId: "other-workspace" });
+			}
+			const ids = [];
+			for (let i = 0; i < 26; i++) ids.push(await ctx.db.insert("gmail_accounts", {
+				...disconnected, emailAddress: `match-${i.toString().padStart(2, "0")}@example.com`,
+			}));
+			return ids;
+		});
+		const first = await t.query(internal.gmail_accounts.status, { ...actor, canWrite: false,
+			paginationOpts: { numItems: 25, cursor: null } });
+		expect(first.accounts.map(account => account.accountId)).toEqual(matchingIds.slice(0, 25));
+		expect(first.cursor).not.toBeNull();
+		const second = await t.query(internal.gmail_accounts.status, { ...actor, canWrite: false,
+			paginationOpts: { numItems: 25, cursor: first.cursor } });
+		expect(second.accounts.map(account => account.accountId)).toEqual([matchingIds[25], accountId]);
+		expect(second.cursor).toBeNull();
+	});
+});
+
 describe("disconnect", () => {
 	test("clears local secrets and work while keeping Files progress and the permission clock", async () => {
 		const { t, actor, accountId, grantId, ledgerId } = await gmail_test_fixture();

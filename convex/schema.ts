@@ -60,6 +60,7 @@ export default defineSchema({
 		syncWorkId: nullableString, syncRequestId: nullableString, lastSyncedAt: nullableNumber, updatedAt: v.number(),
 	})
 		.index("by_hostWorkspace_emailAddress", ["hostWorkspaceId", "emailAddress"])
+		.index("by_hostOrganization_hostWorkspace_emailAddress", ["hostOrganizationId", "hostWorkspaceId", "emailAddress"])
 		.index("by_hostWorkspace_destinationPath", ["hostWorkspaceId", "destinationPath"])
 		.index("by_hostInstallation", ["hostInstallationId"])
 		.index("by_syncStatus", ["syncStatus"])

@@ -63,6 +63,8 @@ Current Press attachment billing is one cent per started 20 MiB. A 32 MiB attach
 
 ## Sync and recovery
 
+Status lists accounts through an exact organization/workspace/email index, in pages of 25. It reads saved counters instead of walking the message ledger.
+
 A minute dispatcher queues one slice per account. One Workpool runs with parallelism 1 and five crash attempts. Each source or save slice starts at most 25 complete steps in 40 seconds. A started step finishes its preparation, one attachment delivery, and checkpoint before yielding. It can cross the time limit. Calls have finite timeouts. Each Press Files route is paced at least 0.6 seconds apart per installation.
 
 Backfill, history, and due retries take turns from the start. A fresh profile baseline is saved before listing. Backfill stores at most 25 IDs and its position. History stores only a cursor and event anchor; batches contain at most 25 events. A completed history page owns durable queue entries before its cursor moves. Only a completed final history page changes the last-check time. History JSON is limited to 16 MiB; an oversized page retries with one record, then stops visibly if needed.
@@ -98,6 +100,8 @@ Local Disconnect and Cancel never revoke Google access. Removing this app in Goo
 ## Release checks
 
 Code completion and release readiness are separate. Release needs all plan tests, guard-removal proofs, installed-frame Playwriter checks, and a real 24-hour hosting measurement. The Free byte-limit gap remains open. No capacity claim is made yet.
+
+Local tests prove full status pages despite more than one page of other accounts. They also prove that restart after saving a reinstall target waits for the saved permission time, then resumes the same target. Both checks failed when their rules were broken and passed after restoration. The current dev idle measurement still uses the earlier backend. Deploy and verify the new status index after that measurement ends.
 
 The installed dev frame has passed status, update, narrow-layout, and simulated unavailable/hidden-page checks. Google client settings are saved on the plugin backend. Real read-only consent, Finish, waiting-page reloads and Reconnect passed. Files search found a saved email. A Gmail-web self-send saved the expected body and sent direction. Its attachment matched the original bytes and SHA-256 hash. A Press agent read that file with a successful stored Bash result. Remaining live access and recovery checks are open. Local fixtures cover receipt isolation, crash checkpoints, long backfill with parallel history, and access holds. Recovery tests also cover offline spam/trash rescue after history expiry, a rescue moved back to trash, sent draft IDs, reinstall filename conflicts, and failed refresh after returning visible. They do not replace mailbox or hosted workload checks.
 

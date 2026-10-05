@@ -1340,6 +1340,68 @@ describe("permission guards", () => {
 		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(replacement);
 		expect((await f.t.run((ctx) => ctx.db.get(f.accountId)))!.permissionProbeNotBefore).toBe(claimed.claim.deadline);
 	});
+	test("a restart after saving a reinstall target waits for its claim and resumes that target", async () => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		const f = await fixture({ held: true });
+		await f.t.run(async ctx => {
+			const row = (await ctx.db.get(f.ledgerId))!;
+			await ctx.db.patch(row._id, { attachments: row.attachments.map(task => ({
+				...task, request: { ...task.request!, installationId: "old-installation" },
+			})) });
+		});
+		const claimed = (await f.t.mutation(internal.gmail_accounts.claim_permission, {
+			work: f.work, rowId: f.ledgerId,
+		}))!;
+		const replacement = (await f.t.mutation(internal.gmail_accounts.save_message, {
+			work: f.work, before: claimed.row, claim: claimed.claim, proof: null, transfer: true,
+			after: { ...claimed.row, fileAccessOperation: { kind: "attachment", index: 0, operation: "create" },
+				attachments: claimed.row.attachments.map(task => ({ ...task, suffix: 1, state: "uncertain" as const,
+					accepted: false, uploadAttemptedAt: null, nodeId: null, livePath: null,
+					request: { ...task.request!, installationId: "installation", idempotencyKey: `${f.accountId}:ab`,
+						path: task.initialPath.replace(/\.pdf$/, "-2.pdf") },
+				})) },
+		}))!;
+		expect(replacement).not.toBeNull();
+		const request = replacement.attachments[0].request!;
+		let finalizes = 0;
+		const calls = network(path => {
+			now += 1000;
+			if (path.endsWith("/history")) return Response.json({ historyId: "10" });
+			if (path.endsWith("/messages/ab")) return Response.json(source);
+			if (path.endsWith("/finalize")) {
+				return ++finalizes === 1 ? Response.json({}, { status: 404 }) : Response.json({ ...committed, path: request.path });
+			}
+			if (path.endsWith("/create-target")) {
+				return Response.json({ ...transport, path: request.path, uploadUrlExpiresAt: now + 3600_000 });
+			}
+			return new Response(null, { status: 200 });
+		});
+		// Stop after the saved replacement, then restart without the old in-memory claim.
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		expect(calls.filter(call => /messages\/ab|files\/|object/.test(call.path))).toHaveLength(0);
+		expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(replacement);
+		expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toMatchObject({
+			permissionProbeNotBefore: claimed.claim.deadline, ledgerCounts: { permissionHeld: 1 },
+		});
+		now = claimed.claim.deadline;
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		expect(finalizes).toBe(2);
+		expect(calls.filter(call => call.path.endsWith("/finalize")).map(call => call.body)).toEqual([
+			{ idempotencyKey: request.idempotencyKey, targetKey: request.targetKey },
+			{ idempotencyKey: request.idempotencyKey, targetKey: request.targetKey },
+		]);
+		const { installationId: _installationId, ...fields } = request;
+		expect(calls.filter(call => call.path.endsWith("/create-target")).map(call => call.body)).toEqual([fields]);
+		expect(calls.filter(call => call.path === "/object")).toHaveLength(1);
+		expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toMatchObject({
+			status: "done", permissionHeld: false, attempts: 0,
+			attachments: [{ suffix: 1, state: "saved", deliveries: 3, sourceUnavailablePendingChecks: 3, request }],
+		});
+		expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toMatchObject({
+			permissionProbeNotBefore: null, ledgerCounts: { pending: 0, done: 1, permissionHeld: 0 },
+		});
+	});
 	test("a crash after claiming one of nine hundred held rows cannot claim another", async () => {
 		const f = await fixture({ held: true, sourceError: "google_revoked" });
 		const peer = await f.t.run(async (ctx) => {

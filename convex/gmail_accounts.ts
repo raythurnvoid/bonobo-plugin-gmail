@@ -112,11 +112,12 @@ export const status = internalQuery({
 	handler: async (ctx, args) => {
 		const page = await ctx.db
 			.query("gmail_accounts")
-			.withIndex("by_hostWorkspace_emailAddress", (q) => q.eq("hostWorkspaceId", args.workspaceId))
+			.withIndex("by_hostOrganization_hostWorkspace_emailAddress", (q) =>
+				q.eq("hostOrganizationId", args.organizationId).eq("hostWorkspaceId", args.workspaceId),
+			)
 			.paginate(args.paginationOpts);
 		const accounts = [];
 		for (const account of page.page) {
-			if (account.hostOrganizationId !== args.organizationId) continue;
 			const grant = account.hostGrantId ? await ctx.db.get(account.hostGrantId) : null;
 			const pressReady =
 				grant?.phase === "ready" &&
