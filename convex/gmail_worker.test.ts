@@ -1659,6 +1659,140 @@ describe("work_account_slice", () => {
 			syncStatus: "live", syncError: null, syncWorkId: null, syncRequestId: null, ledgerCounts: { pending: 0, done: 1 },
 		});
 	});
+	test("a stop after a content failure advances backfill without new calls", async () => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const f = await fixture({ fresh: true });
+		await f.t.run((ctx) => ctx.db.patch(f.accountId, {
+			nextSliceKind: "backfill", backfillComplete: false, backfillPage: { ids: ["ab"], nextPageToken: null, index: 0 },
+		}));
+		const message = { ...source, payload: { ...source.payload, parts: [source.payload.parts[0], {
+			partId: "1", filename: "invoice.pdf", mimeType: "application/pdf", body: { size: 3, data: "ZmlsZQ" },
+		}] } };
+		const calls = network((path) => {
+			now += 600;
+			if (path.endsWith("/messages/ab")) return Response.json(message);
+			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
+			return Response.json({}, { status: 500 });
+		});
+		const crash = await stop_after_mutation(f, "save_message", async () => {
+			const saved = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+			return saved.status === "given_up" && saved.error === "invalid_source";
+		});
+		const saved = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		expect(saved).toMatchObject({ status: "given_up", error: "invalid_source", attempts: 1,
+			emailWritten: true, fileNodeId: "email-node", attachmentsNotSaved: 1, settlementNeeded: false, nextAttemptAt: null,
+			attachments: [{ state: "not_saved", reason: "source_unavailable", request: null, nextAttemptAt: null }],
+		});
+		expect(calls.map(call => call.path)).toEqual(["/token", "/gmail/v1/users/me/messages/ab", "/api/v1/files/write"]);
+		// The email was saved before its attachment failed.
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ backfillComplete: false,
+			backfillPage: { ids: ["ab"], index: 0 }, messagesSynced: 1, ledgerCounts: { pending: 0, done: 0, given_up: 1 },
+		});
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: f.workId, context: f.work, result: { kind: "failed", error: crash.message } });
+		const stopped = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(stopped.nextSyncAt).toBeGreaterThan(now);
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ syncWorkId: null, syncRequestId: null });
+		now = stopped.nextSyncAt!;
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		const queued = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(queued.syncWorkId).not.toBeNull();
+		expect(queued.syncRequestId).not.toBe(f.work.requestId);
+		const work = { ...f.work, requestId: queued.syncRequestId! };
+		const before = calls.length;
+		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		expect(calls).toHaveLength(before);
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(saved);
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: queued.syncWorkId! as typeof f.workId, context: work, result: { kind: "success", returnValue: null } });
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ backfillComplete: true,
+			backfillPage: null, backfillPageToken: null, messagesSynced: 1, syncStatus: "live", syncError: null,
+			syncWorkId: null, syncRequestId: null, ledgerCounts: { pending: 0, done: 0, given_up: 1 },
+		});
+	});
+	test("a stop after a future failure keeps its due time through backfill and history", async () => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const f = await fixture({ fresh: true });
+		await f.t.run((ctx) => ctx.db.patch(f.accountId, {
+			nextSliceKind: "backfill", backfillComplete: false, backfillPage: { ids: ["ab"], nextPageToken: null, index: 0 },
+		}));
+		let refused = true;
+		const calls = network((path) => {
+			now += 600;
+			if (path.endsWith("/messages/ab")) return Response.json({ ...source, payload: { ...source.payload, parts: [source.payload.parts[0]] } });
+			if (path.endsWith("/files/write")) return refused
+				? Response.json({ message: "A different conflict" }, { status: 409 }) : Response.json({ nodeId: "email-node" });
+			if (path.endsWith("/history")) return Response.json({ historyId: "20", history: [{ id: "11", messagesAdded: [{ message: { id: "ab" } }] }] });
+			return Response.json({}, { status: 500 });
+		});
+		let work = f.work;
+		let workId = f.workId;
+		// Two real failures give a ten-minute message delay and a shorter account backoff.
+		for (let attempts = 1; attempts <= 2; attempts++) {
+			const crash = await stop_after_mutation({ ...f, work }, "save_message", async () => {
+				const saved = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+				return saved.status === "failed" && saved.attempts === attempts;
+			});
+			expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ backfillPage: { ids: ["ab"], index: 0 } });
+			await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "failed", error: crash.message } });
+			const stopped = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+			expect(stopped.nextSyncAt).toBeGreaterThan(now);
+			await f.t.mutation(internal.gmail_accounts.dispatch, {});
+			expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ syncWorkId: null, syncRequestId: null });
+			now = stopped.nextSyncAt!;
+			await f.t.mutation(internal.gmail_accounts.dispatch, {});
+			const queued = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+			expect(queued.syncWorkId).not.toBeNull();
+			expect(queued.syncRequestId).not.toBe(work.requestId);
+			work = { ...f.work, requestId: queued.syncRequestId! };
+			workId = queued.syncWorkId! as typeof f.workId;
+		}
+		const saved = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		expect(saved).toMatchObject({ status: "failed", error: "file_conflict", attempts: 2, emailWritten: false, settlementNeeded: false });
+		expect(saved.nextAttemptAt).toBeGreaterThan(now);
+		const before = calls.length;
+		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		expect(calls).toHaveLength(before);
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(saved);
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "success", returnValue: null } });
+		const backfilled = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(backfilled).toMatchObject({ backfillComplete: true, backfillPage: null, nextSliceKind: "history",
+			messagesSynced: 0, ledgerCounts: { pending: 0, failed: 1, done: 0 },
+		});
+		expect(backfilled.nextSyncAt).toBeLessThan(saved.nextAttemptAt!);
+		now = backfilled.nextSyncAt!;
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		const history = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(history.syncWorkId).not.toBeNull();
+		expect(history.syncRequestId).not.toBe(work.requestId);
+		work = { ...f.work, requestId: history.syncRequestId! };
+		workId = history.syncWorkId! as typeof f.workId;
+		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		expect(calls.slice(before).map(call => call.path)).toEqual(["/token", "/gmail/v1/users/me/history"]);
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(saved);
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "success", returnValue: null } });
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ historyId: "20", nextSliceKind: "retry", ledgerCounts: { failed: 1, done: 0 } });
+		now = saved.nextAttemptAt!;
+		refused = false;
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		const due = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(due.syncWorkId).not.toBeNull();
+		expect(due.syncRequestId).not.toBe(work.requestId);
+		work = { ...f.work, requestId: due.syncRequestId! };
+		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		expect(calls.filter(call => call.path.endsWith("/messages/ab"))).toHaveLength(3);
+		const writes = calls.filter(call => call.path.endsWith("/files/write"));
+		expect(writes).toHaveLength(3);
+		for (const write of writes) expect(write.body).toMatchObject({ path: saved.filePath });
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({ status: "done", emailWritten: true, fileNodeId: "email-node", attempts: 2, nextAttemptAt: null });
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: due.syncWorkId! as typeof f.workId, context: work, result: { kind: "success", returnValue: null } });
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ messagesSynced: 1, syncStatus: "live", syncError: null,
+			syncWorkId: null, syncRequestId: null, ledgerCounts: { pending: 0, failed: 0, done: 1 },
+		});
+	});
 	test("a completed backfill replay makes no source or Files calls", async () => {
 		const f = await fixture({ fresh: true });
 		await f.t.run(async (ctx) => {

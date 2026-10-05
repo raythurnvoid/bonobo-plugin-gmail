@@ -1011,6 +1011,9 @@ export const work_account_slice = internalAction({
           status: final ? "given_up" : "failed",
           attempts,
           attachments,
+          attachmentsNotSaved: attachments.filter(
+            (task) => task.state === "not_saved",
+          ).length,
           error: contentError
             ? error instanceof gmail_ContentError
               ? error.code

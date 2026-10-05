@@ -111,6 +111,8 @@ Email stop tests keep the saved path even when a later mock subject changes. The
 
 Local backfill stop tests keep the history baseline, fetched page and discovered message. Recovery makes one profile call, one list call and one email write in total. The same account/message key keeps one record, and the next page token stays saved. Each reuse check fails when removed and passes after restoration.
 
+A content failure now saves the count of attachments that were not saved. Local stop tests keep that count, the saved email and final status after an attachment byte-count error. Backfill resumes with no new calls or message changes. Two real write failures save a future retry time; backfill and repeated history work make no early message or write calls. The due retry uses the saved path and finishes once. Removing the named save and recovery checks fails these tests; restoring them passes. Providers are fake, and hosted checks remain open.
+
 The last resolved attachment and its message status now save together. A stopped worker could previously leave a saved attachment on a pending message that could not finish after Google access stopped. Local tests stop after committed create/finalize saves, then record revocation and run completion/dispatch. They keep the message complete with no new calls. Deploy and verify this fix after the current idle measurement.
 
 An unconfirmed attachment now saves with its message's needs-Retry status too. The local stop test runs five pending checks through completion and dispatch. No automatic work follows the fifth result. Explicit Retry keeps the same receipt and finishes with one finalize call, without Google, create or PUT calls. Live verification remains open.
