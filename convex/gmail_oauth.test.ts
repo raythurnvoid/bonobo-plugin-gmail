@@ -6,6 +6,7 @@ import schema from "./schema";
 import { gmail_callback, gmail_finish, gmail_start } from "./gmail_oauth";
 import { gmail_decrypt, gmail_google_token_purpose, gmail_random_secret, gmail_sha256 } from "./gmail_secrets";
 import { GMAIL_READONLY_SCOPE } from "./gmail_google";
+import { gmail_test_fixture } from "../scripts/gmail-test-fixtures";
 
 const modules = import.meta.glob("./**/*.ts");
 const actor = { organizationId: "org", workspaceId: "workspace", installationId: "installation", actorUserId: "actor" };
@@ -13,8 +14,7 @@ const plu = `plu_${"1".repeat(64)}`;
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(1_800_000_000_000); });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
-function setup() {
-	const t = convexTest(schema, modules);
+function setup(t = convexTest(schema, modules)) {
 	const state = { email: "ray@example.com", googleExchanges: 0, loseGoogle: false, losePress: false, exchanges: 0,
 		grantActor: { ...actor }, deadTokens: new Set<string>(), temporaryTokens: new Set<string>(), verifiedTokens: [] as string[] };
 	const receipts = new Map<string, { token: string; expiresAt: number; scopes: string[]; organizationId: string; workspaceId: string; installationId: string; actorUserId: string }>();
@@ -261,6 +261,93 @@ describe("gmail_finish", () => {
 		expect(await t.action(ctx => gmail_finish(ctx, actor, { attemptId: reconnect.attemptId, finishCode: reconnect.finishCode }))).toMatchObject({ connectionGeneration: 2 });
 		expect(await t.run(ctx => ctx.db.get(receipt.accountId))).toMatchObject({ destinationPath: "/emails/ray-example.com", permissionProbeNotBefore: due,
 			messagesSynced: 12, ledgerCounts: { permissionHeld: 2, emailAssumed: 1 }, historyId: null, historyPageToken: null, backfillPageToken: null, backfillComplete: false, lastSyncedAt: null });
+	});
+	test.each(["pending", "awaiting_finish"])("a later writer cancels an older %s Reconnect and keeps saved mail", async status => {
+		const f = await gmail_test_fixture();
+		const { t, state, start } = setup(f.t);
+		const before = (await t.run(ctx => ctx.db.get(f.accountId)))!;
+		const ledger = await t.run(ctx => ctx.db.get(f.ledgerId));
+		const older = await start(gmail_random_secret(), f.accountId);
+		const oldState = new URL(older.consentUrl!).searchParams.get("state")!;
+		const oldCallback = status === "awaiting_finish"
+			? await t.action(ctx => gmail_callback(ctx, oldState, "older-code", false)) : null;
+		const oldAttempt = (await t.query(internal.gmail_oauth.get_attempt, { ...actor, attemptId: older.attemptId }))!;
+		const laterWriter = { ...actor, actorUserId: "later-writer" }; state.grantActor = laterWriter;
+		const newer = await t.action(ctx => gmail_start(ctx, laterWriter, {
+			clientRequestId: gmail_random_secret(), accountId: f.accountId,
+		}, plu));
+		const cancelled = await t.query(internal.gmail_oauth.get_attempt, { ...actor, attemptId: older.attemptId });
+		expect(cancelled?.status).toBe("cancelled");
+		expect(cancelled).toMatchObject({ stateHash: null, encryptedState: null, stagedRefreshToken: null,
+			finishCodeHash: null, encryptedFinishCode: null,
+		});
+		expect(await t.run(ctx => ctx.db.get(oldAttempt.grantId!))).toMatchObject({
+			phase: "cancelled", sourceSecret: null, interactiveSecret: null, sealedSecret: null, nextAttemptAt: null,
+		});
+		const callback = await t.action(ctx => gmail_callback(ctx, new URL(newer.consentUrl!).searchParams.get("state")!, "newer-code", false));
+		const input = { attemptId: newer.attemptId, finishCode: callback.finishCode! };
+		const receipt = await t.action(ctx => gmail_finish(ctx, laterWriter, input));
+		expect(receipt).toEqual({ accountId: f.accountId, connectionGeneration: 2 });
+		const after = (await t.run(ctx => ctx.db.get(f.accountId)))!;
+		expect(after.hostActorUserId).toBe(laterWriter.actorUserId);
+		expect(after).toMatchObject({ destinationPath: before.destinationPath,
+			permissionProbeNotBefore: before.permissionProbeNotBefore, messagesSynced: before.messagesSynced,
+			ledgerCounts: before.ledgerCounts, syncStatus: "backfilling", historyId: null, historyPageToken: null,
+			backfillPage: null, backfillPageToken: null, backfillComplete: false, connectRequestId: null,
+		});
+		expect(await t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(ledger);
+		expect(await t.run(ctx => ctx.db.get(f.grantId))).toMatchObject({
+			phase: "cancelled", sourceSecret: null, interactiveSecret: null, sealedSecret: null, nextAttemptAt: null,
+		});
+		const exchanges = state.googleExchanges;
+		await expect(t.action(ctx => gmail_callback(ctx, oldState, "older-code", false))).rejects.toThrow("invalid_callback");
+		if (oldCallback) await expect(t.action(ctx => gmail_finish(ctx, actor, {
+			attemptId: older.attemptId, finishCode: oldCallback.finishCode!,
+		}))).rejects.toThrow("invalid_finish_code");
+		expect(state.googleExchanges).toBe(exchanges);
+		expect(await t.action(ctx => gmail_finish(ctx, laterWriter, input))).toEqual(receipt);
+		expect(await t.run(ctx => ctx.db.get(f.accountId))).toEqual(after);
+		expect(await t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(ledger);
+	});
+	test("an in-flight callback cannot stage its token after a later writer reconnects", async () => {
+		const f = await gmail_test_fixture();
+		const { t, state, start } = setup(f.t);
+		const older = await start(gmail_random_secret(), f.accountId);
+		const oldState = new URL(older.consentUrl!).searchParams.get("state")!;
+		const fetch = globalThis.fetch;
+		let exchangeStarted!: () => void;
+		let releaseExchange!: () => void;
+		const started = new Promise<void>(resolve => { exchangeStarted = resolve; });
+		const released = new Promise<void>(resolve => { releaseExchange = resolve; });
+		vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = new URL(input instanceof Request ? input.url : String(input));
+			// Pause only the older exchange so the new connection can finish.
+			if (url.origin === "https://oauth2.googleapis.com" && new URLSearchParams(String(init?.body)).get("code") === "older-code") {
+				exchangeStarted();
+				await released;
+			}
+			return fetch(input, init);
+		});
+		const lateReply = t.action(ctx => gmail_callback(ctx, oldState, "older-code", false)).catch((error: unknown) => error);
+		await started;
+		const laterWriter = { ...actor, actorUserId: "later-writer" }; state.grantActor = laterWriter;
+		try {
+			const newer = await t.action(ctx => gmail_start(ctx, laterWriter, {
+				clientRequestId: gmail_random_secret(), accountId: f.accountId,
+			}, plu));
+			const callback = await t.action(ctx => gmail_callback(ctx, new URL(newer.consentUrl!).searchParams.get("state")!, "newer-code", false));
+			await t.action(ctx => gmail_finish(ctx, laterWriter, { attemptId: newer.attemptId, finishCode: callback.finishCode! }));
+			const after = await t.run(ctx => ctx.db.get(f.accountId));
+			const ledger = await t.run(ctx => ctx.db.get(f.ledgerId));
+			releaseExchange();
+			const refused = await lateReply;
+			expect(refused instanceof Error && refused.message === "start_again").toBe(true);
+			expect(await t.query(internal.gmail_oauth.get_attempt, { ...actor, attemptId: older.attemptId })).toMatchObject({
+				status: "cancelled", stagedRefreshToken: null, stagedEmailAddress: null, encryptedFinishCode: null,
+			});
+			expect(await t.run(ctx => ctx.db.get(f.accountId))).toEqual(after);
+			expect(await t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(ledger);
+		} finally { releaseExchange(); }
 	});
 	test("wrong Gmail account and dead pending Reconnect leave the old connection intact", async () => {
 		const { t, state, stage, start, dedicated_token } = setup(); const first = await stage();
