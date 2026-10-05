@@ -993,6 +993,20 @@ export const work_account_slice = internalAction({
         await finish();
       } catch (error) {
         if (error instanceof UnitStopped) return;
+        const sourceError =
+          error instanceof SourceStopped || error instanceof gmail_GoogleError
+            ? error.code
+            : null;
+        // Keep the successful pending check before saving the source stop.
+        if (
+          pendingFinalized &&
+          (sourceError === "google_revoked" ||
+            sourceError === "gmail_request" ||
+            sourceError === "history_response_too_large")
+        ) {
+          const { account } = await current();
+          await finish_without_source({ ...account, sourceError });
+        }
         if (
           error instanceof StaleWork ||
           error instanceof SourceStopped ||
@@ -1289,6 +1303,13 @@ export const work_account_slice = internalAction({
 
     try {
       const { account } = await current();
+      // A replay of the same work must keep its saved account backoff.
+      if (
+        account.temporaryFailures > 0 &&
+        account.nextSyncAt !== null &&
+        account.nextSyncAt > Date.now()
+      )
+        return null;
       if (account.sourceError) await retries();
       else {
         if (!account.historyId) {
