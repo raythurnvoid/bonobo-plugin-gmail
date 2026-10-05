@@ -310,25 +310,26 @@ export const work_account_slice = internalAction({
         proof: number | null = null,
         transfer = false,
       ) {
-        const tasks = next.attachments ?? row.attachments;
+        const progress = { ...row, ...next };
+        const tasks = progress.attachments;
         const remaining = tasks.filter(unresolved);
         const failed = tasks.some((task) => task.state === "unconfirmed");
         const terminal = !remaining.length;
         let status: Doc<"messages_ledger">["status"] = failed
           ? "given_up"
-          : terminal && row.skipReason
+          : terminal && progress.skipReason
             ? "skipped"
             : terminal &&
-                row.error &&
+                progress.error &&
                 [
                   "source_too_large",
                   "mime_too_large",
                   "invalid_source",
-                ].includes(row.error)
+                ].includes(progress.error)
               ? "given_up"
-              : terminal && row.emailWritten
+              : terminal && progress.emailWritten
                 ? "done"
-                : row.permissionHeld
+                : progress.permissionHeld
                   ? "failed"
                   : "pending";
         if (row.status === "given_up") status = "given_up";
@@ -380,6 +381,7 @@ export const work_account_slice = internalAction({
       async function finish_without_source(
         account: Doc<"gmail_accounts">,
         answer: { nodeId: string; path: string } | null = null,
+        next: Partial<Doc<"messages_ledger">> = {},
       ) {
         const attachments = row.attachments.map((task, index) => {
           if (index === selected && unresolved(task) && task.request) {
@@ -421,7 +423,7 @@ export const work_account_slice = internalAction({
           }
           return task;
         });
-        await finish({ attachments }, answer ? selected : null);
+        await finish({ ...next, attachments }, answer ? selected : null);
       }
       try {
         if (selected >= 0 && row.attachments[selected].request) {
@@ -537,26 +539,29 @@ export const work_account_slice = internalAction({
                   ? "draft"
                   : null;
             if (skipReason) {
-              await save({ skipReason });
-              message = null;
+              // Save newly lost source and its pending check together.
+              await finish_without_source(account, null, { skipReason });
+              return;
             }
           } catch (error) {
             if (error instanceof gmail_GoogleError && error.status === 404) {
-              await save({
+              await finish_without_source(account, null, {
                 skipReason: "deleted_before_fetch",
                 deletedAt: row.deletedAt ?? Date.now(),
               });
+              return;
             } else if (
               error instanceof gmail_ContentError ||
               error instanceof gmail_ResponseTooLarge
-            )
-              await save({
+            ) {
+              await finish_without_source(account, null, {
                 error:
                   error instanceof gmail_ContentError
                     ? error.code
                     : "source_too_large",
               });
-            else throw error;
+              return;
+            } else throw error;
           }
         }
         if (!message) {

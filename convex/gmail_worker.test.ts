@@ -875,6 +875,143 @@ describe("work_account_slice", () => {
 		});
 		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ sourceError: "google_revoked", nextSyncAt: null, syncWorkId: null });
 	});
+	test.each(["deleted", "spam", "trash", "draft", "source_too_large", "mime_too_large", "invalid_source"] as const)("a stop after new %s source loss saves the pending check and skips new parts", async (kind) => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const f = await fixture({ fresh: true });
+		const skipReason = kind === "deleted" ? "deleted_before_fetch" : ["spam", "trash", "draft"].includes(kind) ? kind : null;
+		let sourceReads = 0;
+		let commit = false;
+		let cancelled = false;
+		const calls = network((path) => {
+			now += 600;
+			if (path.endsWith("/messages/ab")) {
+				sourceReads++;
+				if (sourceReads === 1) return Response.json({ ...source, payload: { ...source.payload,
+					parts: [...source.payload.parts, { ...source.payload.parts[1], partId: "2", filename: "second.pdf" }],
+				} });
+				if (kind === "deleted") return new Response(null, { status: 404 });
+				if (kind === "source_too_large") {
+					const chunk = new Uint8Array(1024 * 1024);
+					return new Response(new ReadableStream<Uint8Array>({
+						pull(controller) { controller.enqueue(chunk); },
+						cancel() { cancelled = true; },
+					}), { headers: { "Content-Length": "1" } });
+				}
+				if (kind === "mime_too_large") return Response.json({ ...source, payload: { parts: Array.from({ length: 4096 }, () => ({})) } });
+				if (kind === "invalid_source") return Response.json({ ...source, id: "ef" });
+				return Response.json({ ...source, labelIds: [kind.toUpperCase()] });
+			}
+			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
+			if (path.endsWith("/create-target")) return Response.json({ ...transport, uploadUrlExpiresAt: now + 3600_000 });
+			if (path.endsWith("/finalize")) return Response.json(commit ? committed : pending);
+			if (path.endsWith("/history")) return Response.json({ historyId: "11", history: [] });
+			if (path === "/object") return new Response(null, { status: 200 });
+			return Response.json({}, { status: 500 });
+		});
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		const created = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		expect(created.attachments.map(task => task.state)).toEqual(["pending", "unstarted"]);
+		const request = created.attachments[0].request!;
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: f.workId, context: f.work, result: { kind: "success", returnValue: null } });
+		now = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!.nextSyncAt!;
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		const queued = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(queued.syncWorkId).not.toBeNull();
+		expect(queued.syncRequestId).not.toBe(f.work.requestId);
+		const work = { ...f.work, requestId: queued.syncRequestId! };
+		const before = calls.length;
+		const crash = await stop_after_mutation({ ...f, work }, "save_message", async () => {
+			return sourceReads === 2;
+		});
+		expect(calls.slice(before).map(call => call.path)).toEqual(["/api/v1/files/service-uploads/finalize", "/token", "/gmail/v1/users/me/messages/ab"]);
+		const saved = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		expect(saved.attachments[0].sourceUnavailablePendingChecks).toBe(1);
+		expect(saved.attachments[1].state).toBe("not_saved");
+		expect(saved).toMatchObject({ status: "pending", settlementNeeded: true, attempts: 0, attachmentsNotSaved: 1,
+			filePath: created.filePath, emailWritten: true, fileNodeId: created.fileNodeId, skipReason, error: skipReason ? null : kind,
+			attachments: [{ state: "pending", accepted: true, deliveries: 1, request, nextAttemptAt: now + 60_000 },
+				{ state: "not_saved", request: null, deliveries: 0, nextAttemptAt: null, reason: "source_unavailable" }],
+		});
+		expect(saved.nextAttemptAt).toBe(saved.attachments[0].nextAttemptAt);
+		expect(saved.deletedAt).toBe(kind === "deleted" ? now : null);
+		expect(cancelled).toBe(kind === "source_too_large");
+		const early = calls.length;
+		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		expect(calls.slice(early).map(call => call.path)).toEqual(["/token", "/gmail/v1/users/me/history"]);
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(saved);
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: queued.syncWorkId! as typeof f.workId, context: work, result: { kind: "failed", error: crash.message } });
+		const completed = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(completed.nextSyncAt).toBeGreaterThan(now);
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ syncWorkId: null, syncRequestId: null });
+		now = completed.nextSyncAt!;
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		const due = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(due.syncWorkId).not.toBeNull();
+		expect(due.syncRequestId).not.toBe(work.requestId);
+		commit = true;
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: { ...f.work, requestId: due.syncRequestId! } });
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: due.syncWorkId! as typeof f.workId, context: { ...f.work, requestId: due.syncRequestId! }, result: { kind: "success", returnValue: null } });
+		expect(sourceReads).toBe(2);
+		expect(calls.filter(call => call.path.endsWith("/create-target"))).toHaveLength(1);
+		expect(calls.filter(call => call.path === "/object")).toHaveLength(1);
+		expect(calls.filter(call => call.path.endsWith("/files/write"))).toHaveLength(1);
+		expect(calls.filter(call => call.path.endsWith("/finalize")).map(call => call.body))
+			.toEqual(Array.from({ length: 3 }, () => ({ idempotencyKey: request.idempotencyKey, targetKey: request.targetKey })));
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({ status: skipReason ? "skipped" : "given_up",
+			settlementNeeded: false, nextAttemptAt: null, attempts: 0, attachmentsNotSaved: 1, skipReason,
+			error: skipReason ? null : kind, deletedAt: saved.deletedAt,
+			attachments: [{ state: "saved", request, sourceUnavailablePendingChecks: 1, nextAttemptAt: null }, { state: "not_saved" }],
+		});
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ messagesSynced: 1, sourceError: null,
+			ledgerCounts: { pending: 0, done: 0, skipped: skipReason ? 1 : 0, given_up: skipReason ? 0 : 1 },
+		});
+	});
+	test.each(["deleted", "spam", "invalid_source"] as const)("a stop after new %s source loss without receipts keeps the final status", async (kind) => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const f = await fixture({ fresh: true });
+		let sourceReads = 0;
+		const skipReason = kind === "deleted" ? "deleted_before_fetch" : kind === "spam" ? "spam" : null;
+		const calls = network((path) => {
+			now += 600;
+			if (path.endsWith("/messages/ab")) {
+				sourceReads++;
+				return kind === "deleted" ? new Response(null, { status: 404 }) : Response.json(kind === "spam"
+					? { ...source, labelIds: ["SPAM"] } : { ...source, id: "ef" });
+			}
+			if (path.endsWith("/history")) return Response.json({ historyId: "11", history: [] });
+			return Response.json({}, { status: 500 });
+		});
+		const crash = await stop_after_mutation(f, "save_message", async () => sourceReads === 1);
+		const final = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		expect(final.status).toBe(skipReason ? "skipped" : "given_up");
+		expect(final).toMatchObject({ skipReason, error: skipReason ? null : "invalid_source", attempts: 0,
+			nextAttemptAt: null, settlementNeeded: false, attachments: [], emailWritten: false, filePath: null,
+		});
+		expect(final.deletedAt).toBe(kind === "deleted" ? now : null);
+		expect(calls.map(call => call.path)).toEqual(["/token", "/gmail/v1/users/me/messages/ab"]);
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: f.workId, context: f.work, result: { kind: "failed", error: crash.message } });
+		const stopped = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(stopped.nextSyncAt).toBeGreaterThan(now);
+		now = stopped.nextSyncAt!;
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		const queued = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(queued.syncWorkId).not.toBeNull();
+		expect(queued.syncRequestId).not.toBe(f.work.requestId);
+		const work = { ...f.work, requestId: queued.syncRequestId! };
+		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: queued.syncWorkId! as typeof f.workId, context: work, result: { kind: "success", returnValue: null } });
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(final);
+		expect(sourceReads).toBe(1);
+		expect(calls.some(call => call.path.startsWith("/api/v1/"))).toBe(false);
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ messagesSynced: 0,
+			ledgerCounts: { pending: 0, done: 0, skipped: skipReason ? 1 : 0, given_up: skipReason ? 0 : 1 },
+		});
+	});
 	test.each([
 		["email write", "/files/write"],
 		["target create", "/create-target"],
