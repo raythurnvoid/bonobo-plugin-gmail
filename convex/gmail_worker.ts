@@ -245,8 +245,11 @@ export const work_account_slice = internalAction({
               }
             : {}),
         };
-        // Finish the last task and message together before source access can stop.
-        if (attachments.every((task) => !unresolved(task)))
+        // Save terminal task and message status together before a worker can stop.
+        if (
+          attachments.some((task) => task.state === "unconfirmed") ||
+          attachments.every((task) => !unresolved(task))
+        )
           await finish(next, proof, transfer);
         else await save(next, proof, transfer);
       }
