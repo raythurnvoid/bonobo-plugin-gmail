@@ -653,6 +653,7 @@ async function save_ledger(
 	account: Doc<"gmail_accounts">,
 	before: Doc<"messages_ledger"> | null,
 	after: Omit<Doc<"messages_ledger">, "_id" | "_creationTime">,
+	attachmentNote: "plan" | "storage" | "clear" | null = null,
 ) {
 	const counts = { ...account.ledgerCounts };
 	if (before) counts[before.status]--;
@@ -664,6 +665,10 @@ async function save_ledger(
 		messagesSynced: account.messagesSynced + Number(after.emailWritten) - Number(before?.emailWritten ?? false),
 		messagesSkipped:
 			account.messagesSkipped + Number(after.status === "skipped") - Number(before?.status === "skipped"),
+		// Keep the upload note with its message when a worker stops after this save.
+		...(attachmentNote !== null
+			? { attachmentsSkippedReason: attachmentNote === "clear" ? null : attachmentNote }
+			: {}),
 		updatedAt: Date.now(),
 	});
 	if (before) {
@@ -755,6 +760,7 @@ export const save_message = internalMutation({
 		claim: v.union(gmail_permission_claim, v.null()),
 		proof: v.union(v.literal("email_write"), v.number(), v.null()),
 		transfer: v.boolean(),
+		attachmentNote: v.union(v.literal("plan"), v.literal("storage"), v.literal("clear"), v.null()),
 	},
 	returns: v.union(doc(schema, "messages_ledger"), v.null()),
 	handler: async (ctx, args) => {
@@ -806,7 +812,7 @@ export const save_message = internalMutation({
 			}
 		}
 		const { _id, _creationTime, ...fields } = after;
-		return save_ledger(ctx, current.account, row, fields);
+		return save_ledger(ctx, current.account, row, fields, args.attachmentNote);
 	},
 });
 

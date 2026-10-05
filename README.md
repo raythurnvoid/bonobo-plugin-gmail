@@ -61,6 +61,8 @@ Text bodies use decoded bytes for size limits. Gmail can report a text size that
 
 Current Press attachment billing is one cent per started 20 MiB. A 32 MiB attachment uses two cents. The upload plan must also allow Files uploads. A new plan or storage refusal skips that email's new attachments. The next email checks again. Existing pending receipts remain available for finalize-only recovery if create or remint is refused. Never replace a refused receipt or delete its placeholder to avoid the check.
 
+Plan/storage skips now save their attachment count and final message together. The account note saves in that same transaction. A successful new-target create clears the old note with its accepted receipt. Local tests stop at both saves, then run completion and new dispatch. Refused mail stays complete; later mail uploads each attachment once. Stale permission claims cannot change the note. The broken save rules fail their named checks. Deploy and verify this change after the current idle measurement.
+
 ## Sync and recovery
 
 Status lists accounts through an exact organization/workspace/email index, in pages of 25. It reads saved counters instead of walking the message ledger.

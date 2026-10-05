@@ -212,6 +212,7 @@ export const work_account_slice = internalAction({
             claim,
             proof,
             transfer,
+            attachmentNote: note,
           },
         );
         if (!result) throw new StaleWork();
@@ -902,7 +903,7 @@ export const work_account_slice = internalAction({
                   reason: `${note}_settlement_only`,
                 });
               else
-                await save({
+                await finish({
                   attachments: row.attachments.map((part, i) =>
                     i === selected || !part.request
                       ? {

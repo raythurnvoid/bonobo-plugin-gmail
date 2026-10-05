@@ -1525,6 +1525,107 @@ describe("work_account_slice", () => {
 			attachmentsSkippedReason: "plan",
 		});
 	});
+	test.each([
+		["plan", "refusal", "This workspace's plan does not include file uploads"],
+		["storage", "refusal", "This workspace has reached its storage limit"],
+		["plan", "clear", "This workspace's plan does not include file uploads"],
+		["storage", "clear", "This workspace has reached its storage limit"],
+	] as const)("a stop at the %s %s note keeps its message result", async (reason, step, message) => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const f = await fixture({ fresh: true });
+		const second = { partId: "2", filename: "second.pdf", mimeType: "application/pdf", body: { size: 4, attachmentId: "second" } };
+		let refused = true;
+		let refusalReply = false;
+		let acceptedReply = false;
+		let discover = false;
+		let uploads = 0;
+		const calls = network((path) => {
+			now += 600;
+			if (/\/messages\/(ab|ef)$/.test(path)) return Response.json({ ...source, id: path.split("/").at(-1),
+				payload: { ...source.payload, parts: [...source.payload.parts, second] } });
+			if (path.endsWith("/attachments/second")) return Response.json({ size: 4, data: "ZmlsZQ" });
+			if (path.endsWith("/history")) return Response.json({ historyId: "11", history: discover
+				? [{ id: "11", messagesAdded: [{ message: { id: "ef" } }] }] : [] });
+			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
+			if (path.endsWith("/create-target")) {
+				if (refused) { refusalReply = true; return Response.json({ message }, { status: 403 }); }
+				acceptedReply = true;
+				return Response.json({ ...transport, uploadUrlExpiresAt: now + 3600_000 });
+			}
+			if (path.endsWith("/finalize")) return Response.json(uploads > 0 ? committed : pending);
+			if (path === "/object") { uploads++; return new Response(null, { status: 200 }); }
+			return Response.json({}, { status: 500 });
+		});
+		let work = f.work;
+		let workId = f.workId;
+		// Keep completion and each new dispatch on the saved account clock.
+		async function resume(crash: Error | null = null) {
+			await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work,
+				result: crash ? { kind: "failed", error: crash.message } : { kind: "success", returnValue: null } });
+			const delayed = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+			expect(delayed.nextSyncAt).toBeGreaterThan(now);
+			const before = calls.length;
+			await f.t.mutation(internal.gmail_accounts.dispatch, {});
+			expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ syncWorkId: null, syncRequestId: null });
+			expect(calls).toHaveLength(before);
+			now = delayed.nextSyncAt!;
+			await f.t.mutation(internal.gmail_accounts.dispatch, {});
+			const queued = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+			expect(queued.syncWorkId).not.toBeNull();
+			expect(queued.syncRequestId).not.toBe(work.requestId);
+			work = { ...work, requestId: queued.syncRequestId! };
+			workId = queued.syncWorkId! as typeof f.workId;
+		}
+		let crash: Error;
+		if (step === "clear") {
+			await f.t.action(internal.gmail_worker.work_account_slice, { work });
+			expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ attachmentsSkippedReason: reason });
+			await resume();
+			refused = false;
+			discover = true;
+			crash = await stop_after_mutation({ ...f, work }, "save_message", async () => acceptedReply);
+		} else crash = await stop_after_mutation({ ...f, work }, "save_message", async () => refusalReply);
+		const original = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		expect(original.attachmentsNotSaved).toBe(2);
+		expect(original).toMatchObject({ status: "done", emailWritten: true, attempts: 0, permissionHeld: false,
+			settlementNeeded: false, nextAttemptAt: null, attachments: [
+				{ state: "not_saved", reason, deliveries: 0, nextAttemptAt: null },
+				{ state: "not_saved", reason, request: null, deliveries: 0, nextAttemptAt: null },
+			] });
+		const account = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(account.attachmentsSkippedReason).toBe(step === "clear" ? null : reason);
+		expect(account).toMatchObject({ sourceError: null, ledgerCounts: { done: 1, pending: step === "clear" ? 1 : 0, permissionHeld: 0 } });
+		expect(calls.some(call => /verify-live|attachments\/second|\/object$|\/remint$|\/finalize$/.test(call.path))).toBe(false);
+		const saved = step === "clear" ? (await f.t.run((ctx) => ctx.db.query("messages_ledger")
+			.withIndex("by_account_gmailMessageId", q => q.eq("accountId", f.accountId).eq("gmailMessageId", "ef")).unique()))! : original;
+		if (step === "clear") expect(saved).toMatchObject({ status: "pending", emailWritten: true, settlementNeeded: true,
+			attachments: [{ state: "pending", accepted: true, deliveries: 0, request: expect.any(Object) }, { state: "unstarted", request: null }] });
+		if (step === "refusal") {
+			const beforeResume = calls.length;
+			await f.t.action(internal.gmail_worker.work_account_slice, { work });
+			expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(original);
+			expect(calls.slice(beforeResume).some(call => /messages\/ab|files\/write|service-uploads|\/object$/.test(call.path))).toBe(false);
+		}
+		await resume(crash);
+		for (let turn = 0; turn < (step === "clear" ? 2 : 1); turn++) {
+			await f.t.action(internal.gmail_worker.work_account_slice, { work });
+			if (step === "clear" && turn === 0) await resume();
+		}
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "success", returnValue: null } });
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(original);
+		expect(calls.filter(call => call.path.endsWith("/messages/ab"))).toHaveLength(1);
+		if (step === "clear") {
+			expect(await f.t.run((ctx) => ctx.db.get(saved._id))).toMatchObject({ status: "done", attempts: 0,
+				attachments: [{ state: "saved", request: saved.attachments[0].request, deliveries: 1 }, { state: "saved", deliveries: 1 }] });
+			expect(calls.filter(call => call.path.endsWith("/files/write"))).toHaveLength(2);
+			expect(calls.filter(call => call.path === "/object")).toHaveLength(2);
+		} else expect(calls.filter(call => call.path.endsWith("/create-target"))).toHaveLength(1);
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ attachmentsSkippedReason: step === "clear" ? null : reason,
+			messagesSynced: step === "clear" ? 2 : 1, ledgerCounts: { done: step === "clear" ? 2 : 1, pending: 0, permissionHeld: 0 },
+			syncWorkId: null, syncRequestId: null });
+	});
 	test("an accepted replay plan refusal retains its receipt for finalize-only recovery", async () => {
 		const f = await fixture();
 		const calls = network((path) =>
@@ -2732,6 +2833,7 @@ describe("permission guards", () => {
 			claim: claimed.claim,
 			proof: null,
 			transfer: true,
+			attachmentNote: null,
 			after: {
 				...claimed.row,
 				fileAccessOperation: {
@@ -2766,6 +2868,7 @@ describe("permission guards", () => {
 			claim: claimed.claim,
 			proof: null,
 			transfer: true,
+			attachmentNote: null,
 			after: {
 				...claimed.row,
 				fileAccessOperation: {
@@ -2793,10 +2896,12 @@ describe("permission guards", () => {
 				claim: claimed.claim,
 				proof: 0,
 				transfer: false,
+				attachmentNote: "storage",
 			}),
 		).toBeNull();
 		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(replacement);
 		expect((await f.t.run((ctx) => ctx.db.get(f.accountId)))!.permissionProbeNotBefore).toBe(claimed.claim.deadline);
+		expect((await f.t.run((ctx) => ctx.db.get(f.accountId)))!.attachmentsSkippedReason).toBeNull();
 	});
 	test("a restart after saving a reinstall target waits for its claim and resumes that target", async () => {
 		let now = Date.now();
@@ -2813,6 +2918,7 @@ describe("permission guards", () => {
 		}))!;
 		const replacement = (await f.t.mutation(internal.gmail_accounts.save_message, {
 			work: f.work, before: claimed.row, claim: claimed.claim, proof: null, transfer: true,
+			attachmentNote: null,
 			after: { ...claimed.row, fileAccessOperation: { kind: "attachment", index: 0, operation: "create" },
 				attachments: claimed.row.attachments.map(task => ({ ...task, suffix: 1, state: "uncertain" as const,
 					accepted: false, uploadAttemptedAt: null, nodeId: null, livePath: null,
@@ -2923,9 +3029,12 @@ describe("permission guards", () => {
 			claim: claimed.claim,
 			proof: 0,
 			transfer: false,
+			attachmentNote: "storage",
 		});
+		const savedAccount = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(savedAccount.attachmentsSkippedReason).toBeNull();
 		expect(result).toBeNull();
-		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({
+		expect(savedAccount).toMatchObject({
 			permissionProbeNotBefore: claimed.claim.deadline + 3600_000,
 		});
 	});
