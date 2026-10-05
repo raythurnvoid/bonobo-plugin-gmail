@@ -2082,6 +2082,150 @@ describe("work_account_slice", () => {
 		});
 		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(row);
 	});
+	test.each(["missing anchor", "page 400", "page 404", "expired cursor"] as const)("a stop after %s recovery keeps the pending upload and traversal", async (kind) => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const f = await fixture({ fresh: true });
+		await f.t.run((ctx) => ctx.db.patch(f.accountId, { nextSliceKind: "backfill", historyId: null,
+			backfillComplete: false, backfillPage: null, backfillPageToken: null, lastSyncedAt: null }));
+		const deleted = Array.from({ length: 30 }, (_, index) => (index + 512).toString(16));
+		const keys = ["ab", "ef", ...deleted, "ff"];
+		const historyRequests: { cursor: string | null; token: string | null }[] = [];
+		const listTokens: (string | null)[] = [];
+		let historyReply: "page" | "anchor" | "fault" | "recovered" = "page";
+		let commit = false;
+		const calls = network((path, _body, url) => {
+			now += 600;
+			if (path.endsWith("/profile")) return Response.json({ ...profile, historyId: historyReply === "fault" ? "200" : "10" });
+			if (path.endsWith("/messages")) {
+				listTokens.push(url.searchParams.get("pageToken"));
+				return Response.json({ messages: [{ id: "ab" }], ...(historyReply === "page" ? { nextPageToken: "keep-backfill" } : {}) });
+			}
+			if (path.endsWith("/history")) {
+				const cursor = url.searchParams.get("startHistoryId");
+				const token = url.searchParams.get("pageToken");
+				historyRequests.push({ cursor, token });
+				if (historyReply === "page") return Response.json({ historyId: "11", nextPageToken: "saved-page",
+					history: [{ id: "11", messagesDeleted: [{ message: { id: "ef" } }] }] });
+				if (historyReply === "anchor") return Response.json({ historyId: "20", nextPageToken: "anchor-next",
+					history: [{ id: "12", messagesDeleted: deleted.map(id => ({ message: { id } })) }] });
+				if (historyReply === "fault" && (kind === "expired cursor" || (token && kind !== "missing anchor")))
+					return Response.json({}, { status: kind === "page 400" ? 400 : 404 });
+				return Response.json({ historyId: kind === "expired cursor" ? "201" : "30", history: [
+					...(historyReply === "recovered" && kind === "missing anchor" ? [{ id: "12", messagesDeleted: deleted.map(id => ({ message: { id } })) }] : []),
+					...(kind === "expired cursor" && cursor === "201" ? [] : [{ id: "13", messagesDeleted: [{ message: { id: "ff" } }] }]),
+				] });
+			}
+			if (path.endsWith("/messages/ab")) return Response.json(source);
+			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
+			if (path.endsWith("/create-target")) return Response.json({ ...transport, uploadUrlExpiresAt: now + 3600_000 });
+			if (path.endsWith("/finalize")) return Response.json(commit ? committed : pending);
+			if (path === "/object") return new Response(null, { status: 200 });
+			return Response.json({}, { status: 500 });
+		});
+		let work = f.work;
+		let workId = f.workId;
+		// Completion and dispatch own the next request and its saved due time.
+		async function resume(crash: Error | null = null) {
+			await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work,
+				result: crash ? { kind: "failed", error: crash.message } : { kind: "success", returnValue: null } });
+			const delayed = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+			expect(delayed.nextSyncAt).toBeGreaterThan(now);
+			const before = calls.length;
+			await f.t.mutation(internal.gmail_accounts.dispatch, {});
+			expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ syncWorkId: null, syncRequestId: null });
+			expect(calls).toHaveLength(before);
+			now = delayed.nextSyncAt!;
+			await f.t.mutation(internal.gmail_accounts.dispatch, {});
+			const queued = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+			expect(queued.syncWorkId).not.toBeNull();
+			expect(queued.syncRequestId).not.toBe(work.requestId);
+			work = { ...work, requestId: queued.syncRequestId! };
+			workId = queued.syncWorkId! as typeof f.workId;
+		}
+		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		const original = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		const prepared = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(original).toMatchObject({ emailWritten: true, status: "pending", settlementNeeded: true, attempts: 0,
+			attachments: [{ state: "pending", accepted: true, deliveries: 1, sourceUnavailablePendingChecks: 0 }] });
+		expect(prepared).toMatchObject({ historyId: "10", backfillPageToken: "keep-backfill", backfillComplete: false, lastSyncedAt: null });
+		await resume();
+		const pageCrash = await stop_after_mutation({ ...f, work }, "save_traversal", async () => true);
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ historyId: "10", historyPageToken: "saved-page", lastSyncedAt: null });
+		await resume(pageCrash);
+		if (kind === "missing anchor") {
+			historyReply = "anchor";
+			const anchorCrash = await stop_after_mutation({ ...f, work }, "ingest_history", async () => true);
+			expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ historyPageToken: "saved-page",
+				historyAnchor: { historyId: "12", gmailMessageId: deleted[24], kind: "deleted" }, historyId: "10", lastSyncedAt: null });
+			await resume(anchorCrash);
+		}
+		// Exact message keys include missing docs, so a reset cannot hide lost work.
+		const beforeReset = await f.t.run((ctx) => Promise.all(keys.map(id => ctx.db.query("messages_ledger")
+			.withIndex("by_account_gmailMessageId", (q) => q.eq("accountId", f.accountId).eq("gmailMessageId", id)).collect())));
+		historyReply = "fault";
+		const faultStart = historyRequests.length;
+		const resetCrash = await stop_after_mutation({ ...f, work }, "save_traversal", async () => true);
+		expect(historyRequests.slice(faultStart)).toEqual([
+			{ cursor: "10", token: "saved-page" }, ...(kind === "missing anchor" ? [] : [{ cursor: "10", token: null }]),
+		]);
+		const stopped = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(stopped.historyId).toBe(kind === "expired cursor" ? "200" : "10");
+		expect(stopped.historyPageToken).toBeNull();
+		expect(stopped.historyAnchor).toBeNull();
+		expect(stopped.backfillPageToken).toBe(kind === "expired cursor" ? null : "keep-backfill");
+		expect(stopped).toMatchObject({ backfillComplete: false, backfillPage: null, lastSyncedAt: null,
+			destinationPath: prepared.destinationPath, googleRefreshToken: prepared.googleRefreshToken, sourceError: null,
+			connectionGeneration: work.generation });
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(original);
+		expect(await f.t.run((ctx) => Promise.all(keys.map(id => ctx.db.query("messages_ledger")
+			.withIndex("by_account_gmailMessageId", (q) => q.eq("accountId", f.accountId).eq("gmailMessageId", id)).collect())))).toEqual(beforeReset);
+		await resume(resetCrash);
+		historyReply = "recovered";
+		commit = true;
+		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		if (kind === "expired cursor") {
+			// The normal retry/history/backfill turns restart listing at page one.
+			for (let turn = 0; turn < 2; turn++) {
+				await resume();
+				await f.t.action(internal.gmail_worker.work_account_slice, { work });
+			}
+		}
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "success", returnValue: null } });
+		expect(calls.filter(call => call.path.endsWith("/profile"))).toHaveLength(kind === "expired cursor" ? 2 : 1);
+		expect(listTokens).toEqual(kind === "expired cursor" ? [null, null] : [null]);
+		expect(historyRequests).toEqual([
+			{ cursor: "10", token: null }, ...(kind === "missing anchor" ? [{ cursor: "10", token: "saved-page" }] : []),
+			{ cursor: "10", token: "saved-page" }, ...(kind === "missing anchor" ? [] : [{ cursor: "10", token: null }]),
+			{ cursor: kind === "expired cursor" ? "200" : "10", token: null },
+			...(kind === "expired cursor" ? [{ cursor: "201", token: null }] : []),
+		]);
+		const recovered = await f.t.run((ctx) => Promise.all(keys.map(id => ctx.db.query("messages_ledger")
+			.withIndex("by_account_gmailMessageId", (q) => q.eq("accountId", f.accountId).eq("gmailMessageId", id)).collect())));
+		expect(recovered.map(docs => docs.length)).toEqual(keys.map(id => deleted.includes(id) && kind !== "missing anchor" ? 0 : 1));
+		for (const [index, docs] of recovered.entries()) {
+			if (keys[index] === "ab" || !docs.length) continue;
+			expect(docs[0]).toMatchObject({ status: "skipped", skipReason: "deleted_before_fetch", deletedAt: expect.any(Number), emailWritten: false });
+			if (beforeReset[index].length) {
+				expect(docs[0]._id).toBe(beforeReset[index][0]._id);
+				expect(docs[0].deletedAt).toBe(beforeReset[index][0].deletedAt);
+			}
+		}
+		expect(recovered[0][0]).toMatchObject({ status: "done", attempts: 0, filePath: original.filePath, fileNodeId: original.fileNodeId,
+			attachments: [{ state: "saved", request: original.attachments[0].request, deliveries: 1, sourceUnavailablePendingChecks: 0 }] });
+		expect(calls.filter(call => call.path.endsWith("/messages/ab"))).toHaveLength(1);
+		expect(calls.filter(call => call.path.endsWith("/files/write"))).toHaveLength(1);
+		expect(calls.filter(call => call.path.endsWith("/create-target"))).toHaveLength(1);
+		expect(calls.filter(call => call.path === "/object")).toHaveLength(1);
+		expect(calls.filter(call => call.path.endsWith("/finalize")).map(call => call.body)).toEqual(Array.from({ length: 2 }, () => ({
+			idempotencyKey: original.attachments[0].request!.idempotencyKey, targetKey: original.attachments[0].request!.targetKey,
+		})));
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ historyId: kind === "expired cursor" ? "201" : "30",
+			historyPageToken: null, historyAnchor: null, backfillComplete: kind === "expired cursor", lastSyncedAt: expect.any(Number),
+			syncStatus: kind === "expired cursor" ? "live" : "backfilling", syncError: null, messagesSynced: 1,
+			syncWorkId: null, syncRequestId: null, ledgerCounts: { pending: 0, done: 1, skipped: kind === "missing anchor" ? 32 : 2 } });
+	});
 	test.each(["spam", "trash"] as const)("expired history backfill saves an offline %s rescue", async (skipReason) => {
 		const f = await fixture({ fresh: true });
 		await f.t.run(async (ctx) => {
