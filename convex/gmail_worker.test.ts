@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { getFunctionName } from "convex/server";
 import { internal } from "./_generated/api";
+import type { ActionCtx } from "./_generated/server";
 import { gmail_test_fixture } from "../scripts/gmail-test-fixtures";
 import { gmail_workpool } from "./gmail_workpool";
+import { work_account_slice } from "./gmail_worker";
 import { gmail_encrypt, gmail_google_token_purpose } from "./gmail_secrets";
 
 afterEach(() => {
@@ -171,6 +174,62 @@ describe("work_account_slice", () => {
 			syncStatus: "error",
 			nextSyncAt: null,
 			ledgerCounts: { pending: 0, done: 1 },
+		});
+	});
+	test.each(["create", "finalize", "source-free finalize"] as const)("a stop after committed %s keeps the message complete after revocation", async (step) => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const f = await fixture(step === "source-free finalize" ? { sourceError: "google_revoked" } : { fresh: true });
+		const calls = network((path) => {
+			now += 600;
+			if (path.endsWith("/messages/ab")) return Response.json(source);
+			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
+			if (path.endsWith("/create-target")) return Response.json(step === "create" ? committed : transport);
+			if (path.endsWith("/finalize")) return Response.json(committed);
+			return new Response(null, { status: 200 });
+		});
+		// Convex-test calls this internal handler. Stop after its mutation commits.
+		const registered = work_account_slice as typeof work_account_slice & {
+			_handler: (ctx: ActionCtx, args: { work: typeof f.work }) => Promise<null>;
+		};
+		const handler = registered._handler;
+		const crash = new Error("Worker stopped after committed task");
+		let stopped = false;
+		const interrupted = vi.spyOn(registered, "_handler").mockImplementation(async (ctx, args) => {
+			const runMutation: ActionCtx["runMutation"] = async (reference, ...values) => {
+				if (stopped) throw crash;
+				const result = await ctx.runMutation(reference, ...values);
+				if (getFunctionName(reference) === "gmail_accounts:save_message") {
+					const saved = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+					if (saved.attachments.length === 1 && saved.attachments[0].state === "saved") {
+						stopped = true;
+						throw crash;
+					}
+				}
+				return result;
+			};
+			return handler({ ...ctx, runMutation }, args);
+		});
+		try {
+			await expect(f.t.action(internal.gmail_worker.work_account_slice, { work: f.work })).rejects.toThrow(crash.message);
+		} finally {
+			interrupted.mockRestore();
+		}
+		expect(stopped).toBe(true);
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({
+			emailWritten: true, attachments: [{ state: "saved", livePath: committed.path }],
+		});
+		const before = calls.length;
+		await f.t.mutation(internal.gmail_accounts.finish_slice, { work: f.work, error: "google_revoked", retryAfterMs: null, attachmentNote: null });
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: f.workId, context: f.work, result: { kind: "failed", error: crash.message } });
+		now += 3600_000;
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		expect(calls).toHaveLength(before);
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({ status: "done", nextAttemptAt: null, settlementNeeded: false });
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({
+			messagesSynced: 1, sourceError: "google_revoked", googleRefreshToken: null,
+			nextSyncAt: null, syncWorkId: null, syncRequestId: null, ledgerCounts: { pending: 0, done: 1 },
 		});
 	});
 	test("writes Markdown, freezes a target, then PUTs and finalizes one attachment", async () => {

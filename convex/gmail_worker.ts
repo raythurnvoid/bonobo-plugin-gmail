@@ -230,25 +230,25 @@ export const work_account_slice = internalAction({
         const attachments = row.attachments.map((task, i) =>
           i === index ? { ...task, ...patch } : task,
         );
-        await save(
-          {
-            attachments,
-            settlementNeeded: attachments.some(
-              (task) => unresolved(task) && task.request !== null,
-            ),
-            ...(transfer
-              ? {
-                  fileAccessOperation: {
-                    kind: "attachment",
-                    index,
-                    operation: "create",
-                  },
-                }
-              : {}),
-          },
-          proof,
-          transfer,
-        );
+        const next = {
+          attachments,
+          settlementNeeded: attachments.some(
+            (task) => unresolved(task) && task.request !== null,
+          ),
+          ...(transfer
+            ? {
+                fileAccessOperation: {
+                  kind: "attachment" as const,
+                  index,
+                  operation: "create" as const,
+                },
+              }
+            : {}),
+        };
+        // Finish the last task and message together before source access can stop.
+        if (attachments.every((task) => !unresolved(task)))
+          await finish(next, proof, transfer);
+        else await save(next, proof, transfer);
       }
       async function host<T>(
         route:
@@ -307,8 +307,12 @@ export const work_account_slice = internalAction({
           throw new UnitStopped();
         }
       }
-      async function finish() {
-        const tasks = row.attachments;
+      async function finish(
+        next: Partial<Doc<"messages_ledger">> = {},
+        proof: number | null = null,
+        transfer = false,
+      ) {
+        const tasks = next.attachments ?? row.attachments;
         const remaining = tasks.filter(unresolved);
         const failed = tasks.some((task) => task.state === "unconfirmed");
         const terminal = !remaining.length;
@@ -334,23 +338,28 @@ export const work_account_slice = internalAction({
         const times = remaining.flatMap((task) =>
           task.nextAttemptAt === null ? [] : [task.nextAttemptAt],
         );
-        await save({
-          status,
-          nextAttemptAt: final
-            ? null
-            : times.length
-              ? Math.min(...times)
-              : Date.now() + 60_000,
-          settlementNeeded:
-            !final && remaining.some((task) => task.request !== null),
-          attachmentsNotSaved: tasks.filter(
-            (task) => task.state === "not_saved",
-          ).length,
-          ...(failed ? { error: "settlement_unconfirmed" } : {}),
-          ...(final
-            ? { permissionHeld: false, fileAccessOperation: null }
-            : {}),
-        });
+        await save(
+          {
+            ...next,
+            status,
+            nextAttemptAt: final
+              ? null
+              : times.length
+                ? Math.min(...times)
+                : Date.now() + 60_000,
+            settlementNeeded:
+              !final && remaining.some((task) => task.request !== null),
+            attachmentsNotSaved: tasks.filter(
+              (task) => task.state === "not_saved",
+            ).length,
+            ...(failed ? { error: "settlement_unconfirmed" } : {}),
+            ...(final
+              ? { permissionHeld: false, fileAccessOperation: null }
+              : {}),
+          },
+          proof,
+          transfer,
+        );
       }
       let selected = row.attachments.findIndex(
         (task) => unresolved(task) && (task.nextAttemptAt ?? 0) <= Date.now(),
