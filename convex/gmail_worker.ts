@@ -565,6 +565,7 @@ export const work_account_slice = internalAction({
         async function part_bytes(
           part: { size: number; data?: string; attachmentId?: string },
           maximum: number,
+          requireExactSize: boolean,
           timeout = 20_000,
         ) {
           if (part.size > maximum) throw new gmail_ContentError("too_large");
@@ -578,12 +579,16 @@ export const work_account_slice = internalAction({
                 timeout,
               ),
             );
-            if (!parsed.success || parsed.data.size !== part.size)
+            if (
+              !parsed.success ||
+              (requireExactSize && parsed.data.size !== part.size)
+            )
               throw new gmail_ContentError("invalid_source");
             data = parsed.data.data;
           }
           const bytes = gmail_decode_base64(data ?? "", maximum);
-          if (bytes.length !== part.size)
+          // Gmail can report a text size that differs from the decoded bytes.
+          if (requireExactSize && bytes.length !== part.size)
             throw new gmail_ContentError("invalid_source");
           return bytes;
         }
@@ -599,6 +604,7 @@ export const work_account_slice = internalAction({
                 bytes: await part_bytes(
                   part,
                   GMAIL_BODY_BYTES,
+                  false,
                   Math.min(20_000, 60_000 - (Date.now() - bodyStartedAt)),
                 ),
                 charset: part.charset,
@@ -711,7 +717,7 @@ export const work_account_slice = internalAction({
         }
         let bytes: ReturnType<typeof gmail_decode_base64>;
         try {
-          bytes = await part_bytes(source, GMAIL_ATTACHMENT_BYTES);
+          bytes = await part_bytes(source, GMAIL_ATTACHMENT_BYTES, true);
         } catch (error) {
           if (
             !(

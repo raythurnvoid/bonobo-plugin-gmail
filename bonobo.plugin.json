@@ -2,7 +2,7 @@
 	"schemaVersion": 1,
 	"name": "gmail",
 	"displayName": "Gmail",
-	"version": "0.2.1",
+	"version": "0.2.2",
 	"description": "Save sent and received Gmail emails and attachments in Press Files.",
 	"compatibility": { "bonoboPluginRuntime": "1" },
 	"events": [],

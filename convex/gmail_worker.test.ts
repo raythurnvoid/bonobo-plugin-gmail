@@ -225,6 +225,58 @@ describe("work_account_slice", () => {
 			attachments: [{ state: "saved" }],
 		});
 	});
+	test.each(["inline", "external"])("%s text body uses decoded bytes when Gmail reports a different size", async (kind) => {
+		const f = await fixture({ fresh: true });
+		const text = "café 😀";
+		const bytes = Buffer.from(text);
+		const data = bytes.toString("base64url");
+		const message = {
+			...source,
+			payload: { ...source.payload, parts: [{
+				partId: "0", mimeType: "text/plain",
+				body: kind === "inline" ? { size: text.length, data } : { size: text.length, attachmentId: "body" },
+			}] },
+		};
+		const calls = network((path) => {
+			if (path.endsWith("/messages/ab")) return Response.json(message);
+			if (path.endsWith("/attachments/body")) return Response.json({ size: bytes.length, data });
+			return Response.json({ nodeId: "email-node" });
+		});
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		const writes = calls.filter((call) => call.path.endsWith("/files/write"));
+		expect(writes).toHaveLength(1);
+		expect(writes[0].body).toMatchObject({ content: expect.stringContaining(text) });
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({ status: "done", emailWritten: true });
+	});
+	test.each(["inline", "external"])("%s attachment still requires its exact declared size", async (kind) => {
+		const f = await fixture({ fresh: true });
+		const message = {
+			...source,
+			payload: { ...source.payload, parts: [source.payload.parts[0], {
+				partId: "1", filename: "invoice.pdf", mimeType: "application/pdf",
+				body: kind === "inline" ? { size: 3, data: "ZmlsZQ" } : { size: 3, attachmentId: "file" },
+			}] },
+		};
+		const calls = network((path) => {
+			if (path.endsWith("/messages/ab")) return Response.json(message);
+			if (path.endsWith("/attachments/file")) return Response.json({ size: 3, data: "ZmlsZQ" });
+			return Response.json({ nodeId: "email-node" });
+		});
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		expect(calls.filter((call) => call.path.endsWith("/files/write"))).toHaveLength(1);
+		expect(calls.filter((call) => call.path.endsWith("/create-target"))).toHaveLength(0);
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({ status: "given_up", error: "invalid_source" });
+	});
+	test("decoded text above 2 MiB stays limited when the reported size is smaller", async () => {
+		const f = await fixture({ fresh: true });
+		const message = { ...source, payload: { ...source.payload, parts: [{
+			partId: "0", mimeType: "text/plain", body: { size: 4, data: Buffer.alloc(2 * 1024 * 1024 + 1, 65).toString("base64url") },
+		}] } };
+		const calls = network((path) => path.endsWith("/messages/ab") ? Response.json(message) : Response.json({ nodeId: "email-node" }));
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		expect(calls.find((call) => call.path.endsWith("/files/write"))?.body).toMatchObject({ content: expect.stringContaining("Body not copied:") });
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({ status: "done", emailWritten: true });
+	});
 	test("a pending target with no PUT marker replays create immediately", async () => {
 		const f = await fixture();
 		await f.t.run(async (ctx) => {

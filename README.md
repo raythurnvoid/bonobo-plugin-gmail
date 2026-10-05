@@ -2,7 +2,7 @@
 
 Gmail is a Press plugin with its own Convex backend. It saves received and sent mail as Markdown files. Attachments are saved beside each email. Press owns Files, permissions, billing, and installation.
 
-The build follows plan v4. Version 0.2.1 includes the connection page and background sync. Live Gmail and hosting checks are still open. The integration is not release ready yet.
+The build follows plan v4. Version 0.2.2 includes the connection page and background sync. Live Gmail and hosting checks are still open. The integration is not release ready yet.
 
 The frontend build keeps the page, React, and Zod in separate files. Each file is formatted and listed in the manifest with its hash. This lets the publisher read the page code within its scan limit.
 
@@ -57,6 +57,8 @@ The parser prefers plain text. It uses HTML as text when no plain body exists. A
 
 Limits: 48 MiB of streamed source JSON, 32 MiB per decoded attachment, 2 MiB of selected body bytes, 8 body parts, 60 seconds for body loading, 4,096 MIME parts, and depth 32. Complete Markdown is capped at 800,000 UTF-8 bytes. Header and recipient limits keep search data small. Planned attachment names in the email do not prove later upload success.
 
+Text bodies use decoded bytes for size limits. Gmail can report a text size that differs from the actual bytes. Attachments still need an exact size match before upload.
+
 Current Press attachment billing is one cent per started 20 MiB. A 32 MiB attachment uses two cents. The upload plan must also allow Files uploads. A new plan or storage refusal skips that email's new attachments. The next email checks again. Existing pending receipts remain available for finalize-only recovery if create or remint is refused. Never replace a refused receipt or delete its placeholder to avoid the check.
 
 ## Sync and recovery
@@ -97,6 +99,6 @@ Local Disconnect and Cancel never revoke Google access. Removing this app in Goo
 
 Code completion and release readiness are separate. Release needs all plan tests, guard-removal proofs, installed-frame Playwriter checks, and a real 24-hour hosting measurement. The Free byte-limit gap remains open. No capacity claim is made yet.
 
-The installed dev frame has passed status, update, narrow-layout, and simulated unavailable/hidden-page checks. Google client settings are saved on the plugin backend. Real read-only consent and Finish succeeded, and the page reports saved emails. File content, attachment bytes, and the remaining live recovery checks are still open. Local fixtures cover receipt isolation, crash checkpoints, long backfill with parallel history, and access holds. Recovery tests also cover offline spam/trash rescue after history expiry, a rescue moved back to trash, sent draft IDs, reinstall filename conflicts, and failed refresh after returning visible. They do not replace mailbox or hosted workload checks.
+The installed dev frame has passed status, update, narrow-layout, and simulated unavailable/hidden-page checks. Google client settings are saved on the plugin backend. Real read-only consent, Finish, waiting-page reloads and Reconnect passed. Files search found a saved email. A Gmail-web self-send saved the expected body and sent direction. Its attachment matched the original bytes and SHA-256 hash. A Press agent read that file with a successful stored Bash result. Remaining live access and recovery checks are open. Local fixtures cover receipt isolation, crash checkpoints, long backfill with parallel history, and access holds. Recovery tests also cover offline spam/trash rescue after history expiry, a rescue moved back to trash, sent draft IDs, reinstall filename conflicts, and failed refresh after returning visible. They do not replace mailbox or hosted workload checks.
 
 The dev cap is 1. Monthly disable limits are 400,000 calls and 4 GB-hours for each action runtime. The required fractional byte limits could not be saved on the Free dashboard. Do not raise those limits or the account cap as a workaround. Keep release open until the required limits and measured shared-team budget fit plan v4. Work-alone checks are self-review; independent review has not run.
