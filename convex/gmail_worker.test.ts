@@ -156,7 +156,7 @@ function network(answer: (path: string, body: unknown, url: URL) => Response | P
 
 async function stop_after_mutation(
 	f: Awaited<ReturnType<typeof fixture>>,
-	mutation: "save_message" | "save_traversal" | "discover_message" | "finish_slice",
+	mutation: "save_message" | "save_traversal" | "discover_message" | "finish_slice" | "ingest_history",
 	reached: () => Promise<boolean>,
 ) {
 	// Convex-test calls this internal handler. Stop after its mutation commits.
@@ -3104,56 +3104,115 @@ describe("source limits", () => {
 });
 
 describe("ingest_history", () => {
-	test("a crash before cursor commit retains queued mail and deletion work", async () => {
-		const f = await fixture();
-		await f.t.run((ctx) => ctx.db.patch(f.accountId, { nextSliceKind: "history" }));
-		const current = (await f.t.query(internal.gmail_accounts.get_worker, {
-			work: f.work,
-		}))!.account;
-		const before = {
-			historyId: current.historyId,
-			historyPageToken: current.historyPageToken,
-			historyAnchor: current.historyAnchor,
-			historyPageSize: current.historyPageSize,
-			backfillPage: current.backfillPage,
-			backfillPageToken: current.backfillPageToken,
-			backfillComplete: current.backfillComplete,
-		};
-		await f.t.mutation(internal.gmail_accounts.ingest_history, {
-			work: f.work,
-			before,
-			events: [
-				{ historyId: "11", gmailMessageId: "ef", kind: "added" },
-				{ historyId: "12", gmailMessageId: "ab", kind: "deleted" },
-			],
+	test.each(["batch", "page", "cursor"] as const)("a stop after the history %s save keeps queued mail and deletions", async (step) => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const f = await fixture({ fresh: true });
+		await f.t.run(async (ctx) => {
+			await ctx.db.delete(f.ledgerId);
+			const account = (await ctx.db.get(f.accountId))!;
+			await ctx.db.patch(f.accountId, { nextSliceKind: "history", lastSyncedAt: null,
+				ledgerCounts: { ...account.ledgerCounts, pending: 0 } });
 		});
-		// The process stops here. Its cursor commit has not run.
-		expect((await f.t.run((ctx) => ctx.db.get(f.accountId)))!.historyId).toBe("10");
-		expect(
-			await f.t.run((ctx) =>
-				ctx.db
-					.query("messages_ledger")
-					.withIndex("by_account_gmailMessageId", (q) => q.eq("accountId", f.accountId).eq("gmailMessageId", "ef"))
-					.unique(),
-			),
-		).toMatchObject({ status: "pending" });
-		expect((await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!.deletedAt).not.toBeNull();
-		network((path) =>
-			path.endsWith("/history")
-				? Response.json({
-						historyId: "13",
-						history: [
-							{ id: "11", messagesAdded: [{ message: { id: "ef" } }] },
-							{ id: "12", messagesDeleted: [{ message: { id: "ab" } }] },
-						],
-					})
-				: Response.json({}, { status: 503 }),
-		);
-		await f.t.action(internal.gmail_worker.work_account_slice, {
-			work: f.work,
+		const added = Array.from({ length: 18 }, (_, index) => (index + 256).toString(16));
+		const deleted = Array.from({ length: 15 }, (_, index) => (index + 512).toString(16));
+		const keys = [...added, ...deleted, "300", "301", "500", "600", "400"];
+		const historyRequests: { cursor: string | null; token: string | null }[] = [];
+		const calls = network((path, _body, url) => {
+			now += 600;
+			if (path.endsWith("/history")) {
+				const cursor = url.searchParams.get("startHistoryId");
+				const token = url.searchParams.get("pageToken");
+				historyRequests.push({ cursor, token });
+				return Response.json(cursor === "200" ? { historyId: "200", history: [] }
+					: token === "next-page" ? { historyId: "200", history: [{ id: "20",
+						messagesAdded: [{ message: { id: "500" } }], messagesDeleted: [{ message: { id: "600" } }],
+						labelsRemoved: [{ message: { id: "300" }, labelIds: ["SPAM"] }],
+					}] } : { historyId: "100", nextPageToken: "next-page", history: [
+						{ id: "11", messagesAdded: added.map(id => ({ message: { id } })) },
+						{ id: "12", messagesDeleted: deleted.map(id => ({ message: { id } })) },
+						{ id: "13", labelsRemoved: [{ message: { id: "300" }, labelIds: ["SPAM", "TRASH"] },
+							{ message: { id: "301" }, labelIds: ["TRASH"] }, { message: { id: "400" }, labelIds: ["UNREAD"] }] },
+					] });
+			}
+			if (/\/messages\/[0-9a-f]+$/.test(path)) return Response.json({ ...source, id: path.split("/").at(-1),
+				payload: { ...source.payload, parts: [source.payload.parts[0]] } });
+			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
+			return Response.json({}, { status: 500 });
 		});
-		expect((await f.t.run((ctx) => ctx.db.get(f.accountId)))!.historyId).toBe("13");
-		expect(await f.t.run((ctx) => ctx.db.query("messages_ledger").collect())).toHaveLength(2);
+		let work = f.work;
+		let workId = f.workId;
+		if (step === "cursor") {
+			await f.t.action(internal.gmail_worker.work_account_slice, { work });
+			expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ historyId: "10", historyPageToken: "next-page", lastSyncedAt: null });
+			await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "success", returnValue: null } });
+			now = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!.nextSyncAt!;
+			await f.t.mutation(internal.gmail_accounts.dispatch, {});
+			const queued = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+			expect(queued.syncWorkId).not.toBeNull();
+			expect(queued.syncRequestId).not.toBe(work.requestId);
+			work = { ...work, requestId: queued.syncRequestId! };
+			workId = queued.syncWorkId! as typeof f.workId;
+		}
+		const crash = await stop_after_mutation({ ...f, work }, step === "batch" ? "ingest_history" : "save_traversal", async () => true);
+		const stopped = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		// Read each exact message key fully so a duplicate doc fails the check.
+		const saved = await f.t.run((ctx) => Promise.all(keys.map(id => ctx.db.query("messages_ledger")
+			.withIndex("by_account_gmailMessageId", (q) => q.eq("accountId", f.accountId).eq("gmailMessageId", id)).collect())));
+		expect(saved.flat()).toHaveLength(step === "batch" ? 25 : step === "page" ? 35 : 37);
+		expect(stopped.historyId).toBe(step === "cursor" ? "200" : "10");
+		expect(stopped.lastSyncedAt).toBe(step === "cursor" ? now : null);
+		expect(stopped.historyPageToken).toBe(step === "page" ? "next-page" : null);
+		expect(stopped.historyAnchor).toEqual(step === "batch" ? { historyId: "12", gmailMessageId: "206", kind: "deleted" } : null);
+		expect(stopped.backfillComplete).toBe(true);
+		expect(stopped.ledgerCounts).toMatchObject({ pending: step === "batch" ? 18 : step === "page" ? 20 : 1,
+			done: step === "cursor" ? 20 : 0, skipped: step === "batch" ? 7 : step === "page" ? 15 : 16 });
+		if (step !== "cursor") expect(calls.some(call => call.path.startsWith("/api/v1/"))).toBe(false);
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "failed", error: crash.message } });
+		const delayed = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(delayed.nextSyncAt).toBeGreaterThan(now);
+		const before = calls.length;
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ syncWorkId: null, syncRequestId: null });
+		expect(calls).toHaveLength(before);
+		for (let turn = 0; turn < (step === "batch" ? 2 : 1); turn++) {
+			now = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!.nextSyncAt!;
+			await f.t.mutation(internal.gmail_accounts.dispatch, {});
+			const queued = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+			expect(queued.syncWorkId).not.toBeNull();
+			expect(queued.syncRequestId).not.toBe(work.requestId);
+			work = { ...work, requestId: queued.syncRequestId! };
+			workId = queued.syncWorkId! as typeof f.workId;
+			await f.t.action(internal.gmail_worker.work_account_slice, { work });
+			await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "success", returnValue: null } });
+		}
+		expect(historyRequests).toEqual([
+			{ cursor: "10", token: null }, ...(step === "batch" ? [{ cursor: "10", token: null }] : []),
+			{ cursor: "10", token: "next-page" },
+		]);
+		const recovered = await f.t.run((ctx) => Promise.all(keys.map(id => ctx.db.query("messages_ledger")
+			.withIndex("by_account_gmailMessageId", (q) => q.eq("accountId", f.accountId).eq("gmailMessageId", id)).collect())));
+		expect(recovered.map(docs => docs.length)).toEqual(keys.map(id => id === "400" ? 0 : 1));
+		for (const [index, docs] of recovered.entries()) {
+			if (keys[index] === "400") continue;
+			const doc = docs[0];
+			if (deleted.includes(keys[index]) || keys[index] === "600") {
+				expect(doc).toMatchObject({ status: "skipped", skipReason: "deleted_before_fetch", deletedAt: expect.any(Number), emailWritten: false, nextAttemptAt: null });
+				if (saved[index].length) expect(doc).toEqual(saved[index][0]);
+			} else {
+				expect(doc).toMatchObject({ status: "done", emailWritten: true, attachments: [], attempts: 0 });
+				if (saved[index].length) expect(doc._id).toBe(saved[index][0]._id);
+			}
+		}
+		expect(calls.filter(call => /\/messages\/[0-9a-f]+$/.test(call.path)).map(call => call.path.split("/").at(-1)).sort())
+			.toEqual([...added, "300", "301", "500"].sort());
+		expect(calls.filter(call => call.path.endsWith("/files/write"))).toHaveLength(21);
+		expect(new Set(calls.filter(call => call.path.endsWith("/files/write")).map(call => (call.body as { path: string }).path)).size).toBe(21);
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ historyId: "200", historyPageToken: null, historyAnchor: null,
+			lastSyncedAt: expect.any(Number), backfillComplete: true, messagesSynced: 21, messagesSkipped: 16, syncStatus: "live", syncError: null,
+			syncWorkId: null, syncRequestId: null, ledgerCounts: { pending: 0, done: 21, skipped: 16 } });
+		if (step === "cursor") expect((await f.t.run((ctx) => ctx.db.get(f.accountId)))!.lastSyncedAt).toBe(stopped.lastSyncedAt);
 	});
 	test("keeps held retries and counters while rescuing only the matching skip", async () => {
 		const f = await fixture({ held: true });
