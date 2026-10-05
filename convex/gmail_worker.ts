@@ -245,13 +245,8 @@ export const work_account_slice = internalAction({
               }
             : {}),
         };
-        // Save terminal task and message status together before a worker can stop.
-        if (
-          attachments.some((task) => task.state === "unconfirmed") ||
-          attachments.every((task) => !unresolved(task))
-        )
-          await finish(next, proof, transfer);
-        else await save(next, proof, transfer);
+        // Save task progress and the message retry time before a worker can stop.
+        await finish(next, proof, transfer);
       }
       async function host<T>(
         route:
