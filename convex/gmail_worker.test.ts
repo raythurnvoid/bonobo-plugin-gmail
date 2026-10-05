@@ -3115,6 +3115,7 @@ describe("ingest_history", () => {
 			await ctx.db.patch(f.accountId, { nextSliceKind: "history", lastSyncedAt: null,
 				ledgerCounts: { ...account.ledgerCounts, pending: 0 } });
 		});
+		// The add/delete pair ends the first 25-event batch.
 		const added = Array.from({ length: 18 }, (_, index) => (index + 256).toString(16));
 		const deleted = Array.from({ length: 15 }, (_, index) => (index + 512).toString(16));
 		const keys = [...added, ...deleted, "300", "301", "500", "600", "400"];
@@ -3131,7 +3132,7 @@ describe("ingest_history", () => {
 						labelsRemoved: [{ message: { id: "300" }, labelIds: ["SPAM"] }],
 					}] } : { historyId: "100", nextPageToken: "next-page", history: [
 						{ id: "11", messagesAdded: added.map(id => ({ message: { id } })) },
-						{ id: "12", messagesDeleted: deleted.map(id => ({ message: { id } })) },
+						{ id: "12", messagesAdded: [{ message: { id: "205" } }], messagesDeleted: deleted.map(id => ({ message: { id } })) },
 						{ id: "13", labelsRemoved: [{ message: { id: "300" }, labelIds: ["SPAM", "TRASH"] },
 							{ message: { id: "301" }, labelIds: ["TRASH"] }, { message: { id: "400" }, labelIds: ["UNREAD"] }] },
 					] });
@@ -3160,14 +3161,14 @@ describe("ingest_history", () => {
 		// Read each exact message key fully so a duplicate doc fails the check.
 		const saved = await f.t.run((ctx) => Promise.all(keys.map(id => ctx.db.query("messages_ledger")
 			.withIndex("by_account_gmailMessageId", (q) => q.eq("accountId", f.accountId).eq("gmailMessageId", id)).collect())));
-		expect(saved.flat()).toHaveLength(step === "batch" ? 25 : step === "page" ? 35 : 37);
+		expect(saved.flat()).toHaveLength(step === "batch" ? 24 : step === "page" ? 35 : 37);
 		expect(stopped.historyId).toBe(step === "cursor" ? "200" : "10");
 		expect(stopped.lastSyncedAt).toBe(step === "cursor" ? now : null);
 		expect(stopped.historyPageToken).toBe(step === "page" ? "next-page" : null);
-		expect(stopped.historyAnchor).toEqual(step === "batch" ? { historyId: "12", gmailMessageId: "206", kind: "deleted" } : null);
+		expect(stopped.historyAnchor).toEqual(step === "batch" ? { historyId: "12", gmailMessageId: "205", kind: "deleted" } : null);
 		expect(stopped.backfillComplete).toBe(true);
 		expect(stopped.ledgerCounts).toMatchObject({ pending: step === "batch" ? 18 : step === "page" ? 20 : 1,
-			done: step === "cursor" ? 20 : 0, skipped: step === "batch" ? 7 : step === "page" ? 15 : 16 });
+			done: step === "cursor" ? 20 : 0, skipped: step === "batch" ? 6 : step === "page" ? 15 : 16 });
 		if (step !== "cursor") expect(calls.some(call => call.path.startsWith("/api/v1/"))).toBe(false);
 		await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "failed", error: crash.message } });
 		const delayed = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
