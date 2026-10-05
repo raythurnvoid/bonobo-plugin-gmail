@@ -5,6 +5,7 @@ import { gmail_workpool } from "./gmail_workpool";
 import { gmail_encrypt, gmail_google_token_purpose } from "./gmail_secrets";
 
 afterEach(() => {
+	vi.useRealTimers();
 	vi.unstubAllGlobals();
 	vi.restoreAllMocks();
 });
@@ -309,6 +310,90 @@ describe("work_account_slice", () => {
 		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({
 			status: "done",
 			attachments: [{ deliveries: 1 }],
+		});
+	});
+	test.each([
+		["email write", "/files/write"],
+		["target create", "/create-target"],
+	] as const)("a lost %s reply resumes through completion and the minute dispatcher", async (kind, lostRoute) => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		// Pause the queued action so this test runs only its saved context.
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const f = await fixture({ fresh: true });
+		const receipts = new Map<string, unknown>();
+		let lost = false;
+		let finalizes = 0;
+		const calls = network(async (path, body) => {
+			now += 600;
+			if (path.endsWith("/messages/ab")) return Response.json(source);
+			if (path.endsWith("/files/write") || path.endsWith("/create-target")) {
+				const replay = receipts.has(path);
+				if (replay) expect(body).toEqual(receipts.get(path));
+				else {
+					const checkpoint = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+					expect(checkpoint.filePath).not.toBeNull();
+					if (path.endsWith("/create-target")) expect(checkpoint).toMatchObject({
+						emailWritten: true, settlementNeeded: true,
+						attachments: [{ state: "uncertain", accepted: false, deliveries: 0, uploadAttemptedAt: null, request: expect.any(Object) }],
+					});
+					receipts.set(path, body);
+				}
+				if (!lost && path.endsWith(lostRoute)) {
+					lost = true;
+					// The mock saves the request, then loses the reply.
+					throw new TypeError("Save reply lost");
+				}
+				if (path.endsWith("/files/write")) return replay
+					? Response.json({ message: "A file already exists at this path" }, { status: 409 })
+					: Response.json({ nodeId: "email-node" });
+				return Response.json({ ...transport, uploadUrlExpiresAt: now + 3600_000 });
+			}
+			if (path.endsWith("/finalize")) return Response.json(kind === "target create" && ++finalizes === 1 ? pending : committed);
+			if (path === "/object") return new Response(null, { status: 200 });
+			return Response.json({}, { status: 500 });
+		});
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		expect(lost).toBe(true);
+		expect(calls.some((call) => call.path === "/object")).toBe(false);
+		const checkpoint = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		expect(checkpoint).toMatchObject({ status: "pending", attempts: 0, emailWritten: kind === "target create", settlementNeeded: kind === "target create" });
+		const stopped = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(stopped).toMatchObject({ syncStatus: "blocked", syncError: "sync_error", temporaryFailures: 1 });
+		expect(stopped.nextSyncAt).toBeGreaterThan(now);
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: f.workId, context: f.work, result: { kind: "success", returnValue: null } });
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		const early = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(early.syncWorkId).toBeNull();
+		now = stopped.nextSyncAt!;
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		const queued = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(queued.syncWorkId).not.toBeNull();
+		expect(queued.syncRequestId).not.toBe(f.work.requestId);
+		const work = { ...f.work, requestId: queued.syncRequestId! };
+		const before = calls.length;
+		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		const resumed = calls.slice(before).map((call) => call.path);
+		if (kind === "target create") expect(resumed).toEqual([
+			"/api/v1/files/service-uploads/finalize", "/token", "/gmail/v1/users/me/messages/ab",
+			"/api/v1/files/service-uploads/create-target", "/object", "/api/v1/files/service-uploads/finalize",
+		]);
+		else expect(resumed).toEqual([
+			"/token", "/gmail/v1/users/me/messages/ab", "/api/v1/files/write",
+			"/api/v1/files/service-uploads/create-target", "/object", "/api/v1/files/service-uploads/finalize",
+		]);
+		expect(calls.filter((call) => call.path === "/object")).toHaveLength(1);
+		const saved = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		expect(saved).toMatchObject({ status: "done", filePath: checkpoint.filePath, emailWritten: true, emailAssumed: kind === "email write",
+			attempts: 0, settlementNeeded: false, attachments: [{ state: "saved", deliveries: 1 }] });
+		if (kind === "target create") expect(saved.attachments[0].request).toEqual(checkpoint.attachments[0].request);
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: f.workId, context: f.work, result: { kind: "success", returnValue: null } });
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ syncRequestId: work.requestId, syncWorkId: queued.syncWorkId });
+		// The account stores Workpool ids as strings.
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: queued.syncWorkId! as typeof f.workId, context: work, result: { kind: "success", returnValue: null } });
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({
+			messagesSynced: 1, syncStatus: "live", syncError: null, syncWorkId: null, syncRequestId: null,
+			ledgerCounts: { pending: 0, done: 1, emailAssumed: kind === "email write" ? 1 : 0 },
 		});
 	});
 	test("pending settlement waits a minute without replaying create after a recent PUT", async () => {
