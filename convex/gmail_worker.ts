@@ -369,6 +369,60 @@ export const work_account_slice = internalAction({
         selected = claim.operation.index;
       let pendingFinalized = false;
       let uncertainAbsent = false;
+      const sourceLimited = [
+        "source_too_large",
+        "mime_too_large",
+        "invalid_source",
+      ].includes(row.error ?? "");
+      const settlementOnly =
+        selected >= 0 &&
+        row.attachments[selected].reason?.endsWith("_settlement_only");
+      async function finish_without_source(
+        account: Doc<"gmail_accounts">,
+        answer: { nodeId: string; path: string } | null = null,
+      ) {
+        const attachments = row.attachments.map((task, index) => {
+          if (index === selected && unresolved(task) && task.request) {
+            const checks =
+              task.sourceUnavailablePendingChecks + Number(pendingFinalized);
+            const state = uncertainAbsent
+              ? "not_saved"
+              : task.request.installationId !== account.hostInstallationId ||
+                  checks >= 5
+                ? "unconfirmed"
+                : answer
+                  ? "pending"
+                  : task.state;
+            return {
+              ...task,
+              ...(answer
+                ? { accepted: true, nodeId: answer.nodeId, livePath: answer.path }
+                : {}),
+              state,
+              sourceUnavailablePendingChecks: checks,
+              nextAttemptAt:
+                state === "not_saved" || state === "unconfirmed"
+                  ? null
+                  : Date.now() + 60_000,
+              // Keep refused uploads in finalize-only recovery.
+              reason: settlementOnly ? task.reason : "source_unavailable",
+            };
+          }
+          if (unresolved(task) && !task.request) {
+            // Paused source-only parts must not hide a due receipt.
+            if (account.sourceError || settlementOnly)
+              return { ...task, nextAttemptAt: null };
+            return {
+              ...task,
+              state: "not_saved" as const,
+              reason: "source_unavailable",
+              nextAttemptAt: null,
+            };
+          }
+          return task;
+        });
+        await finish({ attachments }, answer ? selected : null);
+      }
       try {
         if (selected >= 0 && row.attachments[selected].request) {
           const task = row.attachments[selected];
@@ -413,6 +467,18 @@ export const work_account_slice = internalAction({
                 await finish();
                 return;
               }
+              pendingFinalized = true;
+              if (
+                account.sourceError ||
+                row.deletedAt ||
+                row.skipReason ||
+                sourceLimited ||
+                settlementOnly
+              ) {
+                // Save the reply, check count and due time in one mutation.
+                await finish_without_source(account, answer);
+                return;
+              }
               await task_save(
                 selected,
                 {
@@ -420,10 +486,10 @@ export const work_account_slice = internalAction({
                   accepted: true,
                   nodeId: answer.nodeId,
                   livePath: answer.path,
+                  nextAttemptAt: Date.now() + 60_000,
                 },
                 selected,
               );
-              pendingFinalized = true;
             } catch (error) {
               if (
                 !(error instanceof gmail_HostError) ||
@@ -446,14 +512,6 @@ export const work_account_slice = internalAction({
         }
         const { account } = await current();
         let message: ReturnType<typeof gmail_discover_message> | null = null;
-        const sourceLimited = [
-          "source_too_large",
-          "mime_too_large",
-          "invalid_source",
-        ].includes(row.error ?? "");
-        const settlementOnly =
-          selected >= 0 &&
-          row.attachments[selected].reason?.endsWith("_settlement_only");
         if (
           !account.sourceError &&
           !row.deletedAt &&
@@ -502,42 +560,7 @@ export const work_account_slice = internalAction({
           }
         }
         if (!message) {
-          const attachments = row.attachments.map((task) =>
-            unresolved(task) &&
-            !task.request &&
-            !account.sourceError &&
-            !settlementOnly
-              ? {
-                  ...task,
-                  state: "not_saved" as const,
-                  reason: "source_unavailable",
-                  nextAttemptAt: null,
-                }
-              : task,
-          );
-          await save({ attachments });
-          if (
-            selected >= 0 &&
-            unresolved(row.attachments[selected]) &&
-            row.attachments[selected].request
-          ) {
-            const task = row.attachments[selected];
-            const checks =
-              task.sourceUnavailablePendingChecks + Number(pendingFinalized);
-            await task_save(selected, {
-              sourceUnavailablePendingChecks: checks,
-              state: uncertainAbsent
-                ? "not_saved"
-                : task.request!.installationId !== account.hostInstallationId ||
-                    checks >= 5
-                  ? "unconfirmed"
-                  : task.state,
-              nextAttemptAt: Date.now() + 60_000,
-              // A pending reply must keep refused uploads in finalize-only recovery.
-              reason: settlementOnly ? task.reason : "source_unavailable",
-            });
-          }
-          await finish();
+          await finish_without_source(account);
           return;
         }
         if (!row.filePath) {
