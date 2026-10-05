@@ -3206,6 +3206,162 @@ describe("source limits", () => {
 			attachments: [{ state: "not_saved", reason: "too_large" }],
 		});
 	});
+	test("stops after history size and error saves keep the pending receipt until Retry sync", async () => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const f = await fixture({ fresh: true });
+		await f.t.run((ctx) => ctx.db.patch(f.accountId, { nextSliceKind: "backfill", historyId: null,
+			backfillComplete: false, backfillPage: null, backfillPageToken: null, lastSyncedAt: null }));
+		const deleted = Array.from({ length: 30 }, (_, index) => (index + 512).toString(16));
+		const keys = ["ab", "ef", ...deleted];
+		let reply: "page" | "anchor" | "large" | "settle" | "retry" = "page";
+		const historyRequests: { cursor: string | null; token: string | null; size: string | null }[] = [];
+		const listTokens: (string | null)[] = [];
+		const pulls: number[] = [];
+		let cancelled = 0;
+		const calls = network((path, _body, url) => {
+			now += 600;
+			if (path.endsWith("/profile")) return Response.json(profile);
+			if (path.endsWith("/messages")) {
+				listTokens.push(url.searchParams.get("pageToken"));
+				return Response.json({ messages: [{ id: "ab" }], ...(reply === "page" ? { nextPageToken: "keep-backfill" } : {}) });
+			}
+			if (path.endsWith("/history")) {
+				historyRequests.push({ cursor: url.searchParams.get("startHistoryId"), token: url.searchParams.get("pageToken"), size: url.searchParams.get("maxResults") });
+				if (reply === "page") return Response.json({ historyId: "11", nextPageToken: "saved-page",
+					history: [{ id: "11", messagesDeleted: [{ message: { id: "ef" } }] }] });
+				if (reply === "anchor") return Response.json({ historyId: "20", nextPageToken: "anchor-next",
+					history: [{ id: "12", messagesDeleted: deleted.map(id => ({ message: { id } })) }] });
+				if (reply === "large") {
+					const index = pulls.push(0) - 1;
+					// Valid JSON follows the padding. The byte limit must stop before parsing it.
+					return new Response(new ReadableStream<Uint8Array>({
+						pull(controller) {
+							if (++pulls[index] <= 17) controller.enqueue(new Uint8Array(1024 * 1024).fill(32));
+							else { controller.enqueue(new TextEncoder().encode('{"historyId":"900","history":[]}')); controller.close(); }
+						},
+						cancel() { cancelled++; },
+					}), { headers: { "Content-Length": "1" } });
+				}
+				return Response.json({ historyId: "200", history: [{ id: "12", messagesDeleted: deleted.map(id => ({ message: { id } })) }] });
+			}
+			if (path.endsWith("/messages/ab")) return Response.json(source);
+			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
+			if (path.endsWith("/create-target")) return Response.json({ ...transport, uploadUrlExpiresAt: now + 3600_000 });
+			if (path.endsWith("/finalize")) return Response.json(reply === "settle" ? committed : pending);
+			if (path === "/object") return new Response(null, { status: 200 });
+			return Response.json({}, { status: 500 });
+		});
+		let work = f.work;
+		let workId = f.workId;
+		async function resume(crash: Error | null = null) {
+			await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work,
+				result: crash ? { kind: "failed", error: crash.message } : { kind: "success", returnValue: null } });
+			const delayed = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+			expect(delayed.nextSyncAt).toBeGreaterThan(now);
+			const before = calls.length;
+			await f.t.mutation(internal.gmail_accounts.dispatch, {});
+			expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ syncWorkId: null, syncRequestId: null });
+			expect(calls).toHaveLength(before);
+			now = delayed.nextSyncAt!;
+			await f.t.mutation(internal.gmail_accounts.dispatch, {});
+			const queued = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+			expect(queued.syncWorkId).not.toBeNull();
+			expect(queued.syncRequestId).not.toBe(work.requestId);
+			work = { ...work, requestId: queued.syncRequestId! };
+			workId = queued.syncWorkId! as typeof f.workId;
+		}
+		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		const original = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		const prepared = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(original).toMatchObject({ status: "pending", emailWritten: true, settlementNeeded: true,
+			attachments: [{ state: "pending", deliveries: 1, sourceUnavailablePendingChecks: 0 }] });
+		await resume();
+		const pageCrash = await stop_after_mutation({ ...f, work }, "save_traversal", async () => true);
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ historyPageToken: "saved-page", historyId: "10", lastSyncedAt: null });
+		await resume(pageCrash);
+		reply = "anchor";
+		const anchorCrash = await stop_after_mutation({ ...f, work }, "ingest_history", async () => true);
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ historyPageToken: "saved-page",
+			historyAnchor: { historyId: "12", gmailMessageId: deleted[24], kind: "deleted" } });
+		await resume(anchorCrash);
+		// Read each exact key, including missing docs, to catch lost or duplicate work.
+		const beforeSize = await f.t.run((ctx) => Promise.all(keys.map(id => ctx.db.query("messages_ledger")
+			.withIndex("by_account_gmailMessageId", (q) => q.eq("accountId", f.accountId).eq("gmailMessageId", id)).collect())));
+		reply = "large";
+		const sizeCrash = await stop_after_mutation({ ...f, work }, "save_traversal", async () => true);
+		const reduced = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(reduced.historyPageSize).toBe(1);
+		expect(reduced.historyPageToken).toBeNull();
+		expect(reduced.historyAnchor).toBeNull();
+		expect(reduced).toMatchObject({ historyId: "10", backfillPageToken: "keep-backfill", backfillPage: null,
+			backfillComplete: false, lastSyncedAt: null, sourceError: null, googleRefreshToken: prepared.googleRefreshToken });
+		expect(await f.t.run((ctx) => Promise.all(keys.map(id => ctx.db.query("messages_ledger")
+			.withIndex("by_account_gmailMessageId", (q) => q.eq("accountId", f.accountId).eq("gmailMessageId", id)).collect())))).toEqual(beforeSize);
+		expect(cancelled).toBe(1);
+		await resume(sizeCrash);
+		const errorCrash = await stop_after_mutation({ ...f, work }, "finish_slice", async () => true);
+		const stopped = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(stopped.sourceError).toBe("history_response_too_large");
+		expect(stopped).toMatchObject({ syncError: "history_response_too_large", syncStatus: "error", historyId: "10",
+			historyPageSize: 1, historyPageToken: null, historyAnchor: null, lastSyncedAt: null,
+			backfillPageToken: "keep-backfill", googleRefreshToken: prepared.googleRefreshToken, connectionGeneration: work.generation });
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(original);
+		expect(cancelled).toBe(2);
+		expect(pulls).toHaveLength(2);
+		for (const count of pulls) expect(count).toBeLessThanOrEqual(18);
+		expect(historyRequests.slice(-2)).toEqual([
+			{ cursor: "10", token: "saved-page", size: "25" }, { cursor: "10", token: null, size: "1" },
+		]);
+		await resume(errorCrash);
+		reply = "settle";
+		const beforeSettlement = calls.length;
+		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		expect(calls.slice(beforeSettlement).map(call => call.path)).toEqual(["/api/v1/files/service-uploads/finalize"]);
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "success", returnValue: null } });
+		const settled = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(settled).toMatchObject({ sourceError: "history_response_too_large", syncStatus: "error", historyId: "10",
+			historyPageSize: 1, lastSyncedAt: null, nextSyncAt: null, syncWorkId: null, syncRequestId: null, ledgerCounts: { done: 1, pending: 0 } });
+		const noWork = calls.length;
+		now += 3600_000;
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toEqual(settled);
+		expect(calls).toHaveLength(noWork);
+		expect(await f.t.mutation(internal.gmail_accounts.retry_sync, { ...f.actor, accountId: f.accountId, expectedGeneration: work.generation })).toEqual({ _yay: null });
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ sourceError: null, historyId: "10",
+			historyPageSize: 1, historyPageToken: null, backfillPageToken: "keep-backfill", lastSyncedAt: null });
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		const queued = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(queued.syncWorkId).not.toBeNull();
+		work = { ...work, requestId: queued.syncRequestId! };
+		workId = queued.syncWorkId! as typeof f.workId;
+		reply = "retry";
+		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		await resume();
+		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "success", returnValue: null } });
+		expect(historyRequests.at(-1)).toEqual({ cursor: "10", token: null, size: "1" });
+		expect(listTokens).toEqual([null, "keep-backfill"]);
+		const recovered = await f.t.run((ctx) => Promise.all(keys.map(id => ctx.db.query("messages_ledger")
+			.withIndex("by_account_gmailMessageId", (q) => q.eq("accountId", f.accountId).eq("gmailMessageId", id)).collect())));
+		expect(recovered.map(docs => docs.length)).toEqual(keys.map(() => 1));
+		for (const [index, docs] of recovered.entries()) {
+			if (index === 0 || !beforeSize[index].length) continue;
+			expect(docs[0]._id).toBe(beforeSize[index][0]._id);
+			expect(docs[0].deletedAt).toBe(beforeSize[index][0].deletedAt);
+		}
+		expect(recovered[0][0]).toMatchObject({ status: "done", filePath: original.filePath, fileNodeId: original.fileNodeId,
+			attachments: [{ state: "saved", request: original.attachments[0].request, deliveries: 1, sourceUnavailablePendingChecks: 0 }] });
+		for (const ending of ["/profile", "/messages/ab", "/files/write", "/create-target"]) expect(calls.filter(call => call.path.endsWith(ending))).toHaveLength(1);
+		expect(calls.filter(call => call.path === "/object")).toHaveLength(1);
+		expect(calls.filter(call => call.path.endsWith("/finalize")).map(call => call.body)).toEqual(Array.from({ length: 2 }, () => ({
+			idempotencyKey: original.attachments[0].request!.idempotencyKey, targetKey: original.attachments[0].request!.targetKey,
+		})));
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ historyId: "200", historyPageSize: 1,
+			historyPageToken: null, historyAnchor: null, backfillComplete: true, lastSyncedAt: expect.any(Number), sourceError: null,
+			syncStatus: "live", syncError: null, messagesSynced: 1, ledgerCounts: { done: 1, pending: 0, skipped: 31 } });
+	});
 	test("oversized history reduces to one record then stops without moving its cursor", async () => {
 		const f = await fixture();
 		await f.t.run((ctx) =>
