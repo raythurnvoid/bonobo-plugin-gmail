@@ -2,7 +2,7 @@
 
 Gmail is a Press plugin with its own Convex backend. It saves received and sent mail as Markdown files. Attachments are saved beside each email. Press owns Files, permissions, billing, and installation.
 
-The build follows plan v4. Version 0.2.2 includes the connection page and background sync. Live Gmail and hosting checks are still open. The integration is not release ready yet.
+The build follows plan v4. Version 0.2.3 includes the connection page and background sync. Live Gmail and hosting checks are still open. The integration is not release ready yet.
 
 The frontend build keeps the page, React, and Zod in separate files. Each file is formatted and listed in the manifest with its hash. This lets the publisher read the page code within its scan limit.
 
@@ -100,5 +100,9 @@ Local Disconnect and Cancel never revoke Google access. Removing this app in Goo
 Code completion and release readiness are separate. Release needs all plan tests, guard-removal proofs, installed-frame Playwriter checks, and a real 24-hour hosting measurement. The Free byte-limit gap remains open. No capacity claim is made yet.
 
 The installed dev frame has passed status, update, narrow-layout, and simulated unavailable/hidden-page checks. Google client settings are saved on the plugin backend. Real read-only consent, Finish, waiting-page reloads and Reconnect passed. Files search found a saved email. A Gmail-web self-send saved the expected body and sent direction. Its attachment matched the original bytes and SHA-256 hash. A Press agent read that file with a successful stored Bash result. Remaining live access and recovery checks are open. Local fixtures cover receipt isolation, crash checkpoints, long backfill with parallel history, and access holds. Recovery tests also cover offline spam/trash rescue after history expiry, a rescue moved back to trash, sent draft IDs, reinstall filename conflicts, and failed refresh after returning visible. They do not replace mailbox or hosted workload checks.
+
+Live checks also passed a refused month save and a removed service-account workspace grant. The member kept write access. Restoring the month did not change its saved retry time; the normal retry later saved that email and cleared only its hold. The service-account grant was restored to its original level. Update recovered through Press-only repair. Named-account operator Disconnect cleared local secrets and work while keeping the ledger. Native uninstall, install with the same service account, and Google Reconnect kept the account, destination, saved files, and both hold times.
+
+Playwriter enables focus emulation, which makes background tabs report visible. For a real hidden-page check, turn off `Emulation.setFocusEmulationEnabled` on the owned page's CDP session. Check the host and plugin frame both report hidden before counting requests. The installed page made zero status calls while hidden. Restore the harness setting after the check. Do not treat background tab selection alone as proof.
 
 The dev cap is 1. Monthly disable limits are 400,000 calls and 4 GB-hours for each action runtime. The required fractional byte limits could not be saved on the Free dashboard. Do not raise those limits or the account cap as a workaround. Keep release open until the required limits and measured shared-team budget fit plan v4. Work-alone checks are self-review; independent review has not run.
