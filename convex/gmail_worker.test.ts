@@ -156,8 +156,8 @@ function network(answer: (path: string, body: unknown, url: URL) => Response | P
 
 async function stop_after_task_save(
 	f: Awaited<ReturnType<typeof fixture>>,
-	state: "uncertain" | "pending" | "saved" | "unconfirmed",
-	deliveries: number | null = null,
+	state: "unstarted" | "uncertain" | "pending" | "saved" | "unconfirmed",
+	progress: { deliveries?: number; emailWritten?: boolean } = {},
 ) {
 	// Convex-test calls this internal handler. Stop after its mutation commits.
 	const registered = work_account_slice as typeof work_account_slice & {
@@ -173,7 +173,8 @@ async function stop_after_task_save(
 			if (getFunctionName(reference) === "gmail_accounts:save_message") {
 				const saved = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
 				if (saved.attachments.length === 1 && saved.attachments[0].state === state &&
-					(deliveries === null || saved.attachments[0].deliveries === deliveries)) {
+					(progress.deliveries === undefined || saved.attachments[0].deliveries === progress.deliveries) &&
+					(progress.emailWritten === undefined || saved.emailWritten === progress.emailWritten)) {
 					stopped = true;
 					throw crash;
 				}
@@ -293,6 +294,72 @@ describe("work_account_slice", () => {
 			status: "done",
 			emailWritten: true,
 			attachments: [{ state: "saved" }],
+		});
+	});
+	test.each(["planned", "written"] as const)("a stop after the %s email save keeps its path and writes once", async (step) => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		// Pause queued actions while running their saved work requests.
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const f = await fixture({ fresh: true });
+		let resumed = false;
+		const calls = network((path) => {
+			now += 600;
+			if (path.endsWith("/messages/ab")) return Response.json(resumed ? {
+				...source, payload: { ...source.payload, headers: source.payload.headers.map(header =>
+					header.name === "Subject" ? { ...header, value: "Changed after the stop" } : header) },
+			} : source);
+			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
+			if (path.endsWith("/create-target")) return Response.json({ ...transport, uploadUrlExpiresAt: now + 3600_000 });
+			if (path.endsWith("/finalize")) return Response.json(committed);
+			if (path === "/object") return new Response(null, { status: 200 });
+			return Response.json({}, { status: 500 });
+		});
+		const crash = await stop_after_task_save(f, "unstarted", { emailWritten: step === "written" });
+		expect(calls.map(call => call.path)).toEqual([
+			"/token", "/gmail/v1/users/me/messages/ab", ...(step === "written" ? ["/api/v1/files/write"] : []),
+		]);
+		const checkpoint = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		expect(checkpoint.filePath).not.toBeNull();
+		expect(checkpoint).toMatchObject({
+			status: "pending", emailWritten: step === "written", fileNodeId: step === "written" ? "email-node" : null,
+			attempts: 0, settlementNeeded: false,
+			attachments: [{ state: "unstarted", request: null, deliveries: 0, uploadAttemptedAt: null }],
+		});
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: f.workId, context: f.work, result: { kind: "failed", error: crash.message } });
+		const stopped = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(stopped.nextSyncAt).toBeGreaterThan(now);
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ syncWorkId: null, syncRequestId: null });
+		now = stopped.nextSyncAt!;
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		const queued = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(queued.syncWorkId).not.toBeNull();
+		expect(queued.syncRequestId).not.toBe(f.work.requestId);
+		const work = { ...f.work, requestId: queued.syncRequestId! };
+		resumed = true;
+		const before = calls.length;
+		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		const writes = calls.filter(call => call.path.endsWith("/files/write"));
+		expect(writes).toHaveLength(1);
+		expect(writes[0].body).toMatchObject({ path: checkpoint.filePath, overwrite: "fail", contentType: "text/markdown" });
+		expect(calls.slice(before).map(call => call.path)).toEqual([
+			"/token", "/gmail/v1/users/me/messages/ab", ...(step === "planned" ? ["/api/v1/files/write"] : []),
+			"/api/v1/files/service-uploads/create-target", "/object", "/api/v1/files/service-uploads/finalize",
+		]);
+		expect(calls.filter(call => call.path.endsWith("/create-target")).map(call => call.body))
+			.toEqual([{ idempotencyKey: `${f.accountId}:ab`, targetKey: "ab:att-0", path: checkpoint.attachments[0].initialPath,
+				contentType: "application/pdf", size: 4, readOnly: false, nonCollaborative: false }]);
+		expect(calls.filter(call => call.path === "/object")).toHaveLength(1);
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({
+			status: "done", filePath: checkpoint.filePath, emailWritten: true, fileNodeId: "email-node", emailAssumed: false,
+			attempts: 0, settlementNeeded: false, nextAttemptAt: null,
+			attachments: [{ state: "saved", initialPath: checkpoint.attachments[0].initialPath, deliveries: 1 }],
+		});
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: queued.syncWorkId! as typeof f.workId, context: work, result: { kind: "success", returnValue: null } });
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({
+			messagesSynced: 1, syncStatus: "live", syncError: null, syncWorkId: null, syncRequestId: null,
+			ledgerCounts: { pending: 0, done: 1, emailAssumed: 0 },
 		});
 	});
 	test.each(["inline", "external"])("%s text body uses decoded bytes when Gmail reports a different size", async (kind) => {
@@ -471,7 +538,7 @@ describe("work_account_slice", () => {
 			return Response.json({}, { status: 500 });
 		});
 		// The saved marker counts an attempt even when the worker stops before PUT.
-		const crash = await stop_after_task_save(f, "pending", 1);
+		const crash = await stop_after_task_save(f, "pending", { deliveries: 1 });
 		expect(calls.map(call => call.path)).toEqual([
 			"/token", "/gmail/v1/users/me/messages/ab", "/api/v1/files/write", "/api/v1/files/service-uploads/create-target",
 		]);
@@ -1537,6 +1604,51 @@ describe("work_account_slice", () => {
 		expect(await f.t.run((ctx) => ctx.db.query("messages_ledger").withIndex("by_account_gmailMessageId",
 			(q) => q.eq("accountId", f.accountId).eq("gmailMessageId", "ac")).unique())).toMatchObject({
 			status: "done", emailWritten: true, fileNodeId: "sent-node",
+		});
+	});
+	test("a stop after the final message save advances backfill without new calls", async () => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		// Pause the queue while replaying the saved backfill page.
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const f = await fixture({ fresh: true });
+		await f.t.run((ctx) => ctx.db.patch(f.accountId, {
+			nextSliceKind: "backfill", backfillComplete: false, backfillPage: { ids: ["ab"], nextPageToken: null, index: 0 },
+		}));
+		const calls = network((path) => {
+			now += 600;
+			if (path.endsWith("/messages/ab")) return Response.json(source);
+			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
+			if (path.endsWith("/create-target")) return Response.json({ ...transport, uploadUrlExpiresAt: now + 3600_000 });
+			if (path.endsWith("/finalize")) return Response.json(committed);
+			if (path === "/object") return new Response(null, { status: 200 });
+			return Response.json({}, { status: 500 });
+		});
+		const crash = await stop_after_task_save(f, "saved");
+		const saved = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		expect(saved).toMatchObject({ status: "done", emailWritten: true, settlementNeeded: false, nextAttemptAt: null, attachments: [{ state: "saved" }] });
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({
+			messagesSynced: 1, backfillComplete: false, backfillPage: { ids: ["ab"], index: 0 }, ledgerCounts: { pending: 0, done: 1 },
+		});
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: f.workId, context: f.work, result: { kind: "failed", error: crash.message } });
+		const stopped = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(stopped.nextSyncAt).toBeGreaterThan(now);
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ syncWorkId: null, syncRequestId: null });
+		now = stopped.nextSyncAt!;
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		const queued = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(queued.syncWorkId).not.toBeNull();
+		expect(queued.syncRequestId).not.toBe(f.work.requestId);
+		const work = { ...f.work, requestId: queued.syncRequestId! };
+		const before = calls.length;
+		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		expect(calls).toHaveLength(before);
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(saved);
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: queued.syncWorkId! as typeof f.workId, context: work, result: { kind: "success", returnValue: null } });
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({
+			messagesSynced: 1, backfillComplete: true, backfillPage: null, backfillPageToken: null,
+			syncStatus: "live", syncError: null, syncWorkId: null, syncRequestId: null, ledgerCounts: { pending: 0, done: 1 },
 		});
 	});
 	test("a completed backfill replay makes no source or Files calls", async () => {
