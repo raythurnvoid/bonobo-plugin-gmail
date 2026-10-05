@@ -526,7 +526,8 @@ export const work_account_slice = internalAction({
                   ? "unconfirmed"
                   : task.state,
               nextAttemptAt: Date.now() + 60_000,
-              reason: "source_unavailable",
+              // A pending reply must keep refused uploads in finalize-only recovery.
+              reason: settlementOnly ? task.reason : "source_unavailable",
             });
           }
           await finish();
