@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { getFunctionName } from "convex/server";
+import { getFunctionName, type FunctionArgs } from "convex/server";
 import { internal } from "./_generated/api";
-import type { ActionCtx } from "./_generated/server";
+import type { ActionCtx, MutationCtx } from "./_generated/server";
 import { gmail_test_fixture } from "../scripts/gmail-test-fixtures";
 import * as gmail_codec from "../shared/gmail-codec";
 import { gmail_workpool } from "./gmail_workpool";
+import { on_complete } from "./gmail_accounts";
 import { work_account_slice } from "./gmail_worker";
 import { gmail_callback, gmail_finish, gmail_start } from "./gmail_oauth";
 import { gmail_encrypt, gmail_google_token_purpose, gmail_random_secret } from "./gmail_secrets";
@@ -4821,6 +4822,152 @@ describe("worker budget and completion", () => {
 			syncWorkId: null,
 			syncRequestId: null,
 		});
+	});
+	test.each([
+		["credits", "ready", "recover", 402, 3600_000], ["rate limit", "ready", "recover", 429, 600_000], ["outage", "ready", "recover", 503, 60_000],
+		["credits", "revoked", "recover", 402, 3600_000], ["rate limit", "revoked", "recover", 429, 600_000], ["outage", "revoked", "recover", 503, 60_000],
+		["credits", "ready", "exhaust", 402, 3600_000], ["rate limit", "ready", "exhaust", 429, 600_000], ["outage", "ready", "exhaust", 503, 60_000],
+		["credits", "revoked", "exhaust", 402, 3600_000], ["rate limit", "revoked", "exhaust", 429, 600_000], ["outage", "revoked", "exhaust", 503, 60_000],
+	] as const)("native Workpool %s with %s source can %s without shortening its saved wait", async (kind, sourceAccess, mode, status, delay) => {
+		vi.useFakeTimers();
+		vi.setSystemTime(1_800_000_000_000);
+		const f = await fixture({ fresh: true });
+		// Remove the fixture's future grant job. Dispatch owns every slice below.
+		await f.t.run(async ctx => {
+			await gmail_workpool.cancel(ctx, f.workId);
+			await ctx.db.patch(f.accountId, { syncWorkId: null, syncRequestId: null });
+		});
+		let reject = false;
+		let complete = false;
+		let revoke = false;
+		const calls = network(path => {
+			vi.setSystemTime(Date.now() + 600);
+			if (path.endsWith("/messages/ab")) return Response.json(source);
+			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
+			if (path.endsWith("/create-target")) return Response.json({ ...transport, uploadUrlExpiresAt: Date.now() + 3600_000 });
+			if (path.endsWith("/history")) return Response.json({ historyId: "11", history: [] });
+			if (path.endsWith("/finalize")) return reject
+				? Response.json({ message: kind, ...(status === 429 ? { retryAfterMs: delay } : {}) }, { status })
+				: Response.json(complete ? committed : pending);
+			if (path === "/object") return new Response(null);
+			return Response.json({}, { status: 500 });
+		});
+		const readyFetch = globalThis.fetch;
+		vi.stubGlobal("fetch", vi.fn((input: string | URL | Request, init?: RequestInit) => {
+			const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+			if (revoke && url.hostname === "oauth2.googleapis.com") {
+				vi.setSystemTime(Date.now() + 600);
+				calls.push({ path: url.pathname, body: null });
+				return Promise.resolve(Response.json({ error: "invalid_grant" }, { status: 400 }));
+			}
+			return readyFetch(input, init);
+		}));
+		async function drain(workId: typeof f.workId) {
+			// Keep future cleanup timers pending while the component finishes this job.
+			for (let tick = 0; tick < 80; tick++) {
+				vi.advanceTimersByTime(1000);
+				await f.t.finishInProgressScheduledFunctions();
+				if ((await f.t.run(ctx => gmail_workpool.status(ctx, workId))).state === "finished" &&
+					(await f.t.run(ctx => ctx.db.get(f.accountId)))!.syncWorkId === null) return;
+			}
+			throw new Error("Native Workpool did not finish its job");
+		}
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		let queued = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+		await drain(queued.syncWorkId! as typeof f.workId);
+		const created = (await f.t.run(ctx => ctx.db.get(f.ledgerId)))!;
+		expect(created).toMatchObject({ status: "pending", emailWritten: true, settlementNeeded: true, attempts: 0,
+			attachments: [{ state: "pending", accepted: true, deliveries: 1, sourceUnavailablePendingChecks: 0 }] });
+		if (sourceAccess === "revoked") {
+			revoke = true;
+			vi.setSystemTime((await f.t.run(ctx => ctx.db.get(f.accountId)))!.nextSyncAt!);
+			await f.t.mutation(internal.gmail_accounts.dispatch, {});
+			queued = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+			await drain(queued.syncWorkId! as typeof f.workId);
+			expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toMatchObject({ sourceError: "google_revoked", googleRefreshToken: null });
+		}
+		const original = (await f.t.run(ctx => ctx.db.get(f.ledgerId)))!;
+		const before = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+		vi.setSystemTime(Math.max(before.nextSyncAt!, original.nextAttemptAt!));
+		reject = true;
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		queued = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+		const workId = queued.syncWorkId! as typeof f.workId;
+		const work = { ...f.work, requestId: queued.syncRequestId! };
+		const attempts: { at: number; work: typeof work; account: typeof before; message: typeof original }[] = [];
+		let savedWait: number | null = null;
+		const crash = new Error("Native worker stopped after saved service wait");
+		const registered = work_account_slice as typeof work_account_slice & {
+			_handler: (ctx: ActionCtx, args: { work: typeof f.work }) => Promise<null>;
+		};
+		const handler = registered._handler;
+		const interrupted = vi.spyOn(registered, "_handler").mockImplementation(async (ctx, args) => {
+			attempts.push({ at: Date.now(), work: args.work,
+				account: (await f.t.run(ctx => ctx.db.get(f.accountId)))!, message: (await f.t.run(ctx => ctx.db.get(f.ledgerId)))! });
+			if (mode === "exhaust" && attempts.length > 1) throw crash;
+			let stopped = false;
+			const runMutation: ActionCtx["runMutation"] = async (reference, ...values) => {
+				if (stopped) throw crash;
+				const result = await ctx.runMutation(reference, ...values);
+				if (getFunctionName(reference) === "gmail_accounts:finish_slice") {
+					savedWait = (await f.t.run(ctx => ctx.db.get(f.accountId)))!.nextSyncAt;
+					stopped = true;
+					throw crash;
+				}
+				return result;
+			};
+			return handler({ ...ctx, runMutation }, args);
+		});
+		const completion = on_complete as typeof on_complete & {
+			_handler: (ctx: MutationCtx, args: FunctionArgs<typeof internal.gmail_accounts.on_complete>) => Promise<null>;
+		};
+		const callback = vi.spyOn(completion, "_handler");
+		const callCount = calls.length;
+		await drain(workId);
+		interrupted.mockRestore();
+		expect(attempts).toHaveLength(mode === "recover" ? 2 : 5);
+		expect(savedWait! - attempts[0].at).toBeGreaterThanOrEqual(delay);
+		for (const attempt of attempts.slice(1)) {
+			expect(attempt.at).toBeLessThan(savedWait!);
+			expect(attempt.work).toEqual(work);
+			expect(attempt.account).toMatchObject({ syncWorkId: workId, syncRequestId: queued.syncRequestId,
+				nextSyncAt: savedWait, temporaryFailures: 1, sourceError: before.sourceError });
+			expect(attempt.message).toEqual(original);
+		}
+		expect(callback).toHaveBeenCalledTimes(1);
+		expect(callback.mock.calls[0][1]).toMatchObject({ workId, context: work,
+			result: { kind: mode === "recover" ? "success" : "failed" } });
+		const completed = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+		expect(completed).toMatchObject({ syncWorkId: null, syncRequestId: null, syncStatus: "blocked",
+			syncError: mode === "exhaust" ? "sync_error" : status === 402 ? "credits" : "press_temporary",
+			temporaryFailures: mode === "recover" ? 1 : 2, sourceError: before.sourceError, googleRefreshToken: before.googleRefreshToken });
+		expect(completed.nextSyncAt).toBeGreaterThanOrEqual(savedWait!);
+		expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(original);
+		expect(calls.slice(callCount).map(call => call.path)).toEqual(["/api/v1/files/service-uploads/finalize"]);
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toEqual(completed);
+		reject = false;
+		complete = true;
+		// Date stores whole milliseconds; backoff jitter can include a fraction.
+		vi.setSystemTime(Math.ceil(completed.nextSyncAt!));
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		const due = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+		expect(due.syncWorkId).not.toBeNull();
+		expect(due.syncRequestId).not.toBe(queued.syncRequestId);
+		await drain(due.syncWorkId! as typeof f.workId);
+		expect(callback).toHaveBeenCalledTimes(2);
+		expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toMatchObject({ status: "done", settlementNeeded: false, attempts: 0,
+			attachments: [{ state: "saved", request: original.attachments[0].request, deliveries: 1 }] });
+		expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toMatchObject({ syncWorkId: null, syncRequestId: null,
+			temporaryFailures: 0, sourceError: before.sourceError, syncError: before.sourceError,
+			syncStatus: sourceAccess === "ready" ? "live" : "error", messagesSynced: 1,
+			ledgerCounts: { done: 1, pending: 0, failed: 0, given_up: 0, permissionHeld: 0 } });
+		for (const ending of ["/messages/ab", "/files/write", "/create-target"]) expect(calls.filter(call => call.path.endsWith(ending))).toHaveLength(1);
+		expect(calls.filter(call => call.path === "/object")).toHaveLength(1);
+		expect(calls.filter(call => call.path.endsWith("/finalize")).map(call => call.body)).toEqual(Array.from({ length: sourceAccess === "ready" ? 3 : 4 }, () => ({
+			idempotencyKey: original.attachments[0].request!.idempotencyKey, targetKey: original.attachments[0].request!.targetKey,
+		})));
+		vi.clearAllTimers();
 	});
 	test("crash exhaustion retains source error and has no due time without settlement", async () => {
 		const f = await fixture({ sourceError: "google_revoked" });
