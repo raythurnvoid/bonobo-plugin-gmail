@@ -157,7 +157,7 @@ function network(answer: (path: string, body: unknown, url: URL) => Response | P
 
 async function stop_after_mutation(
 	f: Awaited<ReturnType<typeof fixture>>,
-	mutation: "save_message" | "save_traversal" | "discover_message" | "finish_slice" | "ingest_history",
+	mutation: "save_message" | "save_traversal" | "discover_message" | "finish_slice" | "ingest_history" | "pace_press",
 	reached: () => Promise<boolean>,
 ) {
 	// Convex-test calls this internal handler. Stop after its mutation commits.
@@ -3920,6 +3920,82 @@ describe("permission guards", () => {
 });
 
 describe("worker budget and completion", () => {
+	test.each(["email", "settlement"] as const)("a stop after %s pacing keeps its reservation and resumes without duplicate effects", async (kind) => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		// Pause the queue so completion and dispatch choose each next request.
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const f = await fixture(kind === "email" ? { fresh: true } : { sourceError: "google_revoked" });
+		const route = kind === "email" ? "/api/v1/files/write" : "/api/v1/files/service-uploads/finalize";
+		expect(await f.t.mutation(internal.gmail_accounts.pace_press, { work: f.work, route })).toBe(0);
+		const prior = (await f.t.run((ctx) => ctx.db.query("press_route_pacing").withIndex("by_installation_route",
+			(q) => q.eq("installationId", f.actor.installationId).eq("route", route)).unique()))!;
+		const original = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		let resume = false;
+		const calls = network((path) => {
+			if (resume) now += 600;
+			if (path.endsWith("/messages/ab")) return Response.json(source);
+			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
+			if (path.endsWith("/create-target")) return Response.json({ ...transport, uploadUrlExpiresAt: now + 3600_000 });
+			if (path === "/object") return new Response(null, { status: 200 });
+			if (path.endsWith("/finalize")) return Response.json(committed);
+			if (path.endsWith("/history")) return Response.json({ historyId: "11", history: [] });
+			return Response.json({}, { status: 500 });
+		});
+		const crash = await stop_after_mutation(f, "pace_press", async () => true);
+		const reserved = (await f.t.run((ctx) => ctx.db.get(prior._id)))!;
+		expect(reserved.lastCallAt - prior.lastCallAt).toBe(600);
+		expect(calls.filter(call => call.path.startsWith("/api/v1/files/") || call.path === "/object")).toHaveLength(0);
+		const stopped = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		if (kind === "email") {
+			expect(stopped).toMatchObject({ status: "pending", emailWritten: false, fileNodeId: null, settlementNeeded: false });
+			expect(stopped.filePath).not.toBeNull();
+			expect(stopped.attachments).toHaveLength(1);
+			expect(stopped.attachments[0]).toMatchObject({ state: "unstarted", request: null, deliveries: 0 });
+		} else expect(stopped).toEqual(original);
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: f.workId, context: f.work,
+			result: { kind: "failed", error: crash.message } });
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(stopped);
+		expect(await f.t.run((ctx) => ctx.db.get(prior._id))).toEqual(reserved);
+		const completed = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(completed).toMatchObject({ syncWorkId: null, syncRequestId: null, syncError: "sync_error", temporaryFailures: 1 });
+		expect(completed.nextSyncAt).toBeGreaterThan(now);
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ syncWorkId: null, syncRequestId: null });
+		now = completed.nextSyncAt!;
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		const queued = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(queued.syncWorkId).not.toBeNull();
+		expect(queued.syncRequestId).not.toBe(f.work.requestId);
+		const work = { ...f.work, requestId: queued.syncRequestId! };
+		resume = true;
+		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		const saved = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		expect(saved).toMatchObject({ status: "done", emailWritten: true, settlementNeeded: false, attempts: 0 });
+		expect(saved.filePath).toBe(stopped.filePath);
+		expect(saved.attachments[0]).toMatchObject({ state: "saved", livePath: committed.path, nodeId: committed.nodeId });
+		expect(calls.filter(call => call.path.endsWith("/finalize"))).toHaveLength(1);
+		if (kind === "email") {
+			expect(saved.attachments[0].initialPath).toBe(stopped.attachments[0].initialPath);
+			expect(saved.attachments[0].deliveries).toBe(1);
+			for (const ending of ["/files/write", "/create-target"]) expect(calls.filter(call => call.path.endsWith(ending))).toHaveLength(1);
+			expect(calls.filter(call => call.path === "/object")).toHaveLength(1);
+			expect(calls.filter(call => call.path.endsWith("/messages/ab"))).toHaveLength(2);
+		} else {
+			expect(saved.attachments[0]).toMatchObject({ request: original.attachments[0].request, deliveries: 2, sourceUnavailablePendingChecks: 3 });
+			expect(calls.map(call => call.path)).toEqual([route]);
+			expect(calls[0].body).toEqual({ idempotencyKey: original.attachments[0].request!.idempotencyKey,
+				targetKey: original.attachments[0].request!.targetKey });
+		}
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: queued.syncWorkId! as typeof f.workId, context: work,
+			result: { kind: "success", returnValue: null } });
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ syncWorkId: null, syncRequestId: null,
+			messagesSynced: 1, sourceError: kind === "email" ? null : "google_revoked", temporaryFailures: 0, ledgerCounts: { pending: 0, done: 1 } });
+		const count = calls.length;
+		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		expect(calls).toHaveLength(count);
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(saved);
+	});
 	test("slow preparation crosses forty seconds and still finishes one PUT", async () => {
 		const f = await fixture({ fresh: true });
 		let now = Date.now();
