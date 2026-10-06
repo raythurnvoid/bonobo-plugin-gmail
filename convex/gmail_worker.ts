@@ -599,6 +599,16 @@ export const work_account_slice = internalAction({
             })),
           });
         }
+        if (selected < 0)
+          selected = row.attachments.findIndex(
+            (task) =>
+              unresolved(task) && (task.nextAttemptAt ?? 0) <= Date.now(),
+          );
+        // Keep only the source strings this unit will read.
+        if (row.emailWritten) message.bodyParts.length = 0;
+        for (const [index, part] of message.attachments.entries()) {
+          if (index !== selected) delete part.data;
+        }
         async function part_bytes(
           part: { size: number; data?: string; attachmentId?: string },
           maximum: number,
@@ -607,6 +617,7 @@ export const work_account_slice = internalAction({
         ) {
           if (part.size > maximum) throw new gmail_ContentError("too_large");
           let data = part.data;
+          delete part.data;
           if (data === undefined && part.attachmentId) {
             await guard();
             let raw: unknown;
@@ -721,11 +732,6 @@ export const work_account_slice = internalAction({
             });
           }
         }
-        if (selected < 0)
-          selected = row.attachments.findIndex(
-            (task) =>
-              unresolved(task) && (task.nextAttemptAt ?? 0) <= Date.now(),
-          );
         if (selected < 0) {
           await finish();
           return;

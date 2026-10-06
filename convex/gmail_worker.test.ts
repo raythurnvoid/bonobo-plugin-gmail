@@ -3,6 +3,7 @@ import { getFunctionName } from "convex/server";
 import { internal } from "./_generated/api";
 import type { ActionCtx } from "./_generated/server";
 import { gmail_test_fixture } from "../scripts/gmail-test-fixtures";
+import * as gmail_codec from "../shared/gmail-codec";
 import { gmail_workpool } from "./gmail_workpool";
 import { work_account_slice } from "./gmail_worker";
 import { gmail_encrypt, gmail_google_token_purpose } from "./gmail_secrets";
@@ -421,6 +422,65 @@ describe("work_account_slice", () => {
 		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
 		expect(calls.find((call) => call.path.endsWith("/files/write"))?.body).toMatchObject({ content: expect.stringContaining("Body not copied:") });
 		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({ status: "done", emailWritten: true });
+	});
+	test("body and attachment reads release used and unselected source strings", async () => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const f = await fixture({ fresh: true });
+		const discover = gmail_codec.gmail_discover_message;
+		const discovered: ReturnType<typeof discover>[] = [];
+		// Keep the parsed sources so reference release can be checked without a memory estimate.
+		vi.spyOn(gmail_codec, "gmail_discover_message").mockImplementation(input => {
+			const parsed = discover(input);
+			discovered.push(parsed);
+			return parsed;
+		});
+		const samples: { phase: string; body: number[]; attachments: number[] }[] = [];
+		const calls = network((path, body) => {
+			now += 600;
+			if (path.endsWith("/messages/ab")) return Response.json({ ...source, payload: { ...source.payload,
+				parts: [source.payload.parts[0], { partId: "0.1", mimeType: "text/plain", body: { size: 4, attachmentId: "body" } },
+					source.payload.parts[1], { ...source.payload.parts[1], partId: "2", filename: "second.pdf", body: { size: 6, data: "c2Vjb25k" } }] } });
+			if (path.endsWith("/attachments/body") || path.endsWith("/create-target")) {
+				const parsed = discovered.at(-1)!;
+				samples.push({ phase: path.endsWith("/attachments/body") ? "body" : "create",
+					body: parsed.bodyParts.map(part => part.data?.length ?? 0), attachments: parsed.attachments.map(part => part.data?.length ?? 0) });
+			}
+			if (path.endsWith("/attachments/body")) return Response.json({ size: 4, data: "bWFpbA" });
+			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
+			if (path.endsWith("/create-target") || path.endsWith("/finalize")) {
+				if (body === null || typeof body !== "object" || !("targetKey" in body) || typeof body.targetKey !== "string") throw new Error("Missing target key");
+				const second = body.targetKey.endsWith("att-1");
+				const livePath = second ? "/emails/ray-example.com/second.pdf" : transport.path;
+				const nodeId = second ? "second-node" : transport.nodeId;
+				return Response.json(path.endsWith("/create-target")
+					? { ...transport, path: livePath, nodeId, uploadUrl: `https://upload.example.test/${second ? "second" : "first"}`, uploadUrlExpiresAt: now + 3600_000 }
+					: { ...committed, path: livePath, nodeId, actualBytes: second ? 6 : 4 });
+			}
+			if (path === "/first" || path === "/second") return new Response(null, { status: 200 });
+			if (path.endsWith("/history")) return Response.json({ historyId: "11", history: [] });
+			return Response.json({}, { status: 500 });
+		});
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: f.workId, context: f.work, result: { kind: "success", returnValue: null } });
+		now = (await f.t.run(ctx => ctx.db.get(f.accountId)))!.nextSyncAt!;
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		const queued = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+		const next = { ...f.work, requestId: queued.syncRequestId! };
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: next });
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: queued.syncWorkId! as typeof f.workId, context: next, result: { kind: "success", returnValue: null } });
+		expect(samples[0]).toEqual({ phase: "body", body: [0, 0], attachments: [6, 0] });
+		expect(samples.slice(1)).toEqual([{ phase: "create", body: [0, 0], attachments: [0, 0] },
+			{ phase: "create", body: [], attachments: [0, 0] }]);
+		expect(calls.filter(call => call.path === "/first" || call.path === "/second").map(call => Array.from(call.body as Uint8Array)))
+			.toEqual([[102, 105, 108, 101], [115, 101, 99, 111, 110, 100]]);
+		expect(calls.filter(call => call.path.endsWith("/files/write"))).toHaveLength(1);
+		expect(calls.find(call => call.path.endsWith("/files/write"))!.body).toMatchObject({ content: expect.stringContaining("mail\n\nmail") });
+		expect(calls.filter(call => call.path.endsWith("/attachments/body"))).toHaveLength(1);
+		expect(calls.filter(call => call.path.endsWith("/messages/ab"))).toHaveLength(2);
+		expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toMatchObject({ status: "done", emailWritten: true, settlementNeeded: false,
+			attachmentsNotSaved: 0, attachments: [{ state: "saved", size: 4 }, { state: "saved", size: 6 }] });
 	});
 	test("a pending target with no PUT marker replays create immediately", async () => {
 		const f = await fixture();
@@ -4077,6 +4137,7 @@ describe("worker budget and completion", () => {
 		});
 	});
 	test("dispatcher allocates one guarded work request and never queues a second slice", async () => {
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture();
 		await f.t.run((ctx) => ctx.db.patch(f.accountId, { syncWorkId: null, syncRequestId: null }));
 		await f.t.mutation(internal.gmail_accounts.dispatch, {});
@@ -4124,6 +4185,75 @@ describe("source limits", () => {
 			error: "source_too_large",
 			settlementNeeded: false,
 		});
+	});
+	test.each(["parts", "declared", "actual", "deadline", "streamed"] as const)("a stop after the %s body-limit marker keeps the email and attachment", async kind => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const f = await fixture({ fresh: true });
+		const bodies = Array.from({ length: kind === "parts" ? 9 : kind === "deadline" ? 8 : kind === "streamed" ? 1 : 2 }, (_, index) => ({
+			partId: `0.${index}`, mimeType: "text/plain", body: { size: kind === "declared" ? 1536 * 1024 : 4, attachmentId: `body-${index}` },
+		}));
+		const data = kind === "actual" ? Buffer.alloc(1024 * 1024 + 1, 65).toString("base64url") : "bWFpbA";
+		const padding = new Uint8Array(1024 * 1024).fill(32);
+		let chunks = 0;
+		let cancelled = false;
+		let emailReply = false;
+		const calls = network(path => {
+			now += 600;
+			if (path.endsWith("/messages/ab")) return Response.json({ ...source, payload: { ...source.payload,
+				parts: [...bodies, source.payload.parts[1]] } });
+			if (/\/attachments\/body-\d+$/.test(path)) {
+				if (kind === "deadline") now += 20_000;
+				if (kind !== "streamed") return Response.json({ size: kind === "actual" ? 1024 * 1024 + 1 : 4, data });
+				// Valid JSON follows the padding, so the wire guard must cancel it.
+				return new Response(new ReadableStream<Uint8Array>({
+					pull(controller) {
+						chunks++;
+						if (chunks <= 49) controller.enqueue(padding);
+						else if (chunks === 50) controller.enqueue(new TextEncoder().encode('{"size":4,"data":"bWFpbA"}'));
+						else controller.close();
+					},
+					cancel() { cancelled = true; },
+				}), { headers: { "Content-Length": "1" } });
+			}
+			if (path.endsWith("/files/write")) { emailReply = true; return Response.json({ nodeId: "email-node" }); }
+			if (path.endsWith("/create-target")) return Response.json({ ...transport, uploadUrlExpiresAt: now + 3600_000 });
+			if (path.endsWith("/finalize")) return Response.json(committed);
+			if (path.endsWith("/history")) return Response.json({ historyId: "11", history: [] });
+			if (path === "/object") return new Response(null, { status: 200 });
+			return Response.json({}, { status: 500 });
+		});
+		const crash = await stop_after_mutation(f, "save_message", async () => emailReply);
+		const saved = (await f.t.run(ctx => ctx.db.get(f.ledgerId)))!;
+		expect(cancelled).toBe(kind === "streamed");
+		if (kind === "streamed") expect(chunks).toBeLessThanOrEqual(50);
+		const bodyCalls = calls.filter(call => /\/attachments\/body-\d+$/.test(call.path)).length;
+		expect(bodyCalls).toBe(kind === "parts" || kind === "declared" ? 0 : kind === "actual" ? 2 : kind === "deadline" ? 3 : 1);
+		const reason = kind === "parts" ? "part" : kind === "deadline" ? "time" : "size";
+		expect(calls.find(call => call.path.endsWith("/files/write"))!.body).toMatchObject({
+			content: expect.stringContaining(`Body not copied: it exceeds this plugin's ${reason} limit. Read it in Gmail.`),
+		});
+		expect(saved).toMatchObject({ emailWritten: true, fileNodeId: "email-node", attempts: 0, error: null,
+			attachmentsNotSaved: 0, attachments: [{ state: "unstarted", request: null, deliveries: 0 }] });
+		expect(calls.filter(call => /service-uploads|\/object$/.test(call.path))).toEqual([]);
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: f.workId, context: f.work, result: { kind: "failed", error: crash.message } });
+		now = (await f.t.run(ctx => ctx.db.get(f.accountId)))!.nextSyncAt!;
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		const queued = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+		const next = { ...f.work, requestId: queued.syncRequestId! };
+		const before = calls.length;
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: next });
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: queued.syncWorkId! as typeof f.workId, context: next, result: { kind: "success", returnValue: null } });
+		expect(calls.slice(before).filter(call => /\/attachments\/body-\d+$|\/files\/write$/.test(call.path))).toHaveLength(0);
+		expect(calls.filter(call => call.path.endsWith("/files/write"))).toHaveLength(1);
+		expect(calls.filter(call => call.path.endsWith("/messages/ab"))).toHaveLength(2);
+		expect(calls.filter(call => call.path.endsWith("/create-target"))).toHaveLength(1);
+		expect(calls.filter(call => call.path === "/object").map(call => Array.from(call.body as Uint8Array))).toEqual([[102, 105, 108, 101]]);
+		expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toMatchObject({ status: "done", emailWritten: true, filePath: saved.filePath,
+			fileNodeId: saved.fileNodeId, settlementNeeded: false, attempts: 0, error: null, attachments: [{ state: "saved", deliveries: 1 }] });
+		expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toMatchObject({ sourceError: null, syncError: null, messagesSynced: 1,
+			ledgerCounts: { done: 1, pending: 0, given_up: 0, skipped: 0 } });
 	});
 	test("a declared attachment above 32 MiB is skipped without fetching its bytes", async () => {
 		const f = await fixture({ fresh: true });

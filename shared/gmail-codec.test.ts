@@ -36,7 +36,7 @@ describe("gmail_file_path", () => {
 		expect(gmail_slug(`${"a".repeat(59)}-tail`, 60)).toBe("a".repeat(59));
 		expect(gmail_slug("日本語", 60)).toBe("untitled");
 	});
-	test.each(["invoice", "hello.world", "resume-2026", "ray.thurn.void-gmail.com", "untitled"])("keeps canonical Press folder %s", name => {
+	test.each(["invoice", "hello.world", "resume-2026", "mail.example-gmail.com", "untitled"])("keeps canonical Press folder %s", name => {
 		expect(gmail_slug(name)).toBe(name);
 		expect(name).toMatch(/^(?!.*[._-]{2})[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/);
 	});
