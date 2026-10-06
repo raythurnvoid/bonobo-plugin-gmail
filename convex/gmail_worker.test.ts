@@ -4083,6 +4083,174 @@ describe("permission guards", () => {
 		expect(calls).toHaveLength(count);
 		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(saved);
 	});
+	test.each([
+		["before", "needs Retry"], ["after", "needs Retry"], ["before", "skipped"], ["after", "skipped"],
+	] as const)("a stop %s %s proof saves final held work before completion", async (phase, outcome) => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const f = await fixture({ fresh: true });
+		const needsRetry = outcome === "needs Retry";
+		let deny = true;
+		let revoke = false;
+		let exclude = false;
+		let commit = false;
+		let proofBoundary = false;
+		let proofReply = false;
+		const calls = network((path) => {
+			now += 600;
+			if (path.endsWith("/messages/ab")) return Response.json(exclude ? { ...source, labelIds: ["SPAM"] } : source);
+			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
+			if (path.endsWith("/create-target")) return Response.json({ ...transport, uploadUrlExpiresAt: now + 3600_000 });
+			if (path === "/object") return new Response(null, { status: 200 });
+			if (path.endsWith("/finalize")) {
+				if (deny) return Response.json({ message: "Forbidden" }, { status: 403 });
+				if (proofBoundary) proofReply = true;
+				return Response.json(commit ? committed : pending);
+			}
+			if (path.endsWith("/history")) return Response.json({ historyId: "11", history: [] });
+			return Response.json({}, { status: 500 });
+		});
+		const readyFetch = globalThis.fetch;
+		vi.stubGlobal("fetch", vi.fn((input: string | URL | Request, init?: RequestInit) => {
+			const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+			if (revoke && url.hostname === "oauth2.googleapis.com") {
+				now += 600;
+				calls.push({ path: url.pathname, body: null });
+				return Promise.resolve(Response.json({ error: "invalid_grant" }, { status: 400 }));
+			}
+			return readyFetch(input, init);
+		}));
+		let work = f.work;
+		let workId = f.workId;
+		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		const firstHold = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		expect(firstHold).toMatchObject({ status: "failed", permissionHeld: true, error: "file_access",
+			attachments: [{ accepted: true, deliveries: 1, sourceUnavailablePendingChecks: 0 }] });
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "success", returnValue: null } });
+		if (needsRetry) {
+			revoke = true;
+			now = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!.nextSyncAt!;
+			await f.t.mutation(internal.gmail_accounts.dispatch, {});
+			const queued = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+			work = { ...work, requestId: queued.syncRequestId! };
+			workId = queued.syncWorkId! as typeof f.workId;
+			await f.t.action(internal.gmail_worker.work_account_slice, { work });
+			expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ sourceError: "google_revoked", googleRefreshToken: null });
+			expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(firstHold);
+			await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "success", returnValue: null } });
+		}
+		deny = false;
+		exclude = !needsRetry;
+		for (let check = 1; check <= (needsRetry ? 4 : 1); check++) {
+			const account = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+			const row = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+			now = Math.max(account.nextSyncAt!, row.nextAttemptAt!, account.permissionProbeNotBefore ?? 0);
+			await f.t.mutation(internal.gmail_accounts.dispatch, {});
+			const queued = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+			work = { ...work, requestId: queued.syncRequestId! };
+			workId = queued.syncWorkId! as typeof f.workId;
+			await f.t.action(internal.gmail_worker.work_account_slice, { work });
+			expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({ status: "pending", permissionHeld: false,
+				skipReason: needsRetry ? null : "spam", attachments: [{ deliveries: 1, sourceUnavailablePendingChecks: check }] });
+			await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "success", returnValue: null } });
+		}
+		// The next permitted reply must release a hold and finish in the same save.
+		deny = true;
+		const waiting = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		now = Math.max((await f.t.run((ctx) => ctx.db.get(f.accountId)))!.nextSyncAt!, waiting.nextAttemptAt!);
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		let queued = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		work = { ...work, requestId: queued.syncRequestId! };
+		workId = queued.syncWorkId! as typeof f.workId;
+		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		const held = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		expect(held).toMatchObject({ status: "failed", permissionHeld: true, error: "file_access", attempts: 0,
+			attachments: [{ deliveries: 1, sourceUnavailablePendingChecks: needsRetry ? 4 : 1,
+				request: firstHold.attachments[0].request }] });
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "success", returnValue: null } });
+		now = held.nextAttemptAt!;
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		queued = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		work = { ...work, requestId: queued.syncRequestId! };
+		workId = queued.syncWorkId! as typeof f.workId;
+		deny = false;
+		commit = !needsRetry;
+		proofBoundary = true;
+		const proofStart = calls.length;
+		const crash = await stop_after_mutation({ ...f, work }, "save_message", async () => proofReply, phase);
+		expect(calls.slice(proofStart).filter(call => call.path.endsWith("/finalize"))).toHaveLength(1);
+		expect(calls.slice(proofStart).some(call => call.path.endsWith("/messages/ab"))).toBe(false);
+		const stopped = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		const account = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(stopped.permissionHeld).toBe(phase === "before");
+		expect(account.permissionProbeNotBefore === null).toBe(phase === "after");
+		expect(account.ledgerCounts.permissionHeld).toBe(phase === "before" ? 1 : 0);
+		expect(account.sourceError).toBe(needsRetry ? "google_revoked" : null);
+		if (phase === "before") {
+			expect(stopped).toEqual({ ...held, nextAttemptAt: account.permissionProbeNotBefore });
+			expect(account.permissionProbeNotBefore).toBeGreaterThan(now);
+		} else {
+			expect(stopped.status).toBe(needsRetry ? "given_up" : "skipped");
+			expect(stopped.error).toBe(needsRetry ? "settlement_unconfirmed" : null);
+			expect(stopped.nextAttemptAt).toBeNull();
+			expect(stopped.settlementNeeded).toBe(false);
+			expect(stopped).toMatchObject({ settlementNeeded: false, fileAccessOperation: null,
+				attachments: [{ state: needsRetry ? "unconfirmed" : "saved", accepted: true, deliveries: 1,
+					sourceUnavailablePendingChecks: needsRetry ? 5 : 1, nextAttemptAt: null, request: held.attachments[0].request }] });
+			expect(account.ledgerCounts).toMatchObject({ failed: 0, pending: 0, given_up: needsRetry ? 1 : 0, skipped: needsRetry ? 0 : 1 });
+		}
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "failed", error: crash.message } });
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(stopped);
+		if (phase === "before") {
+			const completed = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+			now = Math.max(completed.nextSyncAt!, stopped.nextAttemptAt!, completed.permissionProbeNotBefore!);
+			await f.t.mutation(internal.gmail_accounts.dispatch, {});
+			queued = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+			expect(queued.syncRequestId).not.toBe(work.requestId);
+			work = { ...work, requestId: queued.syncRequestId! };
+			workId = queued.syncWorkId! as typeof f.workId;
+			await f.t.action(internal.gmail_worker.work_account_slice, { work });
+			await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "success", returnValue: null } });
+		}
+		const final = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		expect(final).toMatchObject({ status: needsRetry ? "given_up" : "skipped", permissionHeld: false, fileAccessOperation: null,
+			error: needsRetry ? "settlement_unconfirmed" : null, settlementNeeded: false, nextAttemptAt: null, attempts: 0,
+			filePath: held.filePath, emailWritten: true, attachments: [{ request: held.attachments[0].request }] });
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ messagesSynced: 1,
+			messagesSkipped: needsRetry ? 0 : 1, permissionProbeNotBefore: null, sourceError: needsRetry ? "google_revoked" : null,
+			ledgerCounts: { pending: 0, failed: 0, permissionHeld: 0, given_up: needsRetry ? 1 : 0, skipped: needsRetry ? 0 : 1 } });
+		if (needsRetry) expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ nextSyncAt: null });
+		const count = calls.length;
+		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		expect(calls).toHaveLength(count);
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(final);
+		expect(await f.t.mutation(internal.gmail_accounts.retry_failed, { ...f.actor, accountId: f.accountId, expectedGeneration: 1 }))
+			.toEqual({ _yay: { count: needsRetry ? 1 : 0, more: false } });
+		if (needsRetry) {
+			expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({ status: "pending", settlementNeeded: true,
+				attachments: [{ deliveries: 0, sourceUnavailablePendingChecks: 0, request: held.attachments[0].request }] });
+			await f.t.mutation(internal.gmail_accounts.dispatch, {});
+			queued = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+			work = { ...work, requestId: queued.syncRequestId! };
+			commit = true;
+			const resumed = calls.length;
+			await f.t.action(internal.gmail_worker.work_account_slice, { work });
+			expect(calls.slice(resumed).map(call => call.path)).toEqual(["/api/v1/files/service-uploads/finalize"]);
+			await f.t.mutation(internal.gmail_accounts.on_complete, { workId: queued.syncWorkId! as typeof f.workId,
+				context: work, result: { kind: "success", returnValue: null } });
+			expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({ status: "done", settlementNeeded: false,
+				attachments: [{ state: "saved", deliveries: 0, sourceUnavailablePendingChecks: 0, request: held.attachments[0].request }] });
+			expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ sourceError: "google_revoked", nextSyncAt: null,
+				ledgerCounts: { pending: 0, failed: 0, given_up: 0, done: 1, permissionHeld: 0 } });
+		} else expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(final);
+		for (const call of calls.filter(call => call.path.endsWith("/finalize")))
+			expect(call.body).toEqual({ idempotencyKey: held.attachments[0].request!.idempotencyKey,
+				targetKey: held.attachments[0].request!.targetKey });
+		expect(calls.filter(call => call.path.endsWith("/files/write"))).toHaveLength(1);
+		expect(calls.filter(call => call.path.endsWith("/create-target"))).toHaveLength(1);
+		expect(calls.filter(call => call.path === "/object")).toHaveLength(1);
+	});
 	test("a crash after claiming one of nine hundred held rows cannot claim another", async () => {
 		const f = await fixture({ held: true, sourceError: "google_revoked" });
 		const peer = await f.t.run(async (ctx) => {
