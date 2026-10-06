@@ -103,6 +103,8 @@ The small address parser follows [email-addresses](https://github.com/jackbearhe
 
 The plugin keeps a separate page grant cache and one grant chain per account. Page reads use a one-minute live-check window and a fixed 30-minute ceiling. Changes need a fresh Press write check. Saved secrets use AES-GCM with a purpose, so ciphertext cannot move between accounts or grant rows.
 
+Two local grant checks lose an accepted exchange or renewal reply, then resume through the minute sweep. The original encrypted source and request stay saved. An early sweep changes nothing; a due sweep saves its two-minute claim first. Exact recovery can use the old bearer after renewal rotates it. Each case makes one exchange/renew call. Exchange still waits for Finish; renewal saves a new seal and its next twelve-hour due time. Six broken rules fail the named checks; restoration passes. Providers and clocks are fake. Hosted grant recovery remains open.
+
 The service account needs workspace Can write. The member also needs write access. Restricted folders need their own grants. A processing token is sealed to the saved account destination. The trusted backend also holds interactive grants, which can seal other writable workspace paths.
 
 After a plugin update, each connecting member must reopen the new page to repair Press access. A reinstall needs Gmail Reconnect for old active rows. Local Disconnect keeps the account ledger and Files. There is no uninstall callback and no age-based token deletion.

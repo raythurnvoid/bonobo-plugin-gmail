@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "./_generated/api";
 import { gmail_test_fixture } from "../scripts/gmail-test-fixtures";
 import { gmail_grant_step } from "./gmail_grants";
+import { gmail_start } from "./gmail_oauth";
 import { gmail_decrypt, gmail_encrypt, gmail_random_secret } from "./gmail_secrets";
 
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(1_800_000_000_000); });
@@ -10,8 +11,10 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 async function setup() {
 	const fixture = await gmail_test_fixture();
-	const state = { loseSeal: false, status: 200, sealCalls: 0, renewCalls: 0, beforeReply: null as (() => Promise<void>) | null };
+	const state = { loseSeal: false, loseReply: null as "exchange" | "renew" | null, status: 200, exchangeCalls: 0, sealCalls: 0, renewCalls: 0,
+		beforeReply: null as (() => Promise<void>) | null };
 	const receipts = new Map<string, unknown>();
+	const rotated = new Set<string>();
 	const requests: { path: string; token: string; requestId?: string }[] = [];
 	vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 		const path = new URL(String(input)).pathname;
@@ -20,21 +23,29 @@ async function setup() {
 		const raw: unknown = JSON.parse(init.body);
 		if (path.endsWith("/verify-live")) {
 			requests.push({ path, token });
+			if (rotated.has(token)) return Response.json({ message: "Unauthorized" }, { status: 401 });
 			const body = z.object({ phase: z.enum(["interactive", "processing"]), destinationPathPrefix: z.string().nullable() }).parse(raw);
 			return Response.json({ installationId: "installation", ...body, scopes: body.phase === "processing" ? ["files:write"] : [],
 				expiresAt: Date.now() + 6 * 24 * 3600_000, contentPermissions: { read: true, write: true } });
 		}
-		const body = z.object({ requestId: z.string(), operation: z.string().optional() }).parse(raw);
+		const body = z.object({ requestId: z.string(), operation: z.enum(["exchange", "renew", "seal"]).optional() }).parse(raw);
 		requests.push({ path, token, requestId: body.requestId });
-		if (path.endsWith("/recover")) return receipts.has(body.requestId) ? Response.json(receipts.get(body.requestId)) : Response.json({ message: "No saved grant" }, { status: 404 });
+		const operation = path.endsWith("/recover") ? body.operation : path.endsWith("/seal-processing") ? "seal" : path.split("/").at(-1);
+		const key = JSON.stringify([token, operation, body.requestId]);
+		if (path.endsWith("/recover")) return receipts.has(key) ? Response.json(receipts.get(key)) : Response.json({ message: "No saved grant" }, { status: rotated.has(token) ? 401 : 404 });
+		// After rotation, only exact recovery can use the old bearer.
+		if (rotated.has(token)) return Response.json({ message: "Unauthorized" }, { status: 401 });
 		if (state.beforeReply) { const run = state.beforeReply; state.beforeReply = null; await run(); }
 		if (state.status !== 200) return Response.json({ message: "refused" }, { status: state.status });
+		if (receipts.has(key)) return Response.json(receipts.get(key));
+		if (path.endsWith("/exchange")) state.exchangeCalls++;
 		if (path.endsWith("/seal-processing")) state.sealCalls++;
-		if (path.endsWith("/renew")) state.renewCalls++;
-		const grant = { ...fixture.actor, token: `psg_${String(100 + state.sealCalls + state.renewCalls).padStart(64, "0")}`,
+		if (path.endsWith("/renew")) { state.renewCalls++; rotated.add(token); }
+		const grant = { ...fixture.actor, token: `psg_${String(100 + state.exchangeCalls + state.sealCalls + state.renewCalls).padStart(64, "0")}`,
 			expiresAt: Date.now() + (path.endsWith("/seal-processing") ? 6 : 1) * 24 * 3600_000, scopes: ["files:write"] };
-		receipts.set(body.requestId, grant);
+		receipts.set(key, grant);
 		if (path.endsWith("/seal-processing") && state.loseSeal) { state.loseSeal = false; throw new Error("Lost seal answer"); }
+		if (operation === state.loseReply) { state.loseReply = null; throw new Error("Lost grant answer"); }
 		return Response.json(grant);
 	}));
 	return { ...fixture, state, requests };
@@ -54,6 +65,62 @@ describe("gmail_grant_step", () => {
 		expect(await t.run(ctx => ctx.db.get(accountId))).toMatchObject({ syncStatus: "live", nextSyncAt: Date.now() });
 		expect(state.sealCalls).toBe(1);
 		expect(new Set(requests.filter(request => request.requestId).map(request => request.requestId))).toEqual(new Set([grant.lifecycleRequestId]));
+	});
+	test.each(["exchange", "renew"] as const)("lost %s reply recovers the same grant through the due sweep", async operation => {
+		const f = await setup();
+		const before = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+		const ledger = await f.t.run(ctx => ctx.db.get(f.ledgerId));
+		let claimed = (await f.t.run(ctx => ctx.db.get(f.grantId)))!;
+		let attemptId: string | null = null;
+		f.state.loseReply = operation;
+		f.state.beforeReply = async () => {
+			const account = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+			const attempt = operation === "exchange" ? (await f.t.run(ctx => ctx.db.get(account.connectRequestId!)))! : null;
+			claimed = (await f.t.run(ctx => ctx.db.get(attempt ? attempt.grantId! : f.grantId)))!;
+		};
+		if (operation === "exchange") {
+			const start = await f.t.action(ctx => gmail_start(ctx, f.actor, { accountId: f.accountId, clientRequestId: gmail_random_secret() }, `plu_${"1".repeat(64)}`));
+			attemptId = start.attemptId;
+			expect(start).toEqual({ attemptId, status: "preparing" });
+		} else {
+			await f.t.mutation(internal.gmail_grants.renew, { grantId: f.grantId, lifecycleRequestId: claimed.lifecycleRequestId });
+			vi.advanceTimersByTime(0); await f.t.finishInProgressScheduledFunctions();
+		}
+		expect(claimed.phase).toBe(operation);
+		const lost = (await f.t.run(ctx => ctx.db.get(claimed._id)))!;
+		expect(lost).toEqual({ ...claimed, error: "press_temporary", temporaryFailures: 1, nextAttemptAt: Date.now() + 60_000 });
+		expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(ledger);
+		const source = await gmail_decrypt(claimed.sourceSecret!, `grant:${claimed._id}:${operation === "exchange" ? "source" : "interactive"}`);
+		const early = f.requests.length;
+		vi.advanceTimersByTime(59_999);
+		await f.t.mutation(internal.gmail_grants.sweep, {});
+		expect(f.requests).toHaveLength(early);
+		expect(await f.t.run(ctx => ctx.db.get(claimed._id))).toEqual(lost);
+		vi.advanceTimersByTime(1);
+		await f.t.mutation(internal.gmail_grants.sweep, {});
+		expect(await f.t.run(ctx => ctx.db.get(claimed._id))).toEqual({ ...lost, nextAttemptAt: Date.now() + 120_000 });
+		for (let turn = 0; turn < 3; turn++) { vi.advanceTimersByTime(0); await f.t.finishInProgressScheduledFunctions(); }
+		const ready = (await f.t.run(ctx => ctx.db.get(claimed._id)))!;
+		expect(ready).toMatchObject({ phase: operation === "exchange" ? "awaiting_finish" : "ready", error: null, temporaryFailures: 0 });
+		expect(f.requests.filter(request => request.requestId === claimed.lifecycleRequestId)).toEqual([
+			{ path: "/api/v1/plugins/service-grants/recover", token: source, requestId: claimed.lifecycleRequestId },
+			{ path: `/api/v1/plugins/service-grants/${operation}`, token: source, requestId: claimed.lifecycleRequestId },
+			{ path: "/api/v1/plugins/service-grants/recover", token: source, requestId: claimed.lifecycleRequestId },
+		]);
+		expect(operation === "exchange" ? f.state.exchangeCalls : f.state.renewCalls).toBe(1);
+		expect(f.requests.filter(request => request.path.endsWith(`/${operation}`))).toHaveLength(1);
+		expect(await gmail_decrypt(ready.interactiveSecret!, `grant:${ready._id}:interactive`)).toBe(f.requests.find(request => request.path.endsWith("/verify-live"))!.token);
+		expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(ledger);
+		if (operation === "exchange") {
+			expect(ready).toMatchObject({ accountId: null, sealedSecret: null, nextAttemptAt: null });
+			expect(await f.t.query(internal.gmail_oauth.get_attempt, { ...f.actor, attemptId: attemptId! })).toMatchObject({ status: "pending" });
+			expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toEqual({ ...before, connectRequestId: attemptId });
+			expect(f.state.sealCalls).toBe(0);
+		} else {
+			expect(ready).toMatchObject({ sourceSecret: null, nextAttemptAt: Date.now() + 12 * 3600_000 });
+			expect(f.state.sealCalls).toBe(1);
+			expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toEqual({ ...before, nextSyncAt: Date.now(), updatedAt: Date.now() });
+		}
 	});
 	test("renewal makes a new seal and preserves the permission lane", async () => {
 		const { t, grantId, accountId, state } = await setup();
