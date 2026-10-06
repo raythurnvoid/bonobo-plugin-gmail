@@ -2915,33 +2915,6 @@ describe("work_account_slice", () => {
 			attachments: [{ suffix: 1, deliveries: 2, sourceUnavailablePendingChecks: 3 }],
 		});
 	});
-	test("reinstall without source keeps the old receipt unconfirmed", async () => {
-		const f = await fixture({ held: true, sourceError: "google_revoked" });
-		await f.t.run(async (ctx) => {
-			const row = (await ctx.db.get(f.ledgerId))!;
-			await ctx.db.patch(row._id, {
-				attachments: row.attachments.map((task) => ({
-					...task,
-					request: { ...task.request!, installationId: "old-installation" },
-				})),
-			});
-		});
-		const calls = network(() => Response.json(committed));
-		await f.t.action(internal.gmail_worker.work_account_slice, {
-			work: f.work,
-		});
-		expect(calls).toHaveLength(0);
-		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({
-			status: "given_up",
-			attachments: [
-				{
-					state: "unconfirmed",
-					request: { installationId: "old-installation" },
-				},
-			],
-		});
-		expect((await f.t.run((ctx) => ctx.db.get(f.accountId)))!.permissionProbeNotBefore).toBeGreaterThan(Date.now());
-	});
 	test("one history turn durably ingests more than 25 events and commits once", async () => {
 		const f = await fixture();
 		await f.t.run((ctx) =>
@@ -3749,7 +3722,9 @@ describe("permission guards", () => {
 		expect((await f.t.run((ctx) => ctx.db.get(f.accountId)))!.permissionProbeNotBefore).toBe(claimed.claim.deadline);
 		expect((await f.t.run((ctx) => ctx.db.get(f.accountId)))!.attachmentsSkippedReason).toBeNull();
 	});
-	test.each(["before", "after"] as const)("a stop %s reinstall transfer keeps the claimed receipt before create", async (phase) => {
+	test.each([
+		["before", "ready"], ["after", "ready"], ["before", "revoked"], ["after", "revoked"],
+	] as const)("a stop %s reinstall recovery keeps the claimed receipt with %s source", async (phase, sourceAccess) => {
 		let now = Date.now();
 		vi.spyOn(Date, "now").mockImplementation(() => now);
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -3758,6 +3733,7 @@ describe("permission guards", () => {
 		const interactive = `psg_${"4".repeat(64)}`;
 		const sealed = `psg_${"5".repeat(64)}`;
 		let reinstalled = false;
+		let revoke = false;
 		let newTarget = false;
 		let replacementPath = "";
 		const calls = network(path => {
@@ -3787,6 +3763,7 @@ describe("permission guards", () => {
 			if (reinstalled && url.hostname === "oauth2.googleapis.com") {
 				now += 600;
 				calls.push({ path: url.pathname, body: null });
+				if (revoke) return Promise.resolve(Response.json({ error: "invalid_grant" }, { status: 400 }));
 				return Promise.resolve(Response.json({ access_token: "access", refresh_token: "refresh", expires_in: 3600,
 					scope: "https://www.googleapis.com/auth/gmail.readonly", token_type: "Bearer" }));
 			}
@@ -3825,25 +3802,106 @@ describe("permission guards", () => {
 		expect(calls.slice(early).some(call => /messages\/ab|files\/|object/.test(call.path))).toBe(false);
 		expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(held);
 		await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "success", returnValue: null } });
+		if (sourceAccess === "revoked") {
+			revoke = true;
+			now = (await f.t.run(ctx => ctx.db.get(f.accountId)))!.nextSyncAt!;
+			expect(now).toBeLessThan(held.nextAttemptAt!);
+			await f.t.mutation(internal.gmail_accounts.dispatch, {});
+			queued = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+			work = { ...work, requestId: queued.syncRequestId! };
+			workId = queued.syncWorkId! as typeof f.workId;
+			const failedSource = calls.length;
+			await f.t.action(internal.gmail_worker.work_account_slice, { work });
+			expect(calls.slice(failedSource).map(call => call.path)).toEqual(["/token"]);
+			expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toMatchObject({ sourceError: "google_revoked", googleRefreshToken: null });
+			expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(held);
+			await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "success", returnValue: null } });
+		}
 		now = held.nextAttemptAt!;
 		await f.t.mutation(internal.gmail_accounts.dispatch, {});
 		queued = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
 		work = { ...work, requestId: queued.syncRequestId! };
 		workId = queued.syncWorkId! as typeof f.workId;
 		const before = calls.length;
-		let transferArgs: unknown;
+		let saveArgs: unknown;
 		const crash = await stop_after_mutation({ ...f, work }, "save_message", async args => {
-			if (!args || typeof args !== "object" || !("transfer" in args) || args.transfer !== true) return false;
-			transferArgs = args;
+			if (sourceAccess === "ready" && (!args || typeof args !== "object" || !("transfer" in args) || args.transfer !== true)) return false;
+			saveArgs = args;
 			return true;
 		}, phase);
 		expect(calls.slice(before).filter(call => /files\/|object/.test(call.path))).toHaveLength(0);
 		const stopped = (await f.t.run(ctx => ctx.db.get(f.ledgerId)))!;
 		const account = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+		// Transfer or an unconfirmed receipt does not prove write access.
 		expect(account.permissionProbeNotBefore ?? 0).toBeGreaterThan(now);
+		if (sourceAccess === "revoked") {
+			expect(calls.slice(before)).toHaveLength(0);
+			expect(saveArgs).toMatchObject({ proof: null, transfer: false, after: { attachments: [{ request: held.attachments[0].request }] } });
+			if (phase === "before") expect(stopped).toEqual({ ...held, nextAttemptAt: account.permissionProbeNotBefore });
+			else {
+				expect(stopped.status).toBe("given_up");
+				expect(stopped.error).toBe("settlement_unconfirmed");
+				expect(stopped.nextAttemptAt).toBeNull();
+				expect(stopped.settlementNeeded).toBe(false);
+				expect(stopped).toMatchObject({ permissionHeld: false, fileAccessOperation: null,
+					emailWritten: true, filePath: held.filePath, attempts: 0 });
+				expect(stopped.attachments[0]).toEqual({ ...held.attachments[0], state: "unconfirmed", reason: "source_unavailable", nextAttemptAt: null });
+			}
+			expect(account).toMatchObject({ sourceError: "google_revoked", googleRefreshToken: null,
+				ledgerCounts: { failed: phase === "before" ? 1 : 0, given_up: phase === "after" ? 1 : 0, permissionHeld: phase === "before" ? 1 : 0 } });
+			await f.t.action(internal.gmail_worker.work_account_slice, { work });
+			expect(calls.slice(before)).toHaveLength(0);
+			expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(stopped);
+			await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "failed", error: crash.message } });
+			expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(stopped);
+			if (phase === "before") {
+				const completed = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+				now = Math.max(completed.nextSyncAt!, stopped.nextAttemptAt!, completed.permissionProbeNotBefore!);
+				await f.t.mutation(internal.gmail_accounts.dispatch, {});
+				queued = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+				expect(queued.syncRequestId).not.toBe(work.requestId);
+				work = { ...work, requestId: queued.syncRequestId! };
+				workId = queued.syncWorkId! as typeof f.workId;
+				await f.t.action(internal.gmail_worker.work_account_slice, { work });
+				await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "success", returnValue: null } });
+			}
+			const final = (await f.t.run(ctx => ctx.db.get(f.ledgerId)))!;
+			expect(final).toMatchObject({ status: "given_up", error: "settlement_unconfirmed", nextAttemptAt: null, settlementNeeded: false,
+				permissionHeld: false, fileAccessOperation: null, emailWritten: true, filePath: held.filePath, attempts: 0 });
+			expect(final.attachments[0]).toEqual({ ...held.attachments[0], state: "unconfirmed", reason: "source_unavailable", nextAttemptAt: null });
+			const completed = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+			expect(completed).toMatchObject({ sourceError: "google_revoked", googleRefreshToken: null, nextSyncAt: null,
+				ledgerCounts: { pending: 0, failed: 0, given_up: 1, permissionHeld: 0 } });
+			expect(completed.permissionProbeNotBefore ?? 0).toBeGreaterThan(now);
+			await f.t.mutation(internal.gmail_accounts.on_complete, { workId: f.workId, context: f.work, result: { kind: "success", returnValue: null } });
+			expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toEqual(completed);
+			await f.t.action(internal.gmail_worker.work_account_slice, { work });
+			expect(calls.slice(before)).toHaveLength(0);
+			expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(final);
+			expect(calls.filter(call => call.path.endsWith("/files/write"))).toHaveLength(1);
+			expect(calls.filter(call => call.path.endsWith("/create-target"))).toHaveLength(1);
+			expect(calls.filter(call => call.path === "/object")).toHaveLength(1);
+			expect(await f.t.mutation(internal.gmail_accounts.retry_failed, { ...actor, accountId: f.accountId, expectedGeneration: 2 }))
+				.toEqual({ _yay: { count: 1, more: false } });
+			expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toMatchObject({ status: "pending", settlementNeeded: true,
+				attachments: [{ request: held.attachments[0].request, deliveries: 0, sourceUnavailablePendingChecks: 0 }] });
+			await f.t.mutation(internal.gmail_accounts.dispatch, {});
+			queued = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+			work = { ...work, requestId: queued.syncRequestId! };
+			workId = queued.syncWorkId! as typeof f.workId;
+			await f.t.action(internal.gmail_worker.work_account_slice, { work });
+			await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "success", returnValue: null } });
+			expect(calls.slice(before)).toHaveLength(0);
+			expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toMatchObject({ status: "given_up", error: "settlement_unconfirmed",
+				settlementNeeded: false, nextAttemptAt: null, attachments: [{ state: "unconfirmed", request: held.attachments[0].request,
+					deliveries: 0, sourceUnavailablePendingChecks: 0 }] });
+			expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toMatchObject({ sourceError: "google_revoked", nextSyncAt: null,
+				ledgerCounts: { pending: 0, failed: 0, given_up: 1, permissionHeld: 0 } });
+			return;
+		}
 		expect(account.ledgerCounts.permissionHeld).toBe(1);
-		expect(transferArgs).toMatchObject({ after: { attachments: [{ request: { installationId: actor.installationId } }] } });
-		expect(transferArgs).toMatchObject({ after: { attachments: [{ suffix: 1 }] } });
+		expect(saveArgs).toMatchObject({ after: { attachments: [{ request: { installationId: actor.installationId } }] } });
+		expect(saveArgs).toMatchObject({ after: { attachments: [{ suffix: 1 }] } });
 		expect(stopped).toMatchObject({ status: "failed", permissionHeld: true, error: "file_access", settlementNeeded: true,
 			filePath: held.filePath, emailWritten: true, attempts: 0, nextAttemptAt: account.permissionProbeNotBefore });
 		if (phase === "before") expect(stopped).toEqual({ ...held, nextAttemptAt: account.permissionProbeNotBefore });
