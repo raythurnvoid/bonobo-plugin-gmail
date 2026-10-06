@@ -2362,11 +2362,15 @@ describe("work_account_slice", () => {
 			ledgerCounts: { done: 2, pending: 0, given_up: 0, permissionHeld: 0 }, syncRequestId: null, syncWorkId: null });
 	});
 	test.each([
-		["plan", "create", "This workspace's plan does not include file uploads"],
-		["storage", "create", "This workspace has reached its storage limit"],
-		["plan", "remint", "This workspace's plan does not include file uploads"],
-		["storage", "remint", "This workspace has reached its storage limit"],
-	] as const)("a stop after accepted %s %s refusal keeps its receipt through five checks", async (reason, route, message) => {
+		["before", "plan", "create", "This workspace's plan does not include file uploads"],
+		["after", "plan", "create", "This workspace's plan does not include file uploads"],
+		["before", "storage", "create", "This workspace has reached its storage limit"],
+		["after", "storage", "create", "This workspace has reached its storage limit"],
+		["before", "plan", "remint", "This workspace's plan does not include file uploads"],
+		["after", "plan", "remint", "This workspace's plan does not include file uploads"],
+		["before", "storage", "remint", "This workspace has reached its storage limit"],
+		["after", "storage", "remint", "This workspace has reached its storage limit"],
+	] as const)("a stop %s accepted %s %s refusal keeps its receipt through five checks", async (phase, reason, route, message) => {
 		let now = Date.now();
 		vi.spyOn(Date, "now").mockImplementation(() => now);
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -2378,7 +2382,8 @@ describe("work_account_slice", () => {
 		let checks = 0;
 		let complete = false;
 		let discover = false;
-		const calls = network((path, body) => {
+		let refusalDoc = (await f.t.run(ctx => ctx.db.get(f.ledgerId)))!;
+		const calls = network(async (path, body) => {
 			now += 600;
 			if (/\/messages\/(ab|ef)$/.test(path)) return Response.json({ ...source, id: path.split("/").at(-1) });
 			if (path.endsWith("/history")) return Response.json({ historyId: discover ? "12" : "11", history: discover
@@ -2386,7 +2391,11 @@ describe("work_account_slice", () => {
 			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
 			if (path.endsWith("/create-target") || path.endsWith("/remint")) {
 				if (path.endsWith("/create-target")) creates++;
-				if (refused) { refusalReply = true; return Response.json({ message }, { status: 403 }); }
+				if (refused) {
+					refusalReply = true;
+					refusalDoc = (await f.t.run(ctx => ctx.db.get(f.ledgerId)))!;
+					return Response.json({ message }, { status: 403 });
+				}
 				return Response.json({ ...transport, uploadUrlExpiresAt: now + 3600_000 });
 			}
 			if (path.endsWith("/finalize")) {
@@ -2427,17 +2436,23 @@ describe("work_account_slice", () => {
 		await resume(firstCrash, route === "remint" ? accepted.attachments[0].uploadAttemptedAt! + 180_000 : now);
 		refused = true;
 		const beforeRefusal = calls.length;
-		const refusalCrash = await stop_after_mutation({ ...f, work }, "save_message", async () => refusalReply);
+		const refusalCrash = await stop_after_mutation({ ...f, work }, "save_message", async () => refusalReply, phase);
 		const saved = (await f.t.run(ctx => ctx.db.get(f.ledgerId)))!;
-		expect(saved.attachments[0].reason).toBe(`${reason}_settlement_only`);
+		if (phase === "before") {
+			expect(saved).toEqual(refusalDoc);
+			expect(saved.attachments[0].reason).toBeNull();
+			expect(saved.attachments[0].nextAttemptAt).toBeGreaterThan(now);
+		} else {
+			expect(saved.attachments[0].reason).toBe(`${reason}_settlement_only`);
+			expect(saved.attachments[0].nextAttemptAt).toBe(now + 60_000);
+		}
 		expect(saved.attachments[0].request).toEqual(request);
-		expect(saved.attachments[0].nextAttemptAt).toBe(now + 60_000);
 		expect(saved.nextAttemptAt).toBe(saved.attachments[0].nextAttemptAt);
 		expect(saved).toMatchObject({ status: "pending", settlementNeeded: true, permissionHeld: false, error: null, attempts: 0,
 			filePath: accepted.filePath, fileNodeId: accepted.fileNodeId, emailWritten: true,
 			attachments: [{ state: "pending", accepted: true, deliveries: route === "create" ? 0 : 1,
 				uploadAttemptedAt: accepted.attachments[0].uploadAttemptedAt, sourceUnavailablePendingChecks: 0 }] });
-		expect((await f.t.run(ctx => ctx.db.get(f.accountId)))!.attachmentsSkippedReason).toBe(reason);
+		expect((await f.t.run(ctx => ctx.db.get(f.accountId)))!.attachmentsSkippedReason).toBe(phase === "before" ? null : reason);
 		expect(calls.slice(beforeRefusal).map(call => call.path)).toEqual([
 			"/api/v1/files/service-uploads/finalize", "/token", "/gmail/v1/users/me/messages/ab",
 			`/api/v1/files/service-uploads/${route === "create" ? "create-target" : "remint"}`,
@@ -2447,6 +2462,25 @@ describe("work_account_slice", () => {
 		expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(saved);
 		expect(calls.slice(early).map(call => call.path)).toEqual(["/token", "/gmail/v1/users/me/history"]);
 		await resume(refusalCrash);
+		if (phase === "before") {
+			// Stop before slice completion can also save the repeated refusal's note.
+			refusalReply = false;
+			const beforeRepeat = calls.length;
+			const repeatCrash = await stop_after_mutation({ ...f, work }, "save_message", async () => refusalReply);
+			const repeated = (await f.t.run(ctx => ctx.db.get(f.ledgerId)))!;
+			expect(repeated.attachments[0].reason).toBe(`${reason}_settlement_only`);
+			expect(repeated.attachments[0].request).toEqual(request);
+			expect(repeated.attachments[0].nextAttemptAt).toBe(now + 60_000);
+			expect(repeated.nextAttemptAt).toBe(repeated.attachments[0].nextAttemptAt);
+			expect(repeated.attachments[0]).toMatchObject({ state: "pending", accepted: true, deliveries: route === "create" ? 0 : 1,
+				sourceUnavailablePendingChecks: 0, uploadAttemptedAt: accepted.attachments[0].uploadAttemptedAt });
+			expect((await f.t.run(ctx => ctx.db.get(f.accountId)))!.attachmentsSkippedReason).toBe(reason);
+			expect(calls.slice(beforeRepeat).filter(call => /messages\/ab|service-uploads|\/object$/.test(call.path)).map(call => call.path)).toEqual([
+				"/api/v1/files/service-uploads/finalize", "/gmail/v1/users/me/messages/ab",
+				`/api/v1/files/service-uploads/${route === "create" ? "create-target" : "remint"}`,
+			]);
+			await resume(repeatCrash);
+		}
 		countChecks = true;
 		for (let check = 1; check <= 5; check++) {
 			const before = calls.length;
@@ -2493,13 +2527,18 @@ describe("work_account_slice", () => {
 		const settled = (await f.t.run(ctx => ctx.db.get(f.ledgerId)))!;
 		expect(settled).toMatchObject({ status: "done", settlementNeeded: false, nextAttemptAt: null, attempts: 0,
 			attachments: [{ state: "saved", request, accepted: true, deliveries: 0, sourceUnavailablePendingChecks: 0, reason: null }] });
-		expect(calls.filter(call => call.path.endsWith("/finalize")).map(call => call.body)).toEqual(Array.from({ length: route === "create" ? 7 : 8 }, () => keys));
-		expect(calls.filter(call => call.path.endsWith("/messages/ab"))).toHaveLength(2);
+		const repeats = phase === "before" ? 1 : 0;
+		expect(calls.filter(call => call.path.endsWith("/finalize")).map(call => call.body)).toEqual(Array.from({ length: (route === "create" ? 7 : 8) + repeats }, () => keys));
+		expect(calls.filter(call => call.path.endsWith("/messages/ab"))).toHaveLength(2 + repeats);
 		expect(calls.filter(call => call.path.endsWith("/files/write"))).toHaveLength(1);
 		expect(calls.filter(call => call.path === "/object")).toHaveLength(route === "create" ? 0 : 1);
 		const { installationId: _installationId, ...frozen } = request;
-		expect(calls.filter(call => call.path.endsWith("/create-target")).map(call => call.body)).toEqual(route === "create" ? [frozen, frozen] : [frozen]);
-		expect(calls.filter(call => call.path.endsWith("/remint")).map(call => call.body)).toEqual(route === "create" ? [] : [keys]);
+		expect(calls.filter(call => call.path.endsWith("/create-target")).map(call => call.body)).toEqual(
+			Array.from({ length: route === "create" ? 2 + repeats : 1 }, () => frozen),
+		);
+		expect(calls.filter(call => call.path.endsWith("/remint")).map(call => call.body)).toEqual(
+			Array.from({ length: route === "create" ? 0 : 1 + repeats }, () => keys),
+		);
 		await resume();
 		refused = false;
 		discover = true;
