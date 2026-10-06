@@ -105,6 +105,8 @@ The plugin keeps a separate page grant cache and one grant chain per account. Pa
 
 Two local grant checks lose an accepted exchange or renewal reply, then resume through the minute sweep. The original encrypted source and request stay saved. An early sweep changes nothing; a due sweep saves its two-minute claim first. Exact recovery can use the old bearer after renewal rotates it. Each case makes one exchange/renew call. Exchange still waits for Finish; renewal saves a new seal and its next twelve-hour due time. Six broken rules fail the named checks; restoration passes. Providers and clocks are fake. Hosted grant recovery remains open.
 
+Seven more local checks stop before or after exchange, renewal and seal saves, or cancel a scheduled renewal. Before a save, recovery reuses the same receipt. After a save, the new token, phase, request and scheduled job stay saved. The ready-phase sweep catches the missed twelve-hour renewal. Account progress and Files access holds stay unchanged. Ten broken rules fail the named checks; restoration passes. These checks use the local scheduler and fake providers.
+
 The service account needs workspace Can write. The member also needs write access. Restricted folders need their own grants. A processing token is sealed to the saved account destination. The trusted backend also holds interactive grants, which can seal other writable workspace paths.
 
 After a plugin update, each connecting member must reopen the new page to repair Press access. A reinstall needs Gmail Reconnect for old active rows. Local Disconnect keeps the account ledger and Files. There is no uninstall callback and no age-based token deletion.

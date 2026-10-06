@@ -1,8 +1,10 @@
 import { z } from "zod";
+import { getFunctionName } from "convex/server";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "./_generated/api";
+import type { ActionCtx } from "./_generated/server";
 import { gmail_test_fixture } from "../scripts/gmail-test-fixtures";
-import { gmail_grant_step } from "./gmail_grants";
+import { connect, gmail_grant_step } from "./gmail_grants";
 import { gmail_start } from "./gmail_oauth";
 import { gmail_decrypt, gmail_encrypt, gmail_random_secret } from "./gmail_secrets";
 
@@ -121,6 +123,138 @@ describe("gmail_grant_step", () => {
 			expect(f.state.sealCalls).toBe(1);
 			expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toEqual({ ...before, nextSyncAt: Date.now(), updatedAt: Date.now() });
 		}
+	});
+	test.each([
+		["exchange", "before"], ["exchange", "after"], ["renew", "before"], ["renew", "after"], ["seal", "before"], ["seal", "after"],
+	] as const)("%s save stopped %s keeps its checkpoint through recovery", async (operation, boundary) => {
+		const f = await setup();
+		const before = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+		const ledger = await f.t.run(ctx => ctx.db.get(f.ledgerId));
+		let claimed = (await f.t.run(ctx => ctx.db.get(f.grantId)))!;
+		let save = { secret: "", expiresAt: 0 };
+		let stopped = false;
+		const crash = new Error(`Grant stopped ${boundary} save`);
+		function interrupted(ctx: ActionCtx) {
+			// A stopped action cannot save an error after the chosen boundary.
+			const runMutation: ActionCtx["runMutation"] = async (reference, ...values) => {
+				if (stopped) throw crash;
+				const selected = getFunctionName(reference) === "gmail_grants:save_step" &&
+					z.object({ phase: z.enum(["exchange", "renew", "seal"]) }).parse(values[0]).phase === operation;
+				if (selected) {
+					const account = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+					const attempt = operation === "exchange" ? (await f.t.run(ctx => ctx.db.get(account.connectRequestId!)))! : null;
+					claimed = (await f.t.run(ctx => ctx.db.get(attempt ? attempt.grantId! : f.grantId)))!;
+					save = z.object({ secret: z.string(), expiresAt: z.number() }).parse(values[0]);
+					if (boundary === "before") { stopped = true; throw crash; }
+				}
+				const result = await ctx.runMutation(reference, ...values);
+				if (selected) { stopped = true; throw crash; }
+				return result;
+			};
+			return { ...ctx, runMutation };
+		}
+		const registered = connect as typeof connect & { _handler: (ctx: ActionCtx, args: { grantId: typeof f.grantId }) => Promise<null> };
+		const handler = registered._handler;
+		const spy = vi.spyOn(registered, "_handler").mockImplementation((ctx, args) => handler(interrupted(ctx), args));
+		try {
+			if (operation === "exchange") {
+				await expect(f.t.action(ctx => gmail_start(interrupted(ctx), f.actor, { accountId: f.accountId,
+					clientRequestId: gmail_random_secret() }, `plu_${"1".repeat(64)}`))).rejects.toThrow(crash.message);
+			} else {
+				await f.t.mutation(internal.gmail_grants.renew, { grantId: f.grantId, lifecycleRequestId: claimed.lifecycleRequestId });
+				for (let turn = 0; turn < (operation === "seal" ? 2 : 1); turn++) { vi.advanceTimersByTime(0); await f.t.finishInProgressScheduledFunctions(); }
+			}
+		} finally { spy.mockRestore(); }
+		expect(stopped).toBe(true);
+		expect(claimed.phase).toBe(operation);
+		const checkpoint = (await f.t.run(ctx => ctx.db.get(claimed._id)))!;
+		const source = await gmail_decrypt(claimed.sourceSecret!, `grant:${claimed._id}:${operation === "exchange" ? "source" : "interactive"}`);
+		const issued = f.requests.at(-1)!;
+		expect(issued.path).toBe("/api/v1/plugins/service-grants/verify-live");
+		expect(await gmail_decrypt(save.secret, `grant:${claimed._id}:${operation === "seal" ? "sealed" : "interactive"}`)).toBe(issued.token);
+		if (boundary === "before") {
+			expect(checkpoint).toEqual(claimed);
+		} else if (operation === "seal") {
+			expect(checkpoint).toEqual({ ...claimed, phase: "ready", sealedSecret: save.secret, sealedExpiresAt: save.expiresAt,
+				sourceSecret: null, nextAttemptAt: Date.now() + 12 * 3600_000, temporaryFailures: 0, error: null, updatedAt: Date.now() });
+		} else {
+			expect(checkpoint.lifecycleRequestId).not.toBe(claimed.lifecycleRequestId);
+			expect(checkpoint).toEqual({ ...claimed, phase: operation === "exchange" ? "awaiting_finish" : "seal",
+				interactiveSecret: save.secret, interactiveExpiresAt: save.expiresAt, sourceSecret: save.secret,
+				lifecycleRequestId: checkpoint.lifecycleRequestId, nextAttemptAt: operation === "exchange" ? null : Date.now(),
+				temporaryFailures: 0, error: null, updatedAt: Date.now() });
+		}
+		const savedAccount = { ...before, ...(operation === "exchange" ? { connectRequestId: claimed.attemptId } : {}),
+			...(operation === "seal" && boundary === "after" ? { nextSyncAt: Date.now(), updatedAt: Date.now() } : {}) };
+		expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toEqual(savedAccount);
+		expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(ledger);
+		// This isolated fixture owns only the few grant jobs created above.
+		const pending = (await f.t.run(ctx => ctx.db.system.query("_scheduled_functions").collect()))
+			.filter(job => job.state.kind === "pending").map(job => ({ name: job.name, args: job.args, scheduledTime: job.scheduledTime }));
+		expect(pending).toEqual(boundary === "after" && operation !== "exchange" ? [{
+			name: operation === "renew" ? "gmail_grants:connect" : "gmail_grants:renew",
+			args: [operation === "renew" ? { grantId: claimed._id } : { grantId: claimed._id, lifecycleRequestId: checkpoint.lifecycleRequestId }],
+			scheduledTime: operation === "renew" ? Date.now() : Date.now() + 12 * 3600_000,
+		}] : []);
+		if (boundary === "before" || operation !== "renew") await f.t.mutation(internal.gmail_grants.sweep, {});
+		expect(await f.t.run(ctx => ctx.db.get(claimed._id))).toEqual(boundary === "before"
+			? { ...checkpoint, nextAttemptAt: Date.now() + 120_000 } : checkpoint);
+		for (let turn = 0; turn < 3; turn++) { vi.advanceTimersByTime(0); await f.t.finishInProgressScheduledFunctions(); }
+		const ready = (await f.t.run(ctx => ctx.db.get(claimed._id)))!;
+		expect(ready).toMatchObject({ phase: operation === "exchange" ? "awaiting_finish" : "ready", error: null, temporaryFailures: 0 });
+		expect(f.requests.filter(request => request.requestId === claimed.lifecycleRequestId)).toEqual([
+			{ path: "/api/v1/plugins/service-grants/recover", token: source, requestId: claimed.lifecycleRequestId },
+			{ path: `/api/v1/plugins/service-grants/${operation === "seal" ? "seal-processing" : operation}`, token: source, requestId: claimed.lifecycleRequestId },
+			...(boundary === "before" ? [{ path: "/api/v1/plugins/service-grants/recover", token: source, requestId: claimed.lifecycleRequestId }] : []),
+		]);
+		expect(f.requests.filter(request => request.path.endsWith(`/${operation === "seal" ? "seal-processing" : operation}`))).toHaveLength(1);
+		expect(await gmail_decrypt(operation === "seal" ? ready.sealedSecret! : ready.interactiveSecret!,
+			`grant:${claimed._id}:${operation === "seal" ? "sealed" : "interactive"}`)).toBe(issued.token);
+		expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(ledger);
+		if (operation === "exchange") {
+			expect(ready).toMatchObject({ accountId: null, sealedSecret: null, nextAttemptAt: null });
+			expect(await f.t.query(internal.gmail_oauth.get_attempt, { ...f.actor, attemptId: claimed.attemptId! })).toMatchObject({ status: "pending" });
+			expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toEqual(savedAccount);
+			expect(f.state.exchangeCalls).toBe(1); expect(f.state.sealCalls).toBe(0);
+		} else {
+			expect(ready).toMatchObject({ sourceSecret: null, nextAttemptAt: Date.now() + 12 * 3600_000 });
+			expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toEqual({ ...before, nextSyncAt: Date.now(), updatedAt: Date.now() });
+			expect(f.state.renewCalls).toBe(1); expect(f.state.sealCalls).toBe(1);
+		}
+	});
+	test("ready sweep resumes a missed twelve-hour renewal without losing account progress", async () => {
+		const f = await setup();
+		const before = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+		const ledger = await f.t.run(ctx => ctx.db.get(f.ledgerId));
+		const grant = (await f.t.run(ctx => ctx.db.get(f.grantId)))!;
+		await f.t.mutation(internal.gmail_grants.renew, { grantId: f.grantId, lifecycleRequestId: grant.lifecycleRequestId });
+		for (let turn = 0; turn < 2; turn++) { vi.advanceTimersByTime(0); await f.t.finishInProgressScheduledFunctions(); }
+		const ready = (await f.t.run(ctx => ctx.db.get(f.grantId)))!;
+		expect(ready.phase).toBe("ready");
+		// This isolated fixture owns only the few grant jobs created above.
+		const jobs = await f.t.run(ctx => ctx.db.system.query("_scheduled_functions").collect());
+		const timer = jobs.find(job => job.name === "gmail_grants:renew" && job.state.kind === "pending")!;
+		expect(timer.scheduledTime).toBe(ready.nextAttemptAt);
+		expect(timer.args).toEqual([{ grantId: f.grantId, lifecycleRequestId: ready.lifecycleRequestId }]);
+		await f.t.run(ctx => ctx.scheduler.cancel(timer._id));
+		const calls = f.requests.length;
+		vi.advanceTimersByTime(12 * 3600_000 - 1);
+		await f.t.mutation(internal.gmail_grants.sweep, {});
+		expect(await f.t.run(ctx => ctx.db.get(f.grantId))).toEqual(ready);
+		expect(f.requests).toHaveLength(calls);
+		vi.advanceTimersByTime(1); await f.t.finishInProgressScheduledFunctions();
+		expect(await f.t.run(ctx => ctx.db.system.get(timer._id))).toEqual({ ...timer, state: { kind: "canceled" } });
+		await f.t.mutation(internal.gmail_grants.sweep, {});
+		expect(await f.t.run(ctx => ctx.db.get(f.grantId))).toEqual({ ...ready, nextAttemptAt: Date.now() + 120_000 });
+		for (let turn = 0; turn < 3; turn++) { vi.advanceTimersByTime(0); await f.t.finishInProgressScheduledFunctions(); }
+		const renewed = (await f.t.run(ctx => ctx.db.get(f.grantId)))!;
+		expect(renewed).toMatchObject({ phase: "ready", sourceSecret: null, nextAttemptAt: Date.now() + 12 * 3600_000, error: null, temporaryFailures: 0 });
+		expect(renewed.lifecycleRequestId).not.toBe(ready.lifecycleRequestId);
+		expect(await gmail_decrypt(renewed.interactiveSecret!, `grant:${f.grantId}:interactive`)).not.toBe(await gmail_decrypt(ready.interactiveSecret!, `grant:${f.grantId}:interactive`));
+		expect(await gmail_decrypt(renewed.sealedSecret!, `grant:${f.grantId}:sealed`)).not.toBe(await gmail_decrypt(ready.sealedSecret!, `grant:${f.grantId}:sealed`));
+		expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(ledger);
+		expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toEqual({ ...before, nextSyncAt: Date.now(), updatedAt: Date.now() });
+		expect(f.state.renewCalls).toBe(2); expect(f.state.sealCalls).toBe(2);
 	});
 	test("renewal makes a new seal and preserves the permission lane", async () => {
 		const { t, grantId, accountId, state } = await setup();
