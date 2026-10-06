@@ -2055,6 +2055,134 @@ describe("work_account_slice", () => {
 		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
 		expect(calls).toHaveLength(before);
 	});
+	test.each([
+		["create", "accepted"], ["create", "lost reply"], ["PUT", "accepted"], ["PUT", "lost reply"],
+	] as const)("native Disconnect during %s keeps saved progress after %s", async (stage, reply) => {
+		vi.useFakeTimers();
+		vi.setSystemTime(1_800_000_000_000);
+		const f = await fixture({ fresh: true });
+		await f.t.run(async ctx => {
+			await gmail_workpool.cancel(ctx, f.workId);
+			await ctx.db.patch(f.accountId, { syncWorkId: null, syncRequestId: null });
+		});
+		let saved = (await f.t.run(ctx => ctx.db.get(f.ledgerId)))!;
+		let reached = false;
+		let release!: () => void;
+		const lateReply = new Promise<void>(resolve => { release = resolve; });
+		const calls = network(async path => {
+			vi.setSystemTime(Date.now() + 600);
+			if (path.endsWith("/messages/ab")) return Response.json(source);
+			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
+			if ((stage === "create" && path.endsWith("/create-target")) || (stage === "PUT" && path === "/object")) {
+				saved = (await f.t.run(ctx => ctx.db.get(f.ledgerId)))!;
+				reached = true;
+				await lateReply;
+				if (reply === "lost reply") throw new TypeError("Upload reply lost");
+			}
+			if (path.endsWith("/create-target")) return Response.json({ ...transport, uploadUrlExpiresAt: Date.now() + 3600_000 });
+			if (path === "/object") return new Response(null);
+			return Response.json({}, { status: 500 });
+		});
+		const completion = on_complete as typeof on_complete & {
+			_handler: (ctx: MutationCtx, args: FunctionArgs<typeof internal.gmail_accounts.on_complete>) => Promise<null>;
+		};
+		const callback = vi.spyOn(completion, "_handler");
+		try {
+			await f.t.mutation(internal.gmail_accounts.dispatch, {});
+			const queued = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+			const workId = queued.syncWorkId! as typeof f.workId;
+			const work = { ...f.work, requestId: queued.syncRequestId! };
+			await vi.waitFor(async () => {
+				expect(reached).toBe(true);
+				expect(await f.t.run(ctx => gmail_workpool.status(ctx, workId))).toEqual({ state: "running", previousAttempts: 0 });
+			}, { timeout: 4000, interval: 25 });
+			expect(saved).toMatchObject({ status: "pending", emailWritten: true, settlementNeeded: true,
+				attachments: [{ state: stage === "create" ? "uncertain" : "pending", accepted: stage === "PUT",
+					deliveries: stage === "create" ? 0 : 1, uploadAttemptedAt: stage === "create" ? null : expect.any(Number) }] });
+			expect(saved.attachments[0].request).toMatchObject({ installationId: f.actor.installationId,
+				idempotencyKey: `${f.accountId}:ab`, targetKey: "ab:att-0", size: 4 });
+			const before = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+			expect(await f.t.mutation(internal.gmail_accounts.disconnect, { ...f.actor, accountId: f.accountId, expectedGeneration: 1 }))
+				.toEqual({ _yay: { accountId: f.accountId, connectionGeneration: 2 } });
+			const disconnected = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+			expect(disconnected).toMatchObject({ connectionGeneration: 2, syncStatus: "disconnected", googleRefreshToken: null,
+				hostGrantId: null, syncWorkId: null, syncRequestId: null, nextSyncAt: null,
+				ledgerCounts: before.ledgerCounts, historyId: before.historyId, permissionProbeNotBefore: before.permissionProbeNotBefore });
+			expect(await f.t.run(ctx => ctx.db.get(f.grantId))).toMatchObject({ phase: "cancelled", sourceSecret: null,
+				interactiveSecret: null, sealedSecret: null, nextAttemptAt: null });
+			expect(await f.t.run(ctx => gmail_workpool.status(ctx, workId))).toEqual({ state: "running", previousAttempts: 0 });
+			expect(callback).not.toHaveBeenCalled();
+			expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(saved);
+			// A running request may finish after cancellation. Its old authority cannot save.
+			vi.setSystemTime(Date.now() + 1000);
+			release();
+			await f.t.finishAllScheduledFunctions(vi.runAllTimers);
+			expect(await f.t.run(ctx => gmail_workpool.status(ctx, workId))).toEqual({ state: "finished" });
+			expect(callback).toHaveBeenCalledTimes(1);
+			expect(callback.mock.calls[0][1]).toEqual({ workId, context: work, result: { kind: "success", returnValue: null } });
+			expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toEqual(disconnected);
+			expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(saved);
+			const count = calls.length;
+			await f.t.mutation(internal.gmail_accounts.dispatch, {});
+			await f.t.finishAllScheduledFunctions(vi.runAllTimers);
+			expect(calls).toHaveLength(count);
+			expect(callback).toHaveBeenCalledTimes(1);
+			for (const ending of ["/messages/ab", "/files/write", "/create-target"]) expect(calls.filter(call => call.path.endsWith(ending))).toHaveLength(1);
+			expect(calls.filter(call => call.path === "/object")).toHaveLength(stage === "create" ? 0 : 1);
+			expect(calls.filter(call => call.path.endsWith("/finalize"))).toHaveLength(0);
+		} finally {
+			release();
+			await f.t.finishInProgressScheduledFunctions();
+		}
+	});
+	test("native Disconnect cancels queued settlement without changing its receipt", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(1_800_000_000_000);
+		const f = await fixture({ fresh: true });
+		await f.t.run(async ctx => {
+			await gmail_workpool.cancel(ctx, f.workId);
+			await ctx.db.patch(f.accountId, { syncWorkId: null, syncRequestId: null });
+		});
+		const calls = network(path => {
+			vi.setSystemTime(Date.now() + 600);
+			if (path.endsWith("/messages/ab")) return Response.json(source);
+			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
+			if (path.endsWith("/create-target")) return Response.json({ ...transport, uploadUrlExpiresAt: Date.now() + 3600_000 });
+			if (path === "/object") return new Response(null);
+			if (path.endsWith("/finalize")) return Response.json(pending);
+			return Response.json({}, { status: 500 });
+		});
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		await f.t.finishAllScheduledFunctions(vi.runAllTimers);
+		const saved = (await f.t.run(ctx => ctx.db.get(f.ledgerId)))!;
+		expect(saved).toMatchObject({ status: "pending", emailWritten: true, settlementNeeded: true,
+			attachments: [{ state: "pending", accepted: true, deliveries: 1, uploadAttemptedAt: expect.any(Number) }] });
+		const before = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+		vi.setSystemTime(Math.ceil(Math.max(Date.now(), before.nextSyncAt!, saved.nextAttemptAt!)));
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		const queued = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+		const workId = queued.syncWorkId! as typeof f.workId;
+		const work = { ...f.work, requestId: queued.syncRequestId! };
+		expect(await f.t.run(ctx => gmail_workpool.status(ctx, workId))).toEqual({ state: "pending", previousAttempts: 0 });
+		const completion = on_complete as typeof on_complete & {
+			_handler: (ctx: MutationCtx, args: FunctionArgs<typeof internal.gmail_accounts.on_complete>) => Promise<null>;
+		};
+		const callback = vi.spyOn(completion, "_handler");
+		const count = calls.length;
+		await f.t.mutation(internal.gmail_accounts.disconnect, { ...f.actor, accountId: f.accountId, expectedGeneration: 1 });
+		const disconnected = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+		expect(disconnected).toMatchObject({ connectionGeneration: 2, syncStatus: "disconnected", syncWorkId: null,
+			syncRequestId: null, googleRefreshToken: null, hostGrantId: null, nextSyncAt: null, ledgerCounts: before.ledgerCounts });
+		await f.t.finishAllScheduledFunctions(vi.runAllTimers);
+		expect(await f.t.run(ctx => gmail_workpool.status(ctx, workId))).toEqual({ state: "finished" });
+		expect(callback).toHaveBeenCalledTimes(1);
+		expect(callback.mock.calls[0][1]).toEqual({ workId, context: work, result: { kind: "canceled" } });
+		expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toEqual(disconnected);
+		expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(saved);
+		expect(calls).toHaveLength(count);
+		for (const ending of ["/messages/ab", "/files/write", "/create-target", "/finalize"]) expect(calls.filter(call => call.path.endsWith(ending))).toHaveLength(1);
+		expect(calls.filter(call => call.path === "/object")).toHaveLength(1);
+	});
 	test("a new plan refusal skips the remaining new attachments but saves the email", async () => {
 		const f = await fixture({ fresh: true });
 		const calls = network((path) =>

@@ -87,6 +87,8 @@ Google source errors stop source reads but leave indexed attachment settlement a
 
 Twelve local checks run the dispatcher, Workpool retry loop and completion callback. They save a receipt, then stop after saving a credit, rate-limit or outage wait. Gmail access can be available or revoked. A retry succeeds on its second attempt, or five crashes end in one failed completion. Both keep the wait and original receipt. Later dispatch finalizes it with one email write and one PUT in total. Three broken retry rules fail their named checks; restoring them passes all twelve. Providers, clocks and crashes are fake. Hosted queue faults still need live evidence.
 
+Five local queue checks cover Disconnect with a queued receipt check or a running create/PUT. Late accepted and lost replies keep the full saved request and progress. They make no later PUT or finalize call. Running work finishes once without changing the disconnected account; queued work gets one canceled completion. Two broken rules fail the named cancellation and late-completion checks. Providers and clocks are fake. Real late replies after Disconnect still need live evidence.
+
 The page polls every five seconds only while visible. Its last-check label comes from the saved completed history time. Ten minutes without a check shows delayed. Files attention stays visible even beside a recent mail check. The page keeps tokens and finish codes in memory, and stores only bound Start retry IDs in session storage. Failure lists show message IDs and fixed reasons, not private subject paths or attachment names.
 
 The public upload routes are typed locally in `convex/press.ts` because the pinned SDK does not list them. Replies are runtime-validated. Press source and its SDK generator remain unchanged.
