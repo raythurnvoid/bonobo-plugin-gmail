@@ -4206,6 +4206,145 @@ describe("source limits", () => {
 		expect(calls.filter(call => call.path.endsWith("/files/write"))).toHaveLength(1);
 		expect(calls.filter(call => /attachments\/bytes|service-uploads|\/object$/.test(call.path))).toHaveLength(0);
 	});
+	test.each(["new", "accepted"] as const)("stops after oversized %s attachment replies keep the saved outcome", async kind => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const f = await fixture({ fresh: true });
+		let large = kind === "new";
+		let commit = false;
+		let oversizedReply = false;
+		let pendingReply = false;
+		let chunks = 0;
+		let cancelled = false;
+		const padding = new Uint8Array(1024 * 1024).fill(32);
+		const calls = network(path => {
+			now += 600;
+			if (path.endsWith("/messages/ab")) return Response.json({ ...source, payload: { ...source.payload,
+				parts: [source.payload.parts[0], { ...source.payload.parts[1], body: { size: 4, attachmentId: "bytes" } }] } });
+			if (path.endsWith("/attachments/bytes")) {
+				if (!large) return Response.json({ size: 4, data: "ZmlsZQ" });
+				oversizedReply = true;
+				// Valid JSON follows the padding; parsing alone cannot reject it.
+				return new Response(new ReadableStream<Uint8Array>({
+					pull(controller) {
+						chunks++;
+						if (chunks <= 49) controller.enqueue(padding);
+						else if (chunks === 50) controller.enqueue(new TextEncoder().encode('{"size":4,"data":"ZmlsZQ"}'));
+						else controller.close();
+					},
+					cancel() { cancelled = true; },
+				}), { headers: { "Content-Length": "1" } });
+			}
+			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
+			if (/create-target|remint$/.test(path)) return Response.json({ ...transport, uploadUrlExpiresAt: now + 3600_000 });
+			if (path.endsWith("/finalize")) { pendingReply = true; return Response.json(commit ? committed : pending); }
+			if (path.endsWith("/history")) return Response.json({ historyId: "11", history: [] });
+			if (path === "/object") return new Response(null, { status: 200 });
+			return Response.json({}, { status: 500 });
+		});
+		let work = f.work;
+		let workId = f.workId;
+		let prepared = (await f.t.run(ctx => ctx.db.get(f.ledgerId)))!;
+		async function next_work(error?: Error) {
+			await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work,
+				result: error ? { kind: "failed", error: error.message } : { kind: "success", returnValue: null } });
+			const completed = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+			expect(completed.nextSyncAt).toBeGreaterThan(now);
+			now = Math.max(completed.nextSyncAt!, large ? 0 : prepared.attachments[0].uploadAttemptedAt! + 180_000);
+			await f.t.mutation(internal.gmail_accounts.dispatch, {});
+			const queued = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+			expect(queued.syncWorkId).not.toBeNull();
+			expect(queued.syncRequestId).not.toBe(work.requestId);
+			work = { ...work, requestId: queued.syncRequestId! };
+			workId = queued.syncWorkId! as typeof f.workId;
+		}
+		if (kind === "accepted") {
+			await f.t.action(internal.gmail_worker.work_account_slice, { work });
+			prepared = (await f.t.run(ctx => ctx.db.get(f.ledgerId)))!;
+			expect(prepared).toMatchObject({ status: "pending", emailWritten: true,
+				attachments: [{ state: "pending", accepted: true, deliveries: 1, sourceUnavailablePendingChecks: 0 }] });
+			await next_work();
+			large = true;
+		}
+		const crash = await stop_after_mutation({ ...f, work }, "save_message", async () => oversizedReply);
+		const saved = (await f.t.run(ctx => ctx.db.get(f.ledgerId)))!;
+		expect(cancelled).toBe(true);
+		expect(chunks).toBeLessThanOrEqual(50);
+		expect(saved.attachments[0].state).toBe(kind === "accepted" ? "pending" : "not_saved");
+		expect(saved.attachments[0].reason).toBe(kind === "accepted" ? "too_large_settlement_only" : "too_large");
+		expect(saved.attachmentsNotSaved).toBe(kind === "accepted" ? 0 : 1);
+		expect(saved.status).toBe(kind === "accepted" ? "pending" : "done");
+		expect(saved.attachments[0].nextAttemptAt).toBe(kind === "accepted" ? now + 60_000 : null);
+		expect(saved.nextAttemptAt).toBe(saved.attachments[0].nextAttemptAt);
+		expect(saved.settlementNeeded).toBe(kind === "accepted");
+		expect(saved).toMatchObject({ emailWritten: true, fileNodeId: "email-node", error: null, attempts: 0,
+			attachments: [{ accepted: kind === "accepted", deliveries: kind === "accepted" ? 1 : 0, sourceUnavailablePendingChecks: 0 }] });
+		if (kind === "accepted") expect(saved.attachments[0].request).toEqual(prepared.attachments[0].request);
+		else expect(saved.attachments[0].request).toBeNull();
+		expect((await f.t.run(ctx => ctx.db.get(f.accountId)))!.sourceError).toBeNull();
+		const early = calls.length;
+		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(saved);
+		expect(calls.slice(early).filter(call => /messages\/ab|attachments\/bytes|files\/write|service-uploads|\/object$/.test(call.path))).toHaveLength(0);
+		let lastCrash = crash;
+		let terminal = saved;
+		if (kind === "accepted") {
+			for (let check = 1; check <= 5; check++) {
+				await next_work(lastCrash);
+				pendingReply = false;
+				lastCrash = await stop_after_mutation({ ...f, work }, "save_message", async () => pendingReply);
+				terminal = (await f.t.run(ctx => ctx.db.get(f.ledgerId)))!;
+				expect(terminal.attachments[0].sourceUnavailablePendingChecks).toBe(check);
+				expect(terminal.attachments[0].reason).toBe("too_large_settlement_only");
+				expect(terminal.attachments[0].request).toEqual(prepared.attachments[0].request);
+				expect(terminal.attachments[0].state).toBe(check === 5 ? "unconfirmed" : "pending");
+				expect(terminal.status).toBe(check === 5 ? "given_up" : "pending");
+				expect(terminal.nextAttemptAt).toBe(check === 5 ? null : now + 60_000);
+				expect(terminal.settlementNeeded).toBe(check < 5);
+				expect(terminal).toMatchObject({ emailWritten: true, filePath: saved.filePath, fileNodeId: saved.fileNodeId,
+					attempts: 0, attachmentsNotSaved: 0, attachments: [{ accepted: true, deliveries: 1,
+						uploadAttemptedAt: prepared.attachments[0].uploadAttemptedAt }] });
+			}
+		}
+		await next_work(lastCrash);
+		const before = calls.length;
+		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "success", returnValue: null } });
+		expect(calls.slice(before).filter(call => /messages\/ab|attachments\/bytes|files\/write|service-uploads|\/object$/.test(call.path))).toHaveLength(0);
+		expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(terminal);
+		expect(await f.t.mutation(internal.gmail_accounts.retry_failed, { ...f.actor, accountId: f.accountId, expectedGeneration: 1 }))
+			.toEqual({ _yay: { count: kind === "accepted" ? 1 : 0, more: false } });
+		if (kind === "accepted") {
+			const retried = (await f.t.run(ctx => ctx.db.get(f.ledgerId)))!;
+			expect(retried).toMatchObject({ status: "pending", settlementNeeded: true,
+				attachments: [{ request: prepared.attachments[0].request, deliveries: 0, sourceUnavailablePendingChecks: 0, reason: null }] });
+			await f.t.mutation(internal.gmail_accounts.dispatch, {});
+			const queued = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+			work = { ...work, requestId: queued.syncRequestId! };
+			workId = queued.syncWorkId! as typeof f.workId;
+			commit = true;
+			const retryCalls = calls.length;
+			await f.t.action(internal.gmail_worker.work_account_slice, { work });
+			expect(calls.slice(retryCalls).filter(call => /messages\/ab|attachments\/bytes|files\/write|service-uploads|\/object$/.test(call.path))
+				.map(call => call.path)).toEqual(["/api/v1/files/service-uploads/finalize"]);
+			await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "success", returnValue: null } });
+			expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toMatchObject({ status: "done", emailWritten: true,
+				filePath: saved.filePath, fileNodeId: saved.fileNodeId, settlementNeeded: false, attachmentsNotSaved: 0,
+				attachments: [{ state: "saved", request: prepared.attachments[0].request, deliveries: 0, sourceUnavailablePendingChecks: 0 }] });
+			const request = prepared.attachments[0].request!;
+			expect(calls.filter(call => call.path.endsWith("/finalize")).map(call => call.body)).toEqual(Array.from({ length: 8 }, () => ({
+				idempotencyKey: request.idempotencyKey, targetKey: request.targetKey,
+			})));
+		} else expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(terminal);
+		expect(calls.filter(call => call.path.endsWith("/messages/ab"))).toHaveLength(kind === "accepted" ? 2 : 1);
+		expect(calls.filter(call => call.path.endsWith("/attachments/bytes"))).toHaveLength(kind === "accepted" ? 2 : 1);
+		expect(calls.filter(call => call.path.endsWith("/files/write"))).toHaveLength(1);
+		expect(calls.filter(call => call.path.endsWith("/create-target"))).toHaveLength(kind === "accepted" ? 1 : 0);
+		expect(calls.filter(call => call.path === "/object")).toHaveLength(kind === "accepted" ? 1 : 0);
+		expect(calls.filter(call => call.path.endsWith("/remint"))).toHaveLength(0);
+		expect((await f.t.run(ctx => ctx.db.get(f.accountId)))!.sourceError).toBeNull();
+	});
 	test("stops after history size and error saves keep the pending receipt until Retry sync", async () => {
 		let now = Date.now();
 		vi.spyOn(Date, "now").mockImplementation(() => now);
