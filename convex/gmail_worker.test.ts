@@ -3938,11 +3938,15 @@ describe("permission guards", () => {
 	test.each([
 		["before", "email"], ["after", "email"], ["before", "pending create"], ["after", "pending create"],
 		["before", "finalize"], ["after", "finalize"], ["before", "source-free finalize"], ["after", "source-free finalize"],
+		["before", "pending finalize"], ["after", "pending finalize"],
+		["before", "source-free pending finalize"], ["after", "source-free pending finalize"],
 	] as const)("a stop %s %s write proof keeps the saved hold and completes once", async (phase, kind) => {
 		let now = Date.now();
 		vi.spyOn(Date, "now").mockImplementation(() => now);
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
+		const sourceFree = kind.startsWith("source-free");
+		const pendingFinalize = kind.includes("pending finalize");
 		let deny = true;
 		let revoke = false;
 		let emailStored = false;
@@ -3971,8 +3975,9 @@ describe("permission guards", () => {
 			if (path.endsWith("/finalize")) {
 				if (!targetAccepted) return Response.json({}, { status: 404 });
 				if (deny && kind.includes("finalize")) return Response.json({ message: "Forbidden" }, { status: 403 });
+				const answer = pendingFinalize && !proofReply ? pending : uploaded ? committed : pending;
 				if (!deny && kind.includes("finalize")) proofReply = true;
-				return Response.json(uploaded ? committed : pending);
+				return Response.json(answer);
 			}
 			if (path.endsWith("/history")) return Response.json({ historyId: "11", history: [] });
 			return Response.json({}, { status: 500 });
@@ -3993,7 +3998,7 @@ describe("permission guards", () => {
 		const held = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
 		expect(held).toMatchObject({ status: "failed", error: "file_access", permissionHeld: true, attempts: 0 });
 		await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "success", returnValue: null } });
-		if (kind === "source-free finalize") {
+		if (sourceFree) {
 			revoke = true;
 			now = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!.nextSyncAt!;
 			await f.t.mutation(internal.gmail_accounts.dispatch, {});
@@ -4017,6 +4022,7 @@ describe("permission guards", () => {
 		expect(stopped.permissionHeld).toBe(phase === "before");
 		expect(account.permissionProbeNotBefore === null).toBe(phase === "after");
 		expect(account.ledgerCounts.permissionHeld).toBe(phase === "before" ? 1 : 0);
+		expect(account.sourceError).toBe(sourceFree ? "google_revoked" : null);
 		if (phase === "before") {
 			expect(account.permissionProbeNotBefore).toBeGreaterThan(now);
 			expect(stopped).toEqual({ ...held, nextAttemptAt: account.permissionProbeNotBefore });
@@ -4031,7 +4037,16 @@ describe("permission guards", () => {
 				expect(account.ledgerCounts).toMatchObject({ pending: 1, failed: 0 });
 				expect(stopped.attachments[0]).toMatchObject({ state: "pending", accepted: true, deliveries: 0, uploadAttemptedAt: null });
 			}
-			if (kind.includes("finalize")) expect(stopped).toMatchObject({ status: "done", settlementNeeded: false, attachments: [{ state: "saved" }] });
+			if (pendingFinalize) {
+				expect(stopped.status).toBe("pending");
+				expect(stopped.settlementNeeded).toBe(true);
+				expect(stopped.attachments[0].nextAttemptAt).toBe(now + 60_000);
+				expect(stopped.nextAttemptAt).toBe(stopped.attachments[0].nextAttemptAt);
+				expect(stopped.attachments[0].sourceUnavailablePendingChecks).toBe(sourceFree ? 1 : 0);
+				expect(stopped.attachments[0]).toMatchObject({ state: "pending", accepted: true, deliveries: 1,
+					uploadAttemptedAt: held.attachments[0].uploadAttemptedAt, request: held.attachments[0].request });
+				expect(account.ledgerCounts).toMatchObject({ pending: 1, failed: 0 });
+			} else if (kind.includes("finalize")) expect(stopped).toMatchObject({ status: "done", settlementNeeded: false, attachments: [{ state: "saved" }] });
 		}
 		await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "failed", error: crash.message } });
 		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(stopped);
@@ -4047,19 +4062,20 @@ describe("permission guards", () => {
 			workId = queued.syncWorkId! as typeof f.workId;
 			const count = calls.length;
 			await f.t.action(internal.gmail_worker.work_account_slice, { work });
-			if (kind === "source-free finalize") expect(calls.slice(count).map(call => call.path)).toEqual(["/api/v1/files/service-uploads/finalize"]);
+			if (sourceFree) expect(calls.slice(count).map(call => call.path)).toEqual(["/api/v1/files/service-uploads/finalize"]);
 			await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "success", returnValue: null } });
 		} else expect(kind === "source-free finalize" && phase === "after").toBe(true);
 		const saved = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
 		expect(saved).toMatchObject({ status: "done", permissionHeld: false, fileAccessOperation: null, attempts: 0,
 			emailWritten: true, emailAssumed: phase === "before" && kind === "email", filePath: held.filePath,
-			settlementNeeded: false, attachments: [{ state: "saved", deliveries: 1, sourceUnavailablePendingChecks: 0 }] });
+			settlementNeeded: false, attachments: [{ state: "saved", deliveries: 1,
+				sourceUnavailablePendingChecks: sourceFree && pendingFinalize && phase === "after" ? 1 : 0 }] });
 		if (held.attachments[0].request) expect(saved.attachments[0].request).toEqual(held.attachments[0].request);
 		expect(emailSaves).toBe(1);
 		expect(calls.filter(call => call.path === "/object")).toHaveLength(1);
 		const finished = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
 		expect(finished).toMatchObject({ messagesSynced: 1, ledgerCounts: { done: 1, failed: 0, pending: 0, permissionHeld: 0 },
-			sourceError: kind === "source-free finalize" ? "google_revoked" : null });
+			sourceError: sourceFree ? "google_revoked" : null });
 		if (phase === "before" && kind === "email") expect(finished.permissionProbeNotBefore).toBeGreaterThan(now);
 		else expect(finished.permissionProbeNotBefore).toBeNull();
 		const count = calls.length;
