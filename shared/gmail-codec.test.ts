@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
 	GMAIL_BODY_BYTES, GMAIL_MARKDOWN_BYTES, gmail_attachment_name, gmail_body_text, gmail_cap_text,
 	gmail_decode_base64, gmail_decode_header, gmail_discover_message, gmail_file_path,
@@ -8,6 +8,21 @@ import {
 function message(payload: unknown, labelIds: string[] = []) {
 	return { id: "18c2f0a1b2c3d4e5", threadId: "18c2f0a1b2c3d000", internalDate: String(Date.parse("2026-09-27T23:59:59Z")), labelIds, payload };
 }
+
+describe("gmail_cap_text", () => {
+	test.each([
+		["plain", 0, ""], ["plain", 3, "pla"], ["a😀b", 4, "a"],
+		["a😀b", 5, "a😀"], ["éé", 3, "é"], ["éé", 4, "éé"],
+	])("cuts %s at %i bytes without splitting a character", (input, bytes, expected) => {
+		expect(gmail_cap_text(input, bytes)).toBe(expected);
+	});
+	test("cuts the input before allocating UTF-8 bytes", () => {
+		const input = "a".repeat(65536);
+		const allocation = vi.spyOn(Buffer, "from");
+		expect(gmail_cap_text(input, 512)).toBe("a".repeat(512));
+		expect(allocation.mock.calls.map(([value]) => typeof value === "string" ? value.length : null)).toEqual([512]);
+	});
+});
 
 describe("gmail_attachment_name", () => {
 	test.each([
@@ -111,6 +126,41 @@ describe("gmail_discover_message", () => {
 	test("parses quoted address lists and encoded names", () => {
 		const parsed = gmail_discover_message(message({ headers: [{ name: "To", value: '"Doe, Jane" <jane@example.com>, =?UTF-8?Q?Ren=C3=A9?= <rene@example.com>' }] }));
 		expect(parsed.to).toEqual(["Doe, Jane <jane@example.com>", "René <rene@example.com>"]);
+	});
+	test.each([
+		["Subject", "subject"], ["From", "from"], ["Message-ID", "messageId"], ["In-Reply-To", "inReplyTo"],
+	] as const)("caps %s input before decoding encoded words", (name, field) => {
+		const word = "=?UTF-8?Q?inside?=";
+		const prefix = word + " ".repeat(8192 - word.length);
+		const parsed = gmail_discover_message(message({ headers: [{ name, value: prefix + "=?UTF-8?Q?outside?=" }] }));
+		expect(parsed[field]).toBe("inside" + " ".repeat(8192 - word.length));
+		expect(parsed.headersShortened).toBe(true);
+		expect(gmail_format_markdown(parsed, "Body")).toContain("Some header text was shortened.");
+	});
+	test.each(["to", "cc", "bcc"] as const)("caps %s input before decoding and parsing addresses", name => {
+		const address = "=?UTF-8?Q?Ren=C3=A9?= <rene@example.com>";
+		const value = address + " ".repeat(65536 - address.length) + ", outside@example.com";
+		const parsed = gmail_discover_message(message({ headers: [{ name, value }] }, ["SENT"]));
+		expect(parsed[name]).toEqual(["René <rene@example.com>"]);
+		expect(parsed.headersShortened).toBe(true);
+	});
+	test("caps attachment name input before decoding display text", () => {
+		const word = "=?UTF-8?Q?report?=";
+		const prefix = word + " ".repeat(512 - word.length);
+		const parsed = gmail_discover_message(message({ parts: [{ filename: prefix + "=?UTF-8?Q?outside?=", body: { size: 1, data: "YQ" } }] }));
+		expect(parsed.attachments[0].displayName).toBe("report" + " ".repeat(512 - word.length));
+		expect(parsed.attachments[0].filename).toBe("report");
+	});
+	test("caps body charset headers before extraction", () => {
+		const type = "text/plain;";
+		const charset = "text/plain; charset=";
+		const parsed = gmail_discover_message(message({ parts: [
+			{ mimeType: "text/plain", headers: [{ name: "Content-Type", value: type + " ".repeat(8192 - type.length) + "charset=ISO-8859-1" }], body: { size: 2, data: "w6k" } },
+			{ mimeType: "text/plain", headers: [{ name: "Content-Type", value: charset + "x".repeat(65536) }], body: { size: 2, data: "w6k" } },
+		] }));
+		expect(parsed.bodyParts.map(part => [part.charset.slice(0, 20), Buffer.byteLength(part.charset)]))
+			.toEqual([["utf-8", 5], ["x".repeat(20), 8192 - charset.length]]);
+		expect(gmail_body_text(parsed.bodyParts.map(part => ({ ...part, bytes: gmail_decode_base64(part.data!, GMAIL_BODY_BYTES) })))).toBe("é\n\né");
 	});
 });
 

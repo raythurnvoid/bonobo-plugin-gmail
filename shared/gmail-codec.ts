@@ -18,8 +18,10 @@ export class gmail_ContentError extends Error {
 }
 
 export function gmail_cap_text(text: string, bytes: number) {
-	const encoded = Buffer.from(text);
-	if (encoded.length <= bytes) return text;
+	// Avoid allocating bytes for the full source string.
+	const prefix = text.slice(0, bytes);
+	const encoded = Buffer.from(prefix);
+	if (encoded.length <= bytes) return prefix;
 	let end = bytes;
 	while (end > 0 && (encoded[end] & 0xc0) === 0x80) end--;
 	return encoded.subarray(0, end).toString("utf8");
@@ -145,11 +147,11 @@ export function gmail_discover_message(input: unknown) {
 		headersShortened: [...headers].some(([name, value]) => Buffer.byteLength(value) > (["to", "cc", "bcc"].includes(name) ? 65536 : 8192)),
 		bodyLimit, bodyParts: bodyLimit ? [] : selected.map(part => ({
 			partId: part.partId, mimeType: part.mimeType,
-			charset: /charset\s*=\s*["']?([^;"'\s]+)/i.exec(part.headers.find(h => h.name.toLowerCase() === "content-type")?.value ?? "")?.[1] ?? "utf-8",
+			charset: /charset\s*=\s*["']?([^;"'\s]+)/i.exec(gmail_cap_text(part.headers.find(h => h.name.toLowerCase() === "content-type")?.value ?? "", 8192))?.[1] ?? "utf-8",
 			...part.body,
 		})),
 		attachments: attachments.slice(0, 16).map((part, index) => ({
-			partId: part.partId, filename: names[index], displayName: gmail_cap_text(gmail_decode_header(part.filename || "attachment"), 512),
+			partId: part.partId, filename: names[index], displayName: gmail_cap_text(gmail_decode_header(gmail_cap_text(part.filename || "attachment", 512)), 512),
 			contentType: part.mimeType, ...part.body,
 		})),
 		overflowNames: names.slice(16),
