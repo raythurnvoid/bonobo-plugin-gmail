@@ -16,7 +16,7 @@ Use Node 24.16.0 through Vite Plus and pnpm. Run commands with `vp env exec`.
 - `vp env exec pnpm run test:once`
 - `vp env exec pnpm run build`
 
-The dev backend is `kindhearted-mallard-511`. Its callback is `https://kindhearted-mallard-511.convex.site/oauth/google/callback`.
+The dev callback is `https://<deployment>.convex.site/oauth/google/callback`. Use the deployment from the ignored `.env.local`.
 
 ## Environment
 
@@ -151,7 +151,11 @@ Later on October 6, one natural new email finished with a real file write. Exact
 
 Playwriter later recovered Files auth by reloading only its own tab. The real Markdown editor showed the received email with matching message ID, thread ID and date. Thread-ID search returned the saved file as its one match. The existing test chat read that file with one Bash `cat` command and exit code 0. Its saved answer matched the fields, and its visible terminal matched the stored tool output. Body text matched the editor after removing link formatting and extra spacing.
 
-A later read-only Gmail check matched this email's original plain body, From/To/Subject and all six source links. The worker output has 1,567 bytes. The Files converter turns bare links into Markdown links, giving 2,004 bytes. That converted result exactly matches the fresh mounted editor, including link targets. The saved Markdown is not byte-identical to the worker output. Two private checker controls reject a changed link target and changed Markdown, then pass with the real input restored. This one plain-text email does not prove every mail format, raw agent Markdown or hosted network costs.
+A later read-only Gmail check matched this email's original plain body, From/To/Subject and all six source links. The worker output has 1,567 bytes. The Files converter turns bare links into Markdown links, giving 2,004 bytes. That converted result exactly matches the fresh mounted editor, including link targets. The saved Markdown is not byte-identical to the worker output. Two private checker controls reject a changed link target and changed Markdown, then pass with the real input restored. This one plain-text email does not prove every mail format or hosted network costs.
+
+A fresh agent read kept all six original link targets and the saved Gmail link. Its stored Bash result has exit 0, no stderr and no truncation. Parsing its full Markdown with the Files parser gives the exact 2,004-byte source/editor result. No links or body text are removed for this check. The terminal's file text has 1,536 bytes after its final newline is removed. Raw agent Markdown differs from both the worker output and editor; the cause of that format difference is not proved. A fresh Files tab shows the same saved reply and unchanged editor. Its visible terminal exactly matches stored output. Changed link, field, exit code and terminal text each fail a named private checker control; restored input passes. The first read used a wrong path prefix and failed. Both that failure and a closed-tab capture failure are kept.
+
+One later monitor read failed. Its error details were not retained, so the cause is unknown. A separate diagnostic read then found healthy sync, no waiting work and a recent history check. Both service HEAD requests passed. No consent or sync setting changed. The failed attempt and extra diagnostic query stay in the private record and later overhead; the frozen 24-hour result is unchanged. The completed hourly follow-up remains absent.
 
 The installed 0.2.3 frame now has six viewed Playwriter images: the connected desktop view, keyboard focus, a 306-pixel frame, its scrolled uninstall warning, a simulated unavailable view and recovery. Tab and Shift+Tab reached Connect Gmail and Disconnect. Retry also received keyboard focus. The quick checks found no unnamed, blocked or small controls among the two connected controls and the one Retry control. Sampled heading, paragraph and button text colors in the dark theme exceed 4.5:1 contrast. These checks do not cover real browser zoom, every UI state or every theme.
 
