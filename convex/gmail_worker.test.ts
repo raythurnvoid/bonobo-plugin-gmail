@@ -1714,6 +1714,104 @@ describe("work_account_slice", () => {
 		})));
 		expect(tokenFailures).toBe(sourceAccess === "ready" ? 0 : 1);
 	});
+	test.each([
+		["create", "cancelled", "This target was already released"], ["create", "expired", "This target's upload expired"],
+		["remint", "cancelled", "This target was already released"], ["remint", "expired", "This target's upload expired"],
+		["finalize", "released", null],
+	] as const)("a stop after %s returns %s keeps the accepted upload final", async (route, _kind, message) => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const f = await fixture({ fresh: true });
+		let release = route === "finalize";
+		let releasedReply = false;
+		let creates = 0;
+		let beforeReleased = (await f.t.run(ctx => ctx.db.get(f.ledgerId)))!;
+		const calls = network(async (path) => {
+			now += 600;
+			if (path.endsWith("/messages/ab")) return Response.json(source);
+			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
+			if (path.endsWith("/history")) return Response.json({ historyId: "11", history: [] });
+			if (path === "/object") return new Response(null, { status: 200 });
+			if (path.endsWith("/create-target")) creates++;
+			if (release && path.endsWith(route === "create" ? "/create-target" : `/${route}`)) {
+				beforeReleased = (await f.t.run(ctx => ctx.db.get(f.ledgerId)))!;
+				releasedReply = true;
+				return route === "finalize" ? Response.json({ ...pending, state: "released" }) : Response.json({ message }, { status: 409 });
+			}
+			if (path.endsWith("/create-target")) return Response.json({ ...transport, uploadUrlExpiresAt: now + 3600_000 });
+			if (path.endsWith("/finalize")) return Response.json(pending);
+			return Response.json({}, { status: 500 });
+		});
+		let work = f.work;
+		let workId = f.workId;
+		if (route !== "finalize") {
+			let firstCrash: Error | null = null;
+			if (route === "create") firstCrash = await stop_after_mutation(f, "save_message", async () => creates === 1);
+			else await f.t.action(internal.gmail_worker.work_account_slice, { work });
+			const accepted = (await f.t.run(ctx => ctx.db.get(f.ledgerId)))!;
+			expect(accepted).toMatchObject({ status: "pending", emailWritten: true, settlementNeeded: true,
+				attachments: [{ state: "pending", accepted: true, deliveries: route === "create" ? 0 : 1 }] });
+			await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work,
+				result: firstCrash ? { kind: "failed", error: firstCrash.message } : { kind: "success", returnValue: null } });
+			const completed = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+			expect(completed.nextSyncAt).toBeGreaterThan(now);
+			now = Math.max(completed.nextSyncAt!, route === "remint" ? accepted.attachments[0].uploadAttemptedAt! + 180_000 : now);
+			await f.t.mutation(internal.gmail_accounts.dispatch, {});
+			const queued = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+			expect(queued.syncWorkId).not.toBeNull();
+			expect(queued.syncRequestId).not.toBe(work.requestId);
+			work = { ...work, requestId: queued.syncRequestId! };
+			workId = queued.syncWorkId! as typeof f.workId;
+			release = true;
+		}
+		const crash = await stop_after_mutation({ ...f, work }, "save_message", async () => releasedReply);
+		const saved = (await f.t.run(ctx => ctx.db.get(f.ledgerId)))!;
+		expect(beforeReleased.attachments[0].accepted).toBe(true);
+		expect(saved.attachments[0].state).toBe("not_saved");
+		expect(saved.attachments[0].reason).toBe("released");
+		expect(saved.attachments[0].request).toEqual(beforeReleased.attachments[0].request);
+		expect(saved.attachmentsNotSaved).toBe(1);
+		expect(saved.status).toBe("done");
+		expect(saved.nextAttemptAt).toBeNull();
+		expect(saved.settlementNeeded).toBe(false);
+		expect(saved).toMatchObject({ filePath: beforeReleased.filePath, fileNodeId: beforeReleased.fileNodeId, emailWritten: true, attempts: 0,
+			attachments: [{ accepted: true, nodeId: beforeReleased.attachments[0].nodeId, livePath: beforeReleased.attachments[0].livePath,
+				deliveries: route === "create" ? 0 : 1, uploadAttemptedAt: beforeReleased.attachments[0].uploadAttemptedAt,
+				sourceUnavailablePendingChecks: 0, nextAttemptAt: null }] });
+		expect((await f.t.run(ctx => ctx.db.get(f.accountId)))!.ledgerCounts).toMatchObject({ done: 1, pending: 0, given_up: 0 });
+		const early = calls.length;
+		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(saved);
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "failed", error: crash.message } });
+		const completed = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+		expect(completed.nextSyncAt).toBeGreaterThan(now);
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toEqual(completed);
+		now = completed.nextSyncAt!;
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		const queued = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+		expect(queued.syncWorkId).not.toBeNull();
+		expect(queued.syncRequestId).not.toBe(work.requestId);
+		const next = { ...work, requestId: queued.syncRequestId! };
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: next });
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: queued.syncWorkId! as typeof f.workId, context: next,
+			result: { kind: "success", returnValue: null } });
+		expect(calls.slice(early).filter(call => /messages\/ab|files\/write|service-uploads|\/object$/.test(call.path))).toHaveLength(0);
+		expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(saved);
+		expect(await f.t.mutation(internal.gmail_accounts.retry_failed, { ...f.actor, accountId: f.accountId, expectedGeneration: 1 })).toEqual({ _yay: { count: 0, more: false } });
+		expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(saved);
+		expect(calls.filter(call => call.path.endsWith("/messages/ab"))).toHaveLength(route === "finalize" ? 1 : 2);
+		expect(calls.filter(call => call.path.endsWith("/files/write"))).toHaveLength(1);
+		expect(calls.filter(call => call.path.endsWith("/create-target"))).toHaveLength(route === "create" ? 2 : 1);
+		expect(calls.filter(call => call.path === "/object")).toHaveLength(route === "create" ? 0 : 1);
+		const request = beforeReleased.attachments[0].request!;
+		const { installationId: _installationId, ...frozen } = request;
+		expect(calls.filter(call => call.path.endsWith("/create-target")).map(call => call.body)).toEqual(route === "create" ? [frozen, frozen] : [frozen]);
+		const keys = { idempotencyKey: request.idempotencyKey, targetKey: request.targetKey };
+		expect(calls.filter(call => call.path.endsWith("/remint")).map(call => call.body)).toEqual(route === "remint" ? [keys] : []);
+		expect(calls.filter(call => call.path.endsWith("/finalize")).map(call => call.body)).toEqual(Array.from({ length: route === "remint" ? 2 : 1 }, () => keys));
+	});
 	test("a late old-chain refusal cannot block a repaired chain", async () => {
 		const f = await fixture({ sourceError: "google_revoked" });
 		const calls = network(async () => {
