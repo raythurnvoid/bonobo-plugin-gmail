@@ -4206,7 +4206,7 @@ describe("source limits", () => {
 		expect(calls.filter(call => call.path.endsWith("/files/write"))).toHaveLength(1);
 		expect(calls.filter(call => /attachments\/bytes|service-uploads|\/object$/.test(call.path))).toHaveLength(0);
 	});
-	test.each(["new", "accepted"] as const)("stops after oversized %s attachment replies keep the saved outcome", async kind => {
+	test.each([["new", "streamed"], ["accepted", "streamed"], ["new", "decoded"], ["accepted", "decoded"]] as const)("stops after oversized %s attachment replies at the %s limit keep the saved outcome", async (kind, limit) => {
 		let now = Date.now();
 		vi.spyOn(Date, "now").mockImplementation(() => now);
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -4217,7 +4217,7 @@ describe("source limits", () => {
 		let pendingReply = false;
 		let chunks = 0;
 		let cancelled = false;
-		const padding = new Uint8Array(1024 * 1024).fill(32);
+		const padding = new Uint8Array(1024 * 1024).fill(limit === "streamed" ? 32 : 65);
 		const calls = network(path => {
 			now += 600;
 			if (path.endsWith("/messages/ab")) return Response.json({ ...source, payload: { ...source.payload,
@@ -4225,11 +4225,17 @@ describe("source limits", () => {
 			if (path.endsWith("/attachments/bytes")) {
 				if (!large) return Response.json({ size: 4, data: "ZmlsZQ" });
 				oversizedReply = true;
-				// Valid JSON follows the padding; parsing alone cannot reject it.
+				// Streamed padding precedes valid JSON.
+				// The decoded case carries 33 MiB of bytes in a 44 MiB base64 response.
 				return new Response(new ReadableStream<Uint8Array>({
 					pull(controller) {
 						chunks++;
-						if (chunks <= 49) controller.enqueue(padding);
+						if (limit === "decoded") {
+							if (chunks === 1) controller.enqueue(new TextEncoder().encode('{"size":4,"data":"'));
+							else if (chunks <= 45) controller.enqueue(padding);
+							else if (chunks === 46) controller.enqueue(new TextEncoder().encode('"}'));
+							else controller.close();
+						} else if (chunks <= 49) controller.enqueue(padding);
 						else if (chunks === 50) controller.enqueue(new TextEncoder().encode('{"size":4,"data":"ZmlsZQ"}'));
 						else controller.close();
 					},
@@ -4269,8 +4275,9 @@ describe("source limits", () => {
 		}
 		const crash = await stop_after_mutation({ ...f, work }, "save_message", async () => oversizedReply);
 		const saved = (await f.t.run(ctx => ctx.db.get(f.ledgerId)))!;
-		expect(cancelled).toBe(true);
-		expect(chunks).toBeLessThanOrEqual(50);
+		expect(cancelled).toBe(limit === "streamed");
+		if (limit === "streamed") expect(chunks).toBeLessThanOrEqual(50);
+		else expect(chunks).toBe(47);
 		expect(saved.attachments[0].state).toBe(kind === "accepted" ? "pending" : "not_saved");
 		expect(saved.attachments[0].reason).toBe(kind === "accepted" ? "too_large_settlement_only" : "too_large");
 		expect(saved.attachmentsNotSaved).toBe(kind === "accepted" ? 0 : 1);
