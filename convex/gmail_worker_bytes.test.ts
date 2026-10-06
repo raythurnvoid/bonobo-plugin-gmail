@@ -13,7 +13,10 @@ afterEach(() => {
 
 // Keep native byte checks apart from the memory used by other worker fixtures.
 describe("work_account_slice", () => {
-	test("a native oversized attachment cancels before parsing or uploading below 512 MiB", async () => {
+	test.each([
+		["a native oversized attachment cancels before parsing or uploading below 512 MiB", "wire"],
+		["a native decoded attachment stops before allocation below 512 MiB", "decoded"],
+	] as const)("%s", async (_title, kind) => {
 		const nativeFetch = fetch;
 		const f = await gmail_test_fixture();
 		const work = { accountId: f.accountId, generation: 1, requestId: "worker", grantId: f.grantId };
@@ -33,18 +36,19 @@ describe("work_account_slice", () => {
 		let cancelled = 0;
 		const parse = vi.spyOn(JSON, "parse");
 		const decode = vi.spyOn(Buffer, "from");
-		const padding = Buffer.alloc(1024 * 1024, 32);
+		const padding = Buffer.alloc(1024 * 1024, kind === "wire" ? 32 : 65);
 		const server = createServer((_request, response) => {
 			response.writeHead(200, { "Content-Type": "application/json" });
+			if (kind === "decoded") response.write('{"size":4,"data":"');
 			let chunks = 0;
 			const send = () => {
 				if (response.destroyed) return;
-				while (chunks < 49) {
+				while (chunks < (kind === "wire" ? 49 : 44)) {
 					chunks++;
 					if (!response.write(padding)) { response.once("drain", send); return; }
 				}
-				// Without the byte guard, this valid reply permits a four-byte upload.
-				response.end('{"size":4,"data":"ZmlsZQ"}');
+				// The wire case permits an upload without its guard. The other case represents 33 MiB.
+				response.end(kind === "wire" ? '{"size":4,"data":"ZmlsZQ"}' : '"}');
 			};
 			send();
 		});
@@ -94,11 +98,19 @@ describe("work_account_slice", () => {
 				return Response.json({}, { status: 500 });
 			}));
 			await f.t.action(internal.gmail_worker.work_account_slice, { work });
-			expect(readBytes).toBeGreaterThan(48 * 1024 * 1024);
-			expect(readBytes).toBeLessThanOrEqual(48 * 1024 * 1024 + largestChunk);
-			expect(cancelled).toBe(1);
-			expect(parse.mock.calls.filter(([text]) => text.length > 48 * 1024 * 1024)).toEqual([]);
-			expect(decode.mock.calls.filter(([value]) => value === "ZmlsZQ")).toEqual([]);
+			if (kind === "wire") {
+				expect(readBytes).toBeGreaterThan(48 * 1024 * 1024);
+				expect(readBytes).toBeLessThanOrEqual(48 * 1024 * 1024 + largestChunk);
+				expect(cancelled).toBe(1);
+				expect(parse.mock.calls.filter(([text]) => text.length > 48 * 1024 * 1024)).toEqual([]);
+				expect(decode.mock.calls.filter(([value]) => value === "ZmlsZQ")).toEqual([]);
+			} else {
+				const encodedBytes = 44 * 1024 * 1024;
+				expect(readBytes).toBe(encodedBytes + Buffer.byteLength('{"size":4,"data":""}'));
+				expect(cancelled).toBe(0);
+				expect(parse.mock.calls.filter(([text]) => text.length === readBytes)).toHaveLength(1);
+				expect(decode.mock.calls.filter(([value]) => typeof value === "string" && value.length === encodedBytes).length).toBe(0);
+			}
 			expect(calls.filter(call => /service-uploads|\/object$/.test(call.path))).toEqual([]);
 			expect(calls.filter(call => call.path.endsWith("/files/write"))).toHaveLength(1);
 			const saved = (await f.t.run(ctx => ctx.db.query("messages_ledger").withIndex("by_account_gmailMessageId", q => q.eq("accountId", f.accountId).eq("gmailMessageId", "ab")).unique()))!;
@@ -116,7 +128,7 @@ describe("work_account_slice", () => {
 			const peakBytes = process.resourceUsage().maxRSS * 1024;
 			expect(peakBytes).toBeGreaterThan(0);
 			expect(peakBytes).toBeLessThan(512 * 1024 * 1024);
-			process.stdout.write(JSON.stringify({ fixture: "Native 49 MiB attachment JSON", readBytes, largestChunk, peakRssBytes: peakBytes }) + "\n");
+			process.stdout.write(JSON.stringify({ fixture: kind === "wire" ? "Native 49 MiB attachment JSON" : "Native 33 MiB decoded attachment", readBytes, largestChunk, peakRssBytes: peakBytes }) + "\n");
 		} finally {
 			server.closeAllConnections();
 			await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
