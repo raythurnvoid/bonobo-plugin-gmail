@@ -107,6 +107,8 @@ Two local grant checks lose an accepted exchange or renewal reply, then resume t
 
 Seven more local checks stop before or after exchange, renewal and seal saves, or cancel a scheduled renewal. Before a save, recovery reuses the same receipt. After a save, the new token, phase, request and scheduled job stay saved. The ready-phase sweep catches the missed twelve-hour renewal. Account progress and Files access holds stay unchanged. Ten broken rules fail the named checks; restoration passes. These checks use the local scheduler and fake providers.
 
+32 local checks hold old grant replies during Disconnect, repair or Reconnect. They cover missing/exact recovery, accepted effects and live checks through supported lifecycle calls. Late replies make no later network call or change to grants, account, ledger or jobs. Nine broken guards fail the named checks; restoration passes. The matrix covers paths that cancel the old grant. Repair keeps a pending Start exchange valid, so that path is outside this cancellation matrix. Hosted races remain open.
+
 The service account needs workspace Can write. The member also needs write access. Restricted folders need their own grants. A processing token is sealed to the saved account destination. The trusted backend also holds interactive grants, which can seal other writable workspace paths.
 
 After a plugin update, each connecting member must reopen the new page to repair Press access. A reinstall needs Gmail Reconnect for old active rows. Local Disconnect keeps the account ledger and Files. There is no uninstall callback and no age-based token deletion.

@@ -5,7 +5,9 @@ import { internal } from "./_generated/api";
 import type { ActionCtx } from "./_generated/server";
 import { gmail_test_fixture } from "../scripts/gmail-test-fixtures";
 import { connect, gmail_grant_step } from "./gmail_grants";
-import { gmail_start } from "./gmail_oauth";
+import { gmail_repair } from "./gmail_accounts";
+import { GMAIL_READONLY_SCOPE } from "./gmail_google";
+import { gmail_callback, gmail_finish, gmail_start } from "./gmail_oauth";
 import { gmail_decrypt, gmail_encrypt, gmail_random_secret } from "./gmail_secrets";
 
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(1_800_000_000_000); });
@@ -13,7 +15,7 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 async function setup() {
 	const fixture = await gmail_test_fixture();
-	const state = { loseSeal: false, loseReply: null as "exchange" | "renew" | null, status: 200, exchangeCalls: 0, sealCalls: 0, renewCalls: 0,
+	const state = { loseSeal: false, loseReply: null as "exchange" | "renew" | null, status: 200, verifyStatus: 200, exchangeCalls: 0, sealCalls: 0, renewCalls: 0,
 		beforeReply: null as (() => Promise<void>) | null };
 	const receipts = new Map<string, unknown>();
 	const rotated = new Set<string>();
@@ -26,6 +28,7 @@ async function setup() {
 		if (path.endsWith("/verify-live")) {
 			requests.push({ path, token });
 			if (rotated.has(token)) return Response.json({ message: "Unauthorized" }, { status: 401 });
+			if (state.verifyStatus !== 200) return Response.json({ message: "refused" }, { status: state.verifyStatus });
 			const body = z.object({ phase: z.enum(["interactive", "processing"]), destinationPathPrefix: z.string().nullable() }).parse(raw);
 			return Response.json({ installationId: "installation", ...body, scopes: body.phase === "processing" ? ["files:write"] : [],
 				expiresAt: Date.now() + 6 * 24 * 3600_000, contentPermissions: { read: true, write: true } });
@@ -310,6 +313,106 @@ describe("gmail_grant_step", () => {
 		await t.action(ctx => gmail_grant_step(ctx, attempt.grantId!));
 		expect(await t.run(ctx => ctx.db.get(attempt.grantId!))).toMatchObject({ phase: "awaiting_finish", accountId: null, sealedSecret: null, nextAttemptAt: null });
 		expect(requests.some(request => request.path.endsWith("/seal-processing"))).toBe(false);
+	});
+	test.each(([
+		["Disconnect", "exchange"], ["Reconnect", "exchange"],
+		["Disconnect", "renew"], ["repair", "renew"], ["Reconnect", "renew"],
+		["Disconnect", "seal"], ["repair", "seal"], ["Reconnect", "seal"],
+	] as const).flatMap(([lifecycle, operation]) => (["recover miss", "recover accepted", "effect", "verify"] as const)
+		.map(reply => [lifecycle, operation, reply] as const)))("%s replaces %s during %s without late grant progress", async (lifecycle, operation, reply) => {
+		const f = await setup();
+		const before = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+		const ledger = await f.t.run(ctx => ctx.db.get(f.ledgerId));
+		let claimed = (await f.t.run(ctx => ctx.db.get(f.grantId)))!;
+		const input = { accountId: f.accountId, clientRequestId: gmail_random_secret() };
+		const pageToken = `plu_${"1".repeat(64)}`;
+		if (operation === "exchange") {
+			if (reply === "recover accepted") {
+				f.state.loseReply = "exchange";
+				expect(await f.t.action(ctx => gmail_start(ctx, f.actor, input, pageToken))).toMatchObject({ status: "preparing" });
+			}
+		} else {
+			await f.t.mutation(internal.gmail_grants.renew, { grantId: f.grantId, lifecycleRequestId: claimed.lifecycleRequestId });
+			if (operation === "seal") { vi.advanceTimersByTime(0); await f.t.finishInProgressScheduledFunctions(); }
+			if (reply === "recover accepted") {
+				if (operation === "seal") f.state.loseSeal = true; else f.state.loseReply = "renew";
+				vi.advanceTimersByTime(0); await f.t.finishInProgressScheduledFunctions();
+			}
+		}
+		const fetch = globalThis.fetch;
+		let paused = false;
+		let reached!: () => void;
+		let release!: () => void;
+		const started = new Promise<void>(resolve => { reached = resolve; });
+		const released = new Promise<void>(resolve => { release = resolve; });
+		const network = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = new URL(input instanceof Request ? input.url : String(input));
+			if (url.origin === "https://oauth2.googleapis.com") return Response.json({ access_token: "reconnected-access", refresh_token: "reconnected-refresh",
+				expires_in: 3600, scope: GMAIL_READONLY_SCOPE, token_type: "Bearer" });
+			if (url.origin === "https://gmail.googleapis.com") return Response.json({ emailAddress: before.emailAddress, historyId: "123" });
+			const response = await fetch(input, init);
+			const selected = reply.startsWith("recover") ? url.pathname.endsWith("/recover")
+				: reply === "verify" ? url.pathname.endsWith("/verify-live") : url.pathname.endsWith(`/${operation === "seal" ? "seal-processing" : operation}`);
+			if (!paused && selected) {
+				paused = true;
+				const account = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+				const attempt = operation === "exchange" ? (await f.t.run(ctx => ctx.db.get(account.connectRequestId!)))! : null;
+				claimed = (await f.t.run(ctx => ctx.db.get(attempt ? attempt.grantId! : f.grantId)))!;
+				expect(claimed.phase).toBe(operation);
+				expect(response.status).toBe(reply === "recover miss" ? 404 : 200);
+				// The provider has answered; hold that old answer while the lifecycle changes.
+				reached(); await released;
+			}
+			return response;
+		});
+		vi.stubGlobal("fetch", network);
+		const late = operation === "exchange" ? f.t.action(ctx => gmail_start(ctx, f.actor, input, pageToken)).catch((error: unknown) => error)
+			: f.t.action(internal.gmail_grants.connect, { grantId: f.grantId });
+		await started;
+		try {
+			if (lifecycle === "Disconnect") {
+				expect(await f.t.mutation(internal.gmail_accounts.disconnect, { ...f.actor, accountId: f.accountId, expectedGeneration: 1 }))
+					.toEqual({ _yay: { accountId: f.accountId, connectionGeneration: 2 } });
+			} else {
+				if (lifecycle === "repair") {
+					// A concurrent failed live check records the real repair-needed state.
+					f.state.status = 401; f.state.verifyStatus = 401;
+					await f.t.action(internal.gmail_grants.connect, { grantId: f.grantId });
+					f.state.status = 200; f.state.verifyStatus = 200;
+					expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toMatchObject({ syncStatus: "blocked", syncError: "press_reconnect_needed" });
+					const repair = { accountId: f.accountId, expectedGeneration: 1, clientRequestId: gmail_random_secret() };
+					expect(await f.t.action(ctx => gmail_repair(ctx, f.actor, repair, pageToken))).toEqual({ phase: "seal", clientRequestId: repair.clientRequestId });
+				} else {
+					const start = await f.t.action(ctx => gmail_start(ctx, f.actor, { ...input, clientRequestId: gmail_random_secret() }, pageToken));
+					const callback = await f.t.action(ctx => gmail_callback(ctx, new URL(start.consentUrl!).searchParams.get("state")!, "reconnect-code", false));
+					expect(await f.t.action(ctx => gmail_finish(ctx, f.actor, { attemptId: start.attemptId, finishCode: callback.finishCode! })))
+						.toEqual({ accountId: f.accountId, connectionGeneration: 2 });
+				}
+				const account = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+				await f.t.action(internal.gmail_grants.connect, { grantId: account.hostGrantId! });
+			}
+			const account = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+			const current = account.hostGrantId ? await f.t.run(ctx => ctx.db.get(account.hostGrantId!)) : null;
+			const old = await f.t.run(ctx => ctx.db.get(claimed._id));
+			expect(account).toMatchObject({ connectionGeneration: lifecycle === "repair" ? 1 : 2, ledgerCounts: before.ledgerCounts,
+				permissionProbeNotBefore: before.permissionProbeNotBefore, destinationPath: before.destinationPath });
+			expect(old).toMatchObject({ phase: "cancelled", sourceSecret: null, interactiveSecret: null, sealedSecret: null, nextAttemptAt: null });
+			if (lifecycle === "Disconnect") expect(account).toMatchObject({ syncStatus: "disconnected", hostGrantId: null, googleRefreshToken: null, nextSyncAt: null });
+			else expect(current).toMatchObject({ phase: "ready", accountId: f.accountId, connectionGeneration: lifecycle === "repair" ? 1 : 2 });
+			// This isolated fixture owns only the few grant jobs created above.
+			const jobs = await f.t.run(ctx => ctx.db.system.query("_scheduled_functions").collect());
+			const calls = network.mock.calls.length;
+			release();
+			const answer = await late;
+			if (operation === "exchange") expect(answer instanceof Error && answer.message === "start_again").toBe(true);
+			else expect(answer).toBeNull();
+			expect(network).toHaveBeenCalledTimes(calls);
+			expect(await f.t.run(ctx => ctx.db.get(claimed._id))).toEqual(old);
+			expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toEqual(account);
+			expect(account.hostGrantId ? await f.t.run(ctx => ctx.db.get(account.hostGrantId!)) : null).toEqual(current);
+			expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(ledger);
+			expect(await f.t.run(ctx => ctx.db.system.query("_scheduled_functions").collect())).toEqual(jobs);
+		} finally { release(); }
 	});
 	test("old-chain 401 cannot block a repaired chain", async () => {
 		const { t, actor, grantId, accountId, state } = await setup();
