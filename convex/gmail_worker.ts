@@ -715,6 +715,8 @@ export const work_account_slice = internalAction({
                 fileNodeId: answer.nodeId,
                 status: "pending",
                 error: null,
+                // A cleared hold must not keep its claimed hour.
+                nextAttemptAt: Date.now(),
               },
               "email_write",
             );
