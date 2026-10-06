@@ -1119,7 +1119,10 @@ export const on_complete = internalMutation({
 						syncStatus: "blocked" as const,
 						syncError: "sync_error",
 						temporaryFailures: account.temporaryFailures + 1,
-						nextSyncAt: account.sourceError ? (settlement === null ? null : Math.max(settlement, retryAt)) : retryAt,
+						// A crash after saving a service wait must not shorten it.
+						nextSyncAt: account.sourceError && settlement === null
+							? null
+							: Math.max(settlement ?? 0, account.nextSyncAt ?? 0, retryAt),
 					}
 				: {}),
 			updatedAt: Date.now(),

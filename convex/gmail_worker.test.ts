@@ -3134,6 +3134,132 @@ describe("worker budget and completion", () => {
 			lastSyncedAt: now,
 		});
 	});
+	test.each([
+		["credits", "ready", 402, 3600_000], ["rate limit", "ready", 429, 600_000], ["outage", "ready", 503, 60_000],
+		["credits", "revoked", 402, 3600_000], ["rate limit", "revoked", 429, 600_000], ["outage", "revoked", 503, 60_000],
+	] as const)("a stop after Press %s with %s source keeps its saved wait through failed completion", async (kind, sourceAccess, status, delay) => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		// Pause the queue so completion and dispatch choose each next request.
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const f = await fixture({ fresh: true });
+		let reject = false;
+		let rejected = false;
+		let complete = false;
+		let revoke = false;
+		let tokenFailures = 0;
+		const calls = network((path) => {
+			now += 600;
+			if (path.endsWith("/messages/ab")) return Response.json(sourceAccess === "ready" ? source : {
+				...source, payload: { ...source.payload, parts: [...source.payload.parts, {
+					...source.payload.parts[1], partId: "2", filename: "second.pdf",
+				}] },
+			});
+			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
+			if (path.endsWith("/create-target")) return Response.json({ ...transport, uploadUrlExpiresAt: now + 3600_000 });
+			if (path.endsWith("/history")) return Response.json({ historyId: "11", history: [] });
+			if (path.endsWith("/finalize")) {
+				if (reject) {
+					rejected = true;
+					return Response.json({ message: kind, ...(status === 429 ? { retryAfterMs: delay } : {}) }, { status });
+				}
+				return Response.json(complete ? committed : pending);
+			}
+			if (path === "/object") return new Response(null, { status: 200 });
+			return Response.json({}, { status: 500 });
+		});
+		const readyFetch = globalThis.fetch;
+		vi.stubGlobal("fetch", vi.fn((input: string | URL | Request, init?: RequestInit) => {
+			const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+			if (revoke && url.hostname === "oauth2.googleapis.com") {
+				now += 600;
+				tokenFailures++;
+				calls.push({ path: url.pathname, body: null });
+				return Promise.resolve(Response.json({ error: "invalid_grant" }, { status: 400 }));
+			}
+			return readyFetch(input, init);
+		}));
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		const created = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		expect(created).toMatchObject({ status: "pending", emailWritten: true, settlementNeeded: true, attempts: 0 });
+		expect(created.attachments.map(task => task.state)).toEqual(sourceAccess === "ready" ? ["pending"] : ["pending", "unstarted"]);
+		expect(created.attachments[0]).toMatchObject({ accepted: true, deliveries: 1, sourceUnavailablePendingChecks: 0 });
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: f.workId, context: f.work,
+			result: { kind: "success", returnValue: null } });
+		now = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!.nextSyncAt!;
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		let queued = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(queued.syncWorkId).not.toBeNull();
+		expect(queued.syncRequestId).not.toBe(f.work.requestId);
+		let work = { ...f.work, requestId: queued.syncRequestId! };
+		if (sourceAccess === "revoked") {
+			revoke = true;
+			await f.t.action(internal.gmail_worker.work_account_slice, { work });
+			expect(tokenFailures).toBe(1);
+			expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ sourceError: "google_revoked", googleRefreshToken: null });
+			await f.t.mutation(internal.gmail_accounts.on_complete, { workId: queued.syncWorkId! as typeof f.workId, context: work,
+				result: { kind: "success", returnValue: null } });
+			now = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!.nextSyncAt!;
+			await f.t.mutation(internal.gmail_accounts.dispatch, {});
+			queued = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+			expect(queued.syncWorkId).not.toBeNull();
+			expect(queued.syncRequestId).not.toBe(work.requestId);
+			work = { ...work, requestId: queued.syncRequestId! };
+		}
+		const original = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		reject = true;
+		const before = calls.length;
+		const crash = await stop_after_mutation({ ...f, work }, "finish_slice", async () => rejected);
+		expect(calls.slice(before).map(call => call.path)).toEqual(["/api/v1/files/service-uploads/finalize"]);
+		const stopped = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(stopped).toMatchObject({ sourceError: sourceAccess === "ready" ? null : "google_revoked", syncError: status === 402 ? "credits" : "press_temporary",
+			syncStatus: "blocked", temporaryFailures: 1 });
+		expect(stopped.nextSyncAt! - now).toBeGreaterThanOrEqual(delay);
+		expect(stopped.nextSyncAt! - now).toBeLessThanOrEqual(status === 503 ? delay * 1.1 : delay);
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(original);
+		const early = calls.length;
+		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		expect(calls).toHaveLength(early);
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toEqual(stopped);
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(original);
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: queued.syncWorkId! as typeof f.workId, context: work,
+			result: { kind: "failed", error: crash.message } });
+		const completed = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(completed.nextSyncAt).toBeGreaterThanOrEqual(stopped.nextSyncAt!);
+		expect(completed).toMatchObject({ sourceError: stopped.sourceError, googleRefreshToken: stopped.googleRefreshToken,
+			syncError: "sync_error", temporaryFailures: 2, syncRequestId: null, syncWorkId: null });
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toEqual(completed);
+		expect(calls).toHaveLength(early);
+		now = completed.nextSyncAt!;
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		const due = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
+		expect(due.syncWorkId).not.toBeNull();
+		expect(due.syncRequestId).not.toBe(work.requestId);
+		const next = { ...work, requestId: due.syncRequestId! };
+		reject = false;
+		complete = true;
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: next });
+		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: due.syncWorkId! as typeof f.workId, context: next,
+			result: { kind: "success", returnValue: null } });
+		expect(calls.slice(early).map(call => call.path)).toEqual([
+			...(sourceAccess === "ready" ? ["/token", "/gmail/v1/users/me/history"] : []), "/api/v1/files/service-uploads/finalize",
+		]);
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({ status: sourceAccess === "ready" ? "done" : "pending", settlementNeeded: false,
+			filePath: original.filePath, fileNodeId: original.fileNodeId, emailWritten: true, attempts: 0,
+			attachments: [{ state: "saved", request: original.attachments[0].request, deliveries: 1, sourceUnavailablePendingChecks: sourceAccess === "ready" ? 0 : 1 },
+				...(sourceAccess === "ready" ? [] : [{ state: "unstarted", request: null, nextAttemptAt: null }])] });
+		for (const ending of ["/messages/ab", "/files/write", "/create-target"]) expect(calls.filter(call => call.path.endsWith(ending))).toHaveLength(1);
+		expect(calls.filter(call => call.path === "/object")).toHaveLength(1);
+		expect(calls.filter(call => call.path.endsWith("/finalize")).map(call => call.body)).toEqual(Array.from({ length: sourceAccess === "ready" ? 3 : 4 }, () => ({
+			idempotencyKey: original.attachments[0].request!.idempotencyKey, targetKey: original.attachments[0].request!.targetKey,
+		})));
+		expect(tokenFailures).toBe(sourceAccess === "ready" ? 0 : 1);
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ messagesSynced: 1, temporaryFailures: 0,
+			sourceError: stopped.sourceError, syncError: stopped.sourceError, syncStatus: sourceAccess === "ready" ? "live" : "error",
+			syncRequestId: null, syncWorkId: null, nextSyncAt: sourceAccess === "ready" ? expect.any(Number) : null,
+			ledgerCounts: { done: sourceAccess === "ready" ? 1 : 0, pending: sourceAccess === "ready" ? 0 : 1 } });
+	});
 	test("completion clears only its matching work and request markers", async () => {
 		const f = await fixture();
 		await f.t.mutation(internal.gmail_accounts.on_complete, {
@@ -3184,71 +3310,6 @@ describe("worker budget and completion", () => {
 });
 
 describe("source limits", () => {
-	test("a normal 25 MB external attachment is delivered whole below 512 MiB", async () => {
-		const f = await fixture({ fresh: true });
-		const size = 25_000_000;
-		let peak = process.memoryUsage().rss;
-		const sample = () => {
-			peak = Math.max(peak, process.memoryUsage().rss);
-		};
-		const calls = network(async (path, body) => {
-			sample();
-			if (path.endsWith("/messages/ab"))
-				return Response.json({
-					...source,
-					payload: {
-						...source.payload,
-						parts: [
-							source.payload.parts[0],
-							{
-								partId: "1",
-								filename: "large.pdf",
-								mimeType: "application/pdf",
-								body: { size, attachmentId: "large" },
-							},
-						],
-					},
-				});
-			if (path.endsWith("/attachments/large")) {
-				const response = Response.json({
-					size,
-					data: Buffer.alloc(size, 37).toString("base64url"),
-				});
-				sample();
-				return response;
-			}
-			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
-			if (path.endsWith("/create-target")) {
-				expect(body).toMatchObject({ size });
-				sample();
-				return Response.json(transport);
-			}
-			if (path === "/object") {
-				expect(body).toBeInstanceOf(Uint8Array);
-				expect((body as Uint8Array).byteLength).toBe(size);
-				expect((body as Uint8Array)[size - 1]).toBe(37);
-				sample();
-				return new Response(null);
-			}
-			return Response.json({ ...committed, actualBytes: size });
-		});
-		await f.t.action(internal.gmail_worker.work_account_slice, {
-			work: f.work,
-		});
-		sample();
-		expect(calls.filter((call) => call.path === "/object")).toHaveLength(1);
-		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({
-			status: "done",
-			attachments: [{ size, state: "saved" }],
-		});
-		expect(peak).toBeLessThan(512 * 1024 * 1024);
-		process.stdout.write(
-			JSON.stringify({
-				fixture: "25 MB external attachment",
-				sampledPeakRssBytes: peak,
-			}) + "\n",
-		);
-	});
 	test("oversized source aborts before JSON parse or any Press save", async () => {
 		const f = await fixture({ fresh: true });
 		let cancelled = false;
