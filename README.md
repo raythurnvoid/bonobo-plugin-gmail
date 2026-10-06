@@ -123,6 +123,28 @@ Local Disconnect and Cancel never revoke Google access. Removing this app in Goo
 
 Code completion and release readiness are separate. Release needs all plan tests, guard-removal proofs, installed-frame Playwriter checks, and a real 24-hour hosting measurement. The Free byte-limit gap remains open. No capacity claim is made yet.
 
+### Measured idle result — October 6, 2026
+
+The idle run lasted 24.0078 hours, from October 5 at 09:04:38.962 UTC to the end capture on October 6 at 09:05:07.092 UTC. It used installed version 0.2.3 at `fb02636`. The minute cron stayed on and the plugin page stayed closed. Exact private records use current-month counters across the daily reset.
+
+| Resource | Measured change | Idle-only October-end forecast | Dev allocation |
+| --- | ---: | ---: | ---: |
+| Calls | 28,260 | 770,129 | 400,000 |
+| Convex action GB-hours | 0.1480301525 | 3.9491 | 4 |
+| Node action GB-hours | 0.1432676389 | 3.8585 | 4 |
+| Database I/O GB | 0.0529009495 | 1.4277 | 0.4 |
+| Data egress GB | 0.0144918859 | 0.4120 | 0.4 |
+
+Table values are rounded; private records keep full precision. The forecast includes usage already spent and the observed rate for the rest of October. It assumes uninterrupted idle work. Calls and both byte forecasts exceed their dev allocations. I/O also exceeds the selected Free team's 1 GB allowance. The call disable limit would stop sync before month end at this rate. That is a failed budget check. Combined action compute projects to 7.8075 GB-hours before additional workloads.
+
+Playwriter confirmed Free, one project and one dev deployment. The team database display rose from 994.09 KB to 8.05 MB; search and file storage stayed at displayed 0 B. These are rounded, delayed stock values. Exact storage growth and reporting lag remain unknown.
+
+All 14 recorded monitor queries were healthy. Saved and skipped mail counts did not change. An unobserved overnight gap of 13 hours 18 minutes prevents a continuous-health claim. Monitor overhead remains in the totals; its separate costs were not guessed or subtracted. Natural received mail, attachment changes and actual visible-page hours remain unproved.
+
+Release remains open. Plan section 4.10 requires a user choice on paid hosting or a changed workload/latency target when the measured budget fails. The required byte-disable settings also need a choice. Keep the minute cron, cap 1 and saved limits until then. Full workload costs, retained growth, the shared 80% margin, hosted memory/wire checks and remaining installed-frame QA still need proof.
+
+### Remaining release work
+
 For each deployment, add the current month's usage to all remaining workload costs. Keep retained database/index, search and file storage, then add expected growth; storage does not reset monthly. Each Gmail forecast must fit its deployment allocation. Add all Gmail allocations and other team forecasts, and keep the sum within 80% of each team allowance. Combine Node and Convex runtime compute for that team check. Include idle, new mail, attachments, backfill, denied fresh work, hourly held work, restored backlog, faults, visible page use and grant/cache cleanup. Record planned quantities and evidence for each phase. Missing inputs leave the forecast open. A filled worksheet does not validate its measurements or replace required usage limits. See [team limits](https://docs.convex.dev/production/state/limits) and [usage limits](https://docs.convex.dev/production/usage-limits).
 
 Full local checks at `6df2a81` pass 421 tests in 14 files, lint and both TypeScript projects. A fresh private build matches all six tracked asset hashes and byte counts, plus both manifests. Version stays 0.2.3. The installed backend still uses the earlier idle baseline; these local checks do not prove its hosted behavior.
