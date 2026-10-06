@@ -12,11 +12,14 @@ afterEach(() => {
 });
 
 describe("work_account_slice", () => {
-	test("the remaining body deadline saves the time notice and the attachment with native fetch", async () => {
+	test.each([
+		["the remaining body deadline saves the time notice and the attachment with native fetch", false],
+		["the real sixty-second body deadline discards partial text and saves the attachment", true],
+	] as const)("%s", async (_title, realClock) => {
 		const nativeFetch = fetch;
 		const nativeTimeout = AbortSignal.timeout;
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		if (!realClock) vi.spyOn(Date, "now").mockImplementation(() => now);
 		const f = await gmail_test_fixture();
 		const work = { accountId: f.accountId, generation: 1, requestId: "worker", grantId: f.grantId };
 		const workId = await f.t.run(ctx => gmail_workpool.enqueueAction(ctx, internal.gmail_worker.work_account_slice, { work }, { runAt: now + 3600_000 }));
@@ -43,11 +46,14 @@ describe("work_account_slice", () => {
 		let headersReceived = false;
 		let bodySignal: AbortSignal | null = null;
 		let later: ReturnType<typeof setTimeout> | undefined;
-		const server = createServer((_request, response) => {
+		const server = createServer((request, response) => {
 			response.writeHead(200, { "Content-Type": "application/json" });
 			response.write('{"size":4,"data":"');
+			const last = request.url === "/body-3";
+			// The real run streams three bodies for 19.8 seconds each.
+			const delay = realClock && !last ? 19_800 : 1000;
 			// A broken deadline gets valid JSON instead of a test timeout.
-			later = setTimeout(() => response.end('bWFpbA"}'), 1000);
+			later = setTimeout(() => response.end(`${last ? "bWFpbA" : "cGFydA"}"}`), delay);
 		});
 		server.listen(0, "127.0.0.1");
 		await once(server, "listening");
@@ -74,14 +80,14 @@ describe("work_account_slice", () => {
 					const timeout = timeouts.get(signal)!;
 					bodyCalls.push(path);
 					bodyTimeouts.push(timeout);
-					if (!path.endsWith("/body-3")) {
+					if (!realClock && !path.endsWith("/body-3")) {
 						// Three completed fake reads spend 59.7 seconds of the body clock.
 						now += 19_900;
 						return Response.json({ size: 4, data: "cGFydA" });
 					}
 					bodySignal = signal;
-					signal.addEventListener("abort", () => { now += timeout; }, { once: true });
-					const response = await nativeFetch(`http://127.0.0.1:${address.port}/`, init);
+					if (!realClock) signal.addEventListener("abort", () => { now += timeout; }, { once: true });
+					const response = await nativeFetch(`http://127.0.0.1:${address.port}/${path.split("/").at(-1)}`, init);
 					headersReceived = true;
 					return response;
 				}
@@ -97,9 +103,15 @@ describe("work_account_slice", () => {
 				if (path.endsWith("/history")) return Response.json({ historyId: "11", history: [] });
 				return Response.json({}, { status: 500 });
 			}));
+			const started = performance.now();
 			await f.t.action(internal.gmail_worker.work_account_slice, { work });
 			expect(headersReceived).toBe(true);
-			expect(bodyTimeouts).toEqual([20_000, 20_000, 20_000, 300]);
+			if (realClock) {
+				expect(bodyTimeouts.slice(0, 3)).toEqual([20_000, 20_000, 20_000]);
+				expect(bodyTimeouts[3]).toBeGreaterThan(0);
+				expect(bodyTimeouts[3]).toBeLessThan(1000);
+				expect(performance.now() - started).toBeGreaterThanOrEqual(59_000);
+			} else expect(bodyTimeouts).toEqual([20_000, 20_000, 20_000, 300]);
 			expect(bodyCalls.map(path => path.split("/").at(-1))).toEqual(["body-0", "body-1", "body-2", "body-3"]);
 			expect(bodySignal).toMatchObject({ aborted: true, reason: { name: "TimeoutError" } });
 			const writes = calls.filter(call => call.path.endsWith("/files/write"));
@@ -122,7 +134,7 @@ describe("work_account_slice", () => {
 			await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
 		}
 		expect(server.listening).toBe(false);
-	});
+	}, 70_000);
 	test("a native upload waits sixty seconds then keeps its receipt until finalize commits", async () => {
 		const nativeFetch = fetch;
 		const nativeTimeout = AbortSignal.timeout;
