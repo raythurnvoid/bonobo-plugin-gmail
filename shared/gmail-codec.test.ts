@@ -169,6 +169,26 @@ describe("gmail_body_text", () => {
 		expect(gmail_body_text([{ bytes: Buffer.from("<p>caf\xe9 &amp; tea</p><script>bad()</script><div>next</div>", "latin1"), charset: "ISO-8859-1", mimeType: "text/html" }]))
 			.toBe("café & tea\nnext\n");
 	});
+	test.each([
+		"<!-- before <div>hidden</div> after --><p>Visible &amp; text</p>",
+		"<!--[if mso]><div>37</div><![endif]--><p>Visible &amp; text</p>",
+		"<p>Visible &amp; text</p><!-- <div>hidden</div>",
+		"<!-- <script>hidden --><p>Visible &amp; text</p>",
+	])("omits HTML comment text in %s", html => {
+		expect(gmail_body_text([{ bytes: Buffer.from(html), charset: "utf-8", mimeType: "text/html" }]))
+			.toBe("Visible & text\n");
+	});
+	test.each(["script", "style"])("keeps visible text after comment markers inside %s", tag => {
+		expect(gmail_body_text([{ bytes: Buffer.from(`<${tag}>const marker = "<!--";</${tag}><p>Visible &amp; text</p>`), charset: "utf-8", mimeType: "text/html" }]))
+			.toBe("Visible & text\n");
+	});
+	test.each([
+		["text/html", "&lt;!-- visible --&gt;"],
+		["text/plain", "<!-- visible -->"],
+	])("keeps literal comment text in %s", (mimeType, text) => {
+		expect(gmail_body_text([{ bytes: Buffer.from(text), charset: "utf-8", mimeType }]))
+			.toBe("<!-- visible -->");
+	});
 	test("checks actual total bytes before conversion", () => expect(() => gmail_body_text([{ bytes: new Uint8Array(GMAIL_BODY_BYTES + 1), charset: "utf-8", mimeType: "text/plain" }])).toThrow("too_large"));
 });
 

@@ -165,7 +165,8 @@ export function gmail_body_text(parts: { bytes: Uint8Array; charset: string; mim
 		try { decoded = new TextDecoder(part.charset).decode(part.bytes); }
 		catch { decoded = new TextDecoder("utf-8").decode(part.bytes); }
 		if (part.mimeType.toLowerCase() !== "text/html") return decoded;
-		return he.decode(decoded.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, "")
+		// Handle hidden blocks together so comment markers inside scripts stay hidden.
+		return he.decode(decoded.replace(/<!--[\s\S]*?(?:-->|$)|<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, "")
 			.replace(/<(?:br|\/p|\/div|\/li|\/tr|\/h[1-6])\b[^>]*>/gi, "\n").replace(/<[^>]*>/g, ""));
 	}).join("\n\n");
 }
