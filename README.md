@@ -91,6 +91,8 @@ Five local queue checks cover Disconnect with a queued receipt check or a runnin
 
 Four local queue checks cover Press repair during a running create/PUT. Grant expiry enables repair while the old request is still within its timeout. Repair replaces the grant and queues new work. Accepted and lost late replies keep the new account and original receipt unchanged. The new worker finishes with one email write and one PUT in total. Three broken rules fail the work-marker, late-completion and receipt-key checks; restoration passes. Providers, clocks and reply delays are fake. Hosted repair recovery remains open.
 
+Four more local queue checks run Google Start, callback and Finish during a running create/PUT. Start and callback keep the old connection active. Finish advances its generation and replaces the grant. Accepted and lost old replies leave the new queued job and whole receipt unchanged. The new worker saves the attachment with one email write and one PUT in total. Five broken rules fail the named checks; restoration passes all eight repair/Reconnect cases. Providers and clocks are fake. Hosted Reconnect recovery remains open.
+
 The page polls every five seconds only while visible. Its last-check label comes from the saved completed history time. Ten minutes without a check shows delayed. Files attention stays visible even beside a recent mail check. The page keeps tokens and finish codes in memory, and stores only bound Start retry IDs in session storage. Failure lists show message IDs and fixed reasons, not private subject paths or attachment names.
 
 The public upload routes are typed locally in `convex/press.ts` because the pinned SDK does not list them. Replies are runtime-validated. Press source and its SDK generator remain unchanged.

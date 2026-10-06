@@ -2003,8 +2003,9 @@ describe("work_account_slice", () => {
 		});
 	});
 	test.each([
-		["create", "accepted"], ["create", "lost reply"], ["PUT", "accepted"], ["PUT", "lost reply"],
-	] as const)("native repair during %s keeps new work after an old %s", async (stage, reply) => {
+		["repair", "create", "accepted"], ["repair", "create", "lost reply"], ["repair", "PUT", "accepted"], ["repair", "PUT", "lost reply"],
+		["Reconnect", "create", "accepted"], ["Reconnect", "create", "lost reply"], ["Reconnect", "PUT", "accepted"], ["Reconnect", "PUT", "lost reply"],
+	] as const)("native %s during %s keeps new work after an old %s", async (lifecycle, stage, reply) => {
 		vi.useFakeTimers();
 		vi.setSystemTime(1_800_000_000_000);
 		const f = await fixture({ fresh: true });
@@ -2014,7 +2015,8 @@ describe("work_account_slice", () => {
 			await ctx.db.patch(f.accountId, { syncWorkId: null, syncRequestId: null });
 		});
 		// Let the real renewal expiry make repair available during a finite request.
-		vi.setSystemTime(oldGrant.interactiveExpiresAt! - 5000);
+		if (lifecycle === "repair") vi.setSystemTime(oldGrant.interactiveExpiresAt! - 5000);
+		const generation = lifecycle === "repair" ? 1 : 2;
 		const interactive = `psg_${"4".repeat(64)}`;
 		const sealed = `psg_${"5".repeat(64)}`;
 		let created = false;
@@ -2027,6 +2029,8 @@ describe("work_account_slice", () => {
 		const newTurn = new Promise<void>(resolve => { releaseNew = resolve; });
 		const calls = network(async path => {
 			vi.setSystemTime(Date.now() + 600);
+			if (path.endsWith("/profile")) return Response.json(profile);
+			if (path.endsWith("/messages")) return Response.json({ messages: [{ id: "ab" }] });
 			if (path.endsWith("/messages/ab")) return Response.json(source);
 			if (path.endsWith("/history")) return Response.json({ historyId: "11", history: [] });
 			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
@@ -2049,6 +2053,12 @@ describe("work_account_slice", () => {
 		const readyFetch = globalThis.fetch;
 		vi.stubGlobal("fetch", vi.fn((input: string | URL | Request, init?: RequestInit) => {
 			const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+			if (url.hostname === "oauth2.googleapis.com" && new URLSearchParams(String(init?.body)).has("code")) {
+				vi.setSystemTime(Date.now() + 600);
+				calls.push({ path: url.pathname, body: null });
+				return Promise.resolve(Response.json({ access_token: "reconnected-access", refresh_token: "reconnected-refresh", expires_in: 3600,
+					scope: "https://www.googleapis.com/auth/gmail.readonly", token_type: "Bearer" }));
+			}
 			if (url.pathname.endsWith("/verify-live")) {
 				vi.setSystemTime(Date.now() + 600);
 				calls.push({ path: url.pathname, body: null });
@@ -2086,18 +2096,32 @@ describe("work_account_slice", () => {
 			}, { timeout: 4000, interval: 25 });
 			expect(saved).toMatchObject({ emailWritten: true, settlementNeeded: true,
 				attachments: [{ state: stage === "create" ? "uncertain" : "pending", accepted: stage === "PUT", deliveries: stage === "create" ? 0 : 1 }] });
-			vi.setSystemTime(oldGrant.interactiveExpiresAt! + 1);
-			await f.t.mutation(internal.gmail_grants.renew, { grantId: f.grantId, lifecycleRequestId: oldGrant.lifecycleRequestId });
-			expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toMatchObject({ syncStatus: "blocked", syncError: "press_reconnect_needed", nextSyncAt: null,
-				syncWorkId: oldWorkId, connectionGeneration: 1 });
-			expect(await f.t.run(ctx => ctx.db.get(f.grantId))).toMatchObject({ phase: "blocked", error: "press_reconnect_needed" });
-			const repair = { accountId: f.accountId, expectedGeneration: 1, clientRequestId: gmail_random_secret() };
-			expect(await f.t.action(ctx => gmail_repair(ctx, f.actor, repair, `plu_${"1".repeat(64)}`)))
-				.toEqual({ phase: "seal", clientRequestId: repair.clientRequestId });
+			if (lifecycle === "repair") {
+				vi.setSystemTime(oldGrant.interactiveExpiresAt! + 1);
+				await f.t.mutation(internal.gmail_grants.renew, { grantId: f.grantId, lifecycleRequestId: oldGrant.lifecycleRequestId });
+				expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toMatchObject({ syncStatus: "blocked", syncError: "press_reconnect_needed", nextSyncAt: null,
+					syncWorkId: oldWorkId, connectionGeneration: 1 });
+				expect(await f.t.run(ctx => ctx.db.get(f.grantId))).toMatchObject({ phase: "blocked", error: "press_reconnect_needed" });
+				const repair = { accountId: f.accountId, expectedGeneration: 1, clientRequestId: gmail_random_secret() };
+				expect(await f.t.action(ctx => gmail_repair(ctx, f.actor, repair, `plu_${"1".repeat(64)}`)))
+					.toEqual({ phase: "seal", clientRequestId: repair.clientRequestId });
+			} else {
+				const beforeStart = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+				const start = await f.t.action(ctx => gmail_start(ctx, f.actor, { accountId: f.accountId, clientRequestId: gmail_random_secret() }, `plu_${"1".repeat(64)}`));
+				const started = { ...beforeStart, connectRequestId: start.attemptId };
+				expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toEqual(started);
+				const consent = await f.t.action(ctx => gmail_callback(ctx, new URL(start.consentUrl!).searchParams.get("state")!, "reconnect-code", false));
+				expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toEqual(started);
+				expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(saved);
+				expect(await f.t.action(ctx => gmail_finish(ctx, f.actor, { attemptId: start.attemptId, finishCode: consent.finishCode! })))
+					.toEqual({ accountId: f.accountId, connectionGeneration: 2 });
+			}
 			const replaced = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
 			expect(replaced.hostGrantId).not.toBe(f.grantId);
-			expect(replaced).toMatchObject({ connectionGeneration: 1, syncWorkId: null, syncRequestId: null,
-				ledgerCounts: old.ledgerCounts, historyId: old.historyId, permissionProbeNotBefore: old.permissionProbeNotBefore });
+			expect(replaced).toMatchObject({ connectionGeneration: generation, syncWorkId: null, syncRequestId: null,
+				ledgerCounts: old.ledgerCounts, historyId: lifecycle === "repair" ? old.historyId : null, permissionProbeNotBefore: old.permissionProbeNotBefore });
+			if (lifecycle === "Reconnect") expect(replaced).toMatchObject({ backfillComplete: false, backfillPage: null, backfillPageToken: null,
+				historyPageToken: null, lastSyncedAt: null, sourceError: null, destinationPath: old.destinationPath });
 			await f.t.action(internal.gmail_grants.connect, { grantId: replaced.hostGrantId! });
 			expect(await f.t.run(ctx => ctx.db.get(replaced.hostGrantId!))).toMatchObject({ phase: "ready" });
 			expect(await f.t.run(ctx => ctx.db.get(f.grantId))).toMatchObject({ phase: "cancelled", sourceSecret: null, interactiveSecret: null, sealedSecret: null });
@@ -2128,11 +2152,11 @@ describe("work_account_slice", () => {
 			}
 			expect(await f.t.run(ctx => gmail_workpool.status(ctx, workId))).toEqual({ state: "finished" });
 			expect(callback).toHaveBeenCalledTimes(2);
-			expect(callback.mock.calls[1][1]).toEqual({ workId, context: { ...oldWork, requestId: queued.syncRequestId!, grantId: replaced.hostGrantId! },
+			expect(callback.mock.calls[1][1]).toEqual({ workId, context: { ...oldWork, generation, requestId: queued.syncRequestId!, grantId: replaced.hostGrantId! },
 				result: { kind: "success", returnValue: null } });
 			expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toMatchObject({ status: "done", emailWritten: true, settlementNeeded: false, attempts: 0,
 				attachments: [{ state: "saved", request: saved.attachments[0].request, deliveries: 1 }] });
-			expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toMatchObject({ connectionGeneration: 1, hostGrantId: replaced.hostGrantId!,
+			expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toMatchObject({ connectionGeneration: generation, hostGrantId: replaced.hostGrantId!,
 				syncWorkId: null, syncRequestId: null, syncStatus: "live", syncError: null, messagesSynced: 1,
 				ledgerCounts: { done: 1, pending: 0, failed: 0, permissionHeld: 0 } });
 			expect(calls.filter(call => call.path.endsWith("/files/write"))).toHaveLength(1);
