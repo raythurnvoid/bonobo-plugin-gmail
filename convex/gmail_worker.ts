@@ -609,13 +609,25 @@ export const work_account_slice = internalAction({
           let data = part.data;
           if (data === undefined && part.attachmentId) {
             await guard();
-            const parsed = source_part.safeParse(
-              await google(
+            let raw: unknown;
+            try {
+              raw = await google(
                 `/messages/${row.gmailMessageId}/attachments/${encodeURIComponent(part.attachmentId)}`,
                 GMAIL_JSON_BYTES,
                 timeout,
-              ),
-            );
+              );
+            } catch (error) {
+              if (!(error instanceof gmail_GoogleError) || error.status !== 404)
+                throw error;
+              // A message can disappear after its MIME parts were read.
+              const { account } = await current();
+              await finish_without_source(account, null, {
+                skipReason: "deleted_before_fetch",
+                deletedAt: row.deletedAt ?? Date.now(),
+              });
+              throw new UnitStopped();
+            }
+            const parsed = source_part.safeParse(raw);
             if (
               !parsed.success ||
               (requireExactSize && parsed.data.size !== part.size)
