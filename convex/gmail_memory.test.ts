@@ -2,6 +2,7 @@
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { createHash } from "node:crypto";
+import { z } from "zod";
 import { afterEach, expect, test, vi } from "vitest";
 import { internal } from "./_generated/api";
 import { gmail_workpool } from "./gmail_workpool";
@@ -15,6 +16,7 @@ afterEach(() => {
 // Keep this byte check apart from the memory used by other worker fixtures.
 test("a native 25 MB external attachment is delivered whole below 512 MiB", async () => {
 	const nativeFetch = fetch;
+	const memory = vi.spyOn(console, "info");
 	const f = await gmail_test_fixture();
 	const work = { accountId: f.accountId, generation: 1, requestId: "worker", grantId: f.grantId };
 	const workId = await f.t.run(ctx => gmail_workpool.enqueueAction(ctx, internal.gmail_worker.work_account_slice, { work }, { runAt: Date.now() + 3600_000 }));
@@ -97,6 +99,11 @@ test("a native 25 MB external attachment is delivered whole below 512 MiB", asyn
 			return Response.json({}, { status: 500 });
 		}));
 		await f.t.action(internal.gmail_worker.work_account_slice, { work });
+		const memoryReport = z.object({ processPeakRssBytes: z.number().finite().positive() }).strict()
+			.parse(memory.mock.calls.find(([event]) => event === "Gmail worker memory")?.[1]);
+		// The decoded buffer was resident during PUT. Allocated RAM is not this peak.
+		expect(memoryReport.processPeakRssBytes).toBeGreaterThanOrEqual(size);
+		expect(memoryReport.processPeakRssBytes).toBeLessThan(512 * 1024 * 1024);
 		expect(uploadedBytes).toBe(size);
 		expect(uploadedHash).toBe(expectedHash);
 		expect({ downloads, method, contentType }).toEqual({ downloads: 1, method: "PUT", contentType: "application/pdf" });

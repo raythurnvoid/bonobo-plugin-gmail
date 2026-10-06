@@ -1,5 +1,6 @@
 "use node";
 
+import { resourceUsage } from "node:process";
 import { z } from "zod";
 import { v } from "convex/values";
 import type { FunctionArgs } from "convex/server";
@@ -1389,6 +1390,11 @@ export const work_account_slice = internalAction({
         retryAfterMs:
           error instanceof gmail_HostError ? error.retryAfterMs : null,
         attachmentNote: note,
+      });
+    } finally {
+      // This peak includes earlier work in a reused Node process.
+      console.info("Gmail worker memory", {
+        processPeakRssBytes: resourceUsage().maxRSS * 1024,
       });
     }
     return null;
