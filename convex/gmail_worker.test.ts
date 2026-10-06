@@ -4024,7 +4024,13 @@ describe("permission guards", () => {
 			expect(stopped.error).toBeNull();
 			expect(stopped.fileAccessOperation).toBeNull();
 			if (kind === "email") expect(stopped.nextAttemptAt).toBeLessThanOrEqual(now + 60_000);
-			if (kind === "pending create") expect(stopped.attachments[0]).toMatchObject({ state: "pending", accepted: true, deliveries: 0, uploadAttemptedAt: null });
+			if (kind === "pending create") {
+				expect(stopped.status).toBe("pending");
+				expect(stopped.settlementNeeded).toBe(true);
+				expect(stopped.nextAttemptAt).toBeLessThanOrEqual(now + 60_000);
+				expect(account.ledgerCounts).toMatchObject({ pending: 1, failed: 0 });
+				expect(stopped.attachments[0]).toMatchObject({ state: "pending", accepted: true, deliveries: 0, uploadAttemptedAt: null });
+			}
 			if (kind.includes("finalize")) expect(stopped).toMatchObject({ status: "done", settlementNeeded: false, attachments: [{ state: "saved" }] });
 		}
 		await f.t.mutation(internal.gmail_accounts.on_complete, { workId, context: work, result: { kind: "failed", error: crash.message } });

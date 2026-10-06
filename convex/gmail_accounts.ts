@@ -804,6 +804,8 @@ export const save_message = internalMutation({
 			if (proved) {
 				after.permissionHeld = false;
 				after.fileAccessOperation = null;
+				// Released unfinished work belongs in the normal pending queue.
+				if (after.status === "failed") after.status = "pending";
 				if (after.error === "file_access") after.error = null;
 				await ctx.db.patch(current.account._id, { permissionProbeNotBefore: null });
 			} else if (!["done", "skipped", "given_up"].includes(after.status)) {
