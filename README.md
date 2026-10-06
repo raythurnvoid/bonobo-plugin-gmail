@@ -147,6 +147,10 @@ Release remains open. Plan section 4.10 requires a user choice on paid hosting o
 
 The tested backend at `6df2a81` was deployed to dev on October 6 at 13:52:23 UTC. Source and asset hashes still match the full local checks. The new status index is deployed. Fresh status reads before and after deployment stayed healthy at the same generation and counts. The frontend stays at version 0.2.3; it was not republished.
 
+Later on October 6, one natural new email finished with a real file write. Exact read-only queries matched its saved file, message ID, thread ID and date. The saved frontmatter says `direction: received`. Its Gmail timestamp and completed ledger timestamp differ by 72.886 seconds. Their clock difference is not measured. This email has no attachments. This result is after the completed 24-hour run and does not change that run's inputs or forecast.
+
+Playwriter matched the installed 0.2.3 frame and read healthy status with 85 saved emails. Tab and Shift+Tab reached Connect Gmail and Disconnect with visible focus. The frame audit found no unnamed, blocked or small controls among its two controls. These checks cover the connected state. A blank screenshot gives no visual proof. Later Press page errors and an unauthenticated public read stopped the new Files check. The operator metadata read does not prove a rendered Files or search result. Actual browser zoom and the other UI states remain open.
+
 Two finite hosted captures kept queue, nested, cache and old-history records separate. In the earlier sample, 17 of 32 uncached calls were Workpool batch-loop calls. This points to queue overhead for further investigation; the sample alone cannot forecast costs or justify changing the queue.
 
 One current idle worker reported a process peak of 134,529,024 bytes, below 512 MiB. Its execution and log times match. This proves that the new worker report runs on dev. Older history had no peak reports, so coverage remains incomplete. Large-attachment memory, full wire totals, hosted faults and current workload costs still need proof. The failed 24-hour baseline forecast remains valid for its earlier source.
