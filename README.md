@@ -89,6 +89,8 @@ Twelve local checks run the dispatcher, Workpool retry loop and completion callb
 
 Five local queue checks cover Disconnect with a queued receipt check or a running create/PUT. Late accepted and lost replies keep the full saved request and progress. They make no later PUT or finalize call. Running work finishes once without changing the disconnected account; queued work gets one canceled completion. Two broken rules fail the named cancellation and late-completion checks. Providers and clocks are fake. Real late replies after Disconnect still need live evidence.
 
+Four local queue checks cover Press repair during a running create/PUT. Grant expiry enables repair while the old request is still within its timeout. Repair replaces the grant and queues new work. Accepted and lost late replies keep the new account and original receipt unchanged. The new worker finishes with one email write and one PUT in total. Three broken rules fail the work-marker, late-completion and receipt-key checks; restoration passes. Providers, clocks and reply delays are fake. Hosted repair recovery remains open.
+
 The page polls every five seconds only while visible. Its last-check label comes from the saved completed history time. Ten minutes without a check shows delayed. Files attention stays visible even beside a recent mail check. The page keeps tokens and finish codes in memory, and stores only bound Start retry IDs in session storage. Failure lists show message IDs and fixed reasons, not private subject paths or attachment names.
 
 The public upload routes are typed locally in `convex/press.ts` because the pinned SDK does not list them. Replies are runtime-validated. Press source and its SDK generator remain unchanged.
