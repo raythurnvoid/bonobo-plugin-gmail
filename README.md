@@ -65,6 +65,8 @@ Plan/storage skips now save their attachment count and final message together. T
 
 Local stops also cover plan/storage refusals on accepted create replay and remint. The saved request, note, minute wait and pending count survive completion and new dispatch. The fifth pending reply needs Retry; Retry checks the same receipt first. New mail uses its own upload keys after the refusal is lifted. Nine broken rules fail their named checks. Providers are fake; hosted recovery remains open.
 
+Two mixed-message checks stop after accepting two uploads and refusing a third new target. The accepted tasks stay unchanged and settle with separate keys, different bytes and one PUT each. The new target stays skipped. Partial and final settlement save the message due time too. Later mail uses new keys and clears the note. Seven broken save rules fail their named checks. These are local checks with fake providers.
+
 ## Sync and recovery
 
 Status lists accounts through an exact organization/workspace/email index, in pages of 25. It reads saved counters instead of walking the message ledger.
