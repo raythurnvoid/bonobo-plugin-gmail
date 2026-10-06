@@ -63,6 +63,8 @@ Current Press attachment billing is one cent per started 20 MiB. A 32 MiB attach
 
 Plan/storage skips now save their attachment count and final message together. The account note saves in that same transaction. A successful new-target create clears the old note with its accepted receipt. Local tests stop at both saves, then run completion and new dispatch. Refused mail stays complete; later mail uploads each attachment once. Stale permission claims cannot change the note. The broken save rules fail their named checks. Deploy and verify this change after the current idle measurement.
 
+Local stops also cover plan/storage refusals on accepted create replay and remint. The saved request, note, minute wait and pending count survive completion and new dispatch. The fifth pending reply needs Retry; Retry checks the same receipt first. New mail uses its own upload keys after the refusal is lifted. Nine broken rules fail their named checks. Providers are fake; hosted recovery remains open.
+
 ## Sync and recovery
 
 Status lists accounts through an exact organization/workspace/email index, in pages of 25. It reads saved counters instead of walking the message ledger.
