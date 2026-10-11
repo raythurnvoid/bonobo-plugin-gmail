@@ -2,7 +2,7 @@
 
 Gmail is a Press plugin with its own Convex backend. It saves received and sent mail as Markdown files. Attachments are saved beside each email. Press owns Files, permissions, billing, and installation.
 
-The build follows plan v4. Version 0.2.3 includes the connection page and background sync. Live Gmail and hosting checks are still open. The integration is not release ready yet.
+The build follows plan v4. Version 0.2.4 includes the connection page and background sync. Live Gmail and hosting checks are still open. The integration is not release ready yet.
 
 The frontend build keeps the page, React, and Zod in separate files. Each file is formatted and listed in the manifest with its hash. This lets the publisher read the page code within its scan limit.
 
