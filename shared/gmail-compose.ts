@@ -5,7 +5,8 @@ export const GMAIL_DRAFT_BODY_BYTES = 50_000;
 const MAX_RECIPIENTS = 50;
 // Base64 of 45 bytes is 60 characters, so "=?UTF-8?B?" + 60 + "?=" stays under the 75-character word limit (RFC 2047).
 const WORD_BYTES = 45;
-const MESSAGE_ID = /^<[^<>\s@]+@[^<>\s@]+>$/;
+// Cap one id at 900 characters, so its header line stays under the 998-character email limit.
+const MESSAGE_ID = /^<[^<>\s@]{1,450}@[^<>\s@]{1,450}>$/;
 
 export class gmail_ComposeError extends Error {
 	constructor(public readonly code: "invalid_recipient" | "invalid_header" | "draft_too_large", public readonly detail: string) { super(code); }

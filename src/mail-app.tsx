@@ -158,8 +158,6 @@ export function MailApp(props: { client: BonoboClient }) {
 	const [draftsError, setDraftsError] = useState<string | null>(null);
 	const [composeError, setComposeError] = useState<string | null>(null);
 	const [notice, setNotice] = useState<string | null>(null);
-	// Bump this to read the draft list again now.
-	const [draftsRevision, setDraftsRevision] = useState(0);
 
 	const account = accounts?.find((candidate) => candidate.accountId === accountId) ?? null;
 	const composeBlock = account ? compose_block(account) : null;
@@ -190,7 +188,28 @@ export function MailApp(props: { client: BonoboClient }) {
 		drafts: drafts ?? [],
 	};
 
-	const refresh_drafts = () => setDraftsRevision((revision) => revision + 1);
+	/**
+	 * Read the draft list now. The agent tools call this too, so read the account from the latest
+	 * view, and drop the answer when the member switched account meanwhile.
+	 */
+	const reload_drafts = async () => {
+		const current = viewRef.current.account;
+		if (current === null || compose_block(current) !== null) {
+			return;
+		}
+
+		const page = await list_drafts(client, current.accountId, null);
+		if (viewRef.current.account?.accountId === current.accountId) {
+			setDraftsError(null);
+			setDrafts(page.drafts);
+			setMoreDrafts(page.cursor !== null);
+		}
+	};
+
+	// A failed read keeps the old list. The next poll tries again.
+	const refresh_drafts = () => {
+		reload_drafts().catch(() => {});
+	};
 
 	const show_email = (email: Email) => {
 		requestedEmailRef.current = email.path;
@@ -234,13 +253,13 @@ export function MailApp(props: { client: BonoboClient }) {
 
 		const id = new_draft_id();
 		setComposeError(null);
-		create_draft(client, { accountId: account.accountId, clientDraftId: id, ...draft, byAgent: false }).then(
-			() => {
-				refresh_drafts();
-				open_draft(id);
-			},
-			(saveError: unknown) => setComposeError(get_error_message(saveError)),
-		);
+		// Open the draft only after the list has it, so the reader never says it is missing.
+		create_draft(client, { accountId: account.accountId, clientDraftId: id, ...draft, byAgent: false })
+			.then(() => reload_drafts().catch(() => {}))
+			.then(
+				() => open_draft(id),
+				(saveError: unknown) => setComposeError(get_error_message(saveError)),
+			);
 	};
 
 	/**
@@ -339,6 +358,9 @@ export function MailApp(props: { client: BonoboClient }) {
 	useEffect(() => {
 		setRows([]);
 		setDrafts(null);
+		setSelection(null);
+		setOpenEmail(null);
+		requestedEmailRef.current = null;
 		setVisibleCount(PAGE_SIZE);
 		setWalkDone(false);
 		setLoading(false);
@@ -370,34 +392,16 @@ export function MailApp(props: { client: BonoboClient }) {
 			return;
 		}
 
-		let stopped = false;
 		const read = () => {
 			if (document.visibilityState !== "visible") {
 				return;
 			}
-			list_drafts(client, account.accountId, null).then(
-				(page) => {
-					if (stopped) {
-						return;
-					}
-					setDraftsError(null);
-					setDrafts(page.drafts);
-					setMoreDrafts(page.cursor !== null);
-				},
-				(listError: unknown) => {
-					if (!stopped) {
-						setDraftsError(get_error_message(listError));
-					}
-				},
-			);
+			reload_drafts().catch((listError: unknown) => setDraftsError(get_error_message(listError)));
 		};
 		read();
 		const timer = setInterval(read, DRAFTS_POLL_MS);
-		return () => {
-			stopped = true;
-			clearInterval(timer);
-		};
-	}, [client, account?.accountId, composeBlock, draftsRevision]);
+		return () => clearInterval(timer);
+	}, [client, account?.accountId, composeBlock]);
 
 	// Register the agent tools for as long as the page is open.
 	useEffect(
@@ -406,7 +410,7 @@ export function MailApp(props: { client: BonoboClient }) {
 				getView: () => viewRef.current,
 				showEmail: show_email,
 				showDraft: open_draft,
-				refreshDrafts: refresh_drafts,
+				refreshDrafts: reload_drafts,
 			}),
 		[client],
 	);
@@ -429,6 +433,7 @@ export function MailApp(props: { client: BonoboClient }) {
 						{composeError}
 					</p>
 				) : null}
+				{composeBlock !== null ? <p className="mail-status">{composeBlock}</p> : null}
 				<button
 					className="mail-rail-item"
 					aria-current={folder === "all" ? "page" : undefined}
@@ -725,10 +730,14 @@ function DraftEditor(props: {
 		);
 	};
 
-	// Load the draft text from Gmail.
+	// Load the draft text from Gmail. Drop the answer when the editor closed meanwhile.
 	useEffect(() => {
+		let closed = false;
 		get_draft(client, accountId, draft.clientDraftId).then(
 			(text) => {
+				if (closed) {
+					return;
+				}
 				setLoaded(text);
 				setTo(addresses_text(text.to));
 				setCc(addresses_text(text.cc));
@@ -736,6 +745,9 @@ function DraftEditor(props: {
 				setBody(text.body);
 			},
 			(getError: unknown) => {
+				if (closed) {
+					return;
+				}
 				// The draft was sent or deleted in Gmail. The backend already dropped it from the list.
 				if (getError instanceof gmail_ApiError && getError.code === "draft_gone") {
 					onClosed(get_error_message(getError));
@@ -744,6 +756,9 @@ function DraftEditor(props: {
 				setLoadError(get_error_message(getError));
 			},
 		);
+		return () => {
+			closed = true;
+		};
 	}, [client, accountId, draft.clientDraftId]);
 
 	// Save typed text a while after the member stops typing. Leaving the editor clears the timer, so
@@ -789,34 +804,35 @@ function DraftEditor(props: {
 				handle_save();
 			}}
 		>
+			{/* Fields are read-only while Save, Send, or Delete runs, so typing cannot start an autosave then. */}
 			<header className="mail-draft-header">
 				<h1>Draft</h1>
 				{draft.agentEditedAt !== null ? <span className="mail-badge">Edited by the agent</span> : null}
 			</header>
 			<label className="mail-field">
 				<span>To</span>
-				<input value={to} onBlur={save_on_blur} onInput={(event) => {
+				<input value={to} readOnly={busy} onBlur={save_on_blur} onInput={(event) => {
 						setTo(event.currentTarget.value);
 						setEdited(true);
 					}} autoComplete="off" />
 			</label>
 			<label className="mail-field">
 				<span>Cc</span>
-				<input value={cc} onBlur={save_on_blur} onInput={(event) => {
+				<input value={cc} readOnly={busy} onBlur={save_on_blur} onInput={(event) => {
 						setCc(event.currentTarget.value);
 						setEdited(true);
 					}} autoComplete="off" />
 			</label>
 			<label className="mail-field">
 				<span>Subject</span>
-				<input value={subject} onBlur={save_on_blur} onInput={(event) => {
+				<input value={subject} readOnly={busy} onBlur={save_on_blur} onInput={(event) => {
 						setSubject(event.currentTarget.value);
 						setEdited(true);
 					}} />
 			</label>
 			<label className="mail-field is-body">
 				<span>Body</span>
-				<textarea value={body} onBlur={save_on_blur} onInput={(event) => {
+				<textarea value={body} readOnly={busy} onBlur={save_on_blur} onInput={(event) => {
 						setBody(event.currentTarget.value);
 						setEdited(true);
 					}} />
@@ -838,7 +854,7 @@ function DraftEditor(props: {
 					Delete
 				</button>
 				{status !== null ? (
-					<span className={status.isError ? "mail-draft-status is-error" : "mail-draft-status"} role="status">
+					<span className={status.isError ? "mail-draft-status is-error" : "mail-draft-status"} role={status.isError ? "alert" : "status"}>
 						{status.text}
 					</span>
 				) : null}

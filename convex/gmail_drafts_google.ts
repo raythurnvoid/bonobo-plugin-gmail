@@ -40,7 +40,7 @@ async function access_token(ctx: ActionCtx, actor: Actor, target: Target) {
 	const token = await gmail_call(ctx, target, () => gmail_google_token({ refreshToken }));
 	// The user can remove the compose permission in their Google account at any time.
 	if (!token.composeGranted) {
-		await ctx.runMutation(internal.gmail_drafts.compose_lost, { accountId: target.accountId });
+		await ctx.runMutation(internal.gmail_drafts.compose_lost, { accountId: target.accountId, refreshToken: target.refreshToken });
 		throw new gmail_PageError(403, "compose_not_granted");
 	}
 	return token.access_token;
@@ -56,7 +56,7 @@ async function gmail_call<T>(ctx: ActionCtx, target: Target, run: () => Promise<
 		if (error instanceof gmail_ComposeError) throw new gmail_PageError(400, error.code);
 		if (!(error instanceof gmail_GoogleError)) throw error;
 		if (error.code === "compose_not_granted") {
-			await ctx.runMutation(internal.gmail_drafts.compose_lost, { accountId: target.accountId });
+			await ctx.runMutation(internal.gmail_drafts.compose_lost, { accountId: target.accountId, refreshToken: target.refreshToken });
 			throw new gmail_PageError(403, "compose_not_granted");
 		}
 		if (error.code === "google_revoked") throw new gmail_PageError(409, "google_reconnect_needed");
@@ -88,14 +88,17 @@ async function draft_get(ctx: ActionCtx, actor: Actor, input: { accountId: strin
 	let body: string;
 	try {
 		message = gmail_discover_message(answer.data.message);
-		// Gmail puts the text of a small message inline. A draft without inline text was changed in Gmail into something this page cannot edit.
-		if (message.bodyLimit || message.bodyParts.some(part => part.data === undefined)) throw new gmail_ContentError("invalid_source");
-		body = gmail_body_text(message.bodyParts.map(part => ({ bytes: gmail_decode_base64(part.data!, GMAIL_BODY_BYTES), charset: part.charset, mimeType: part.mimeType })));
+		// Gmail puts the text of a small message inline, and an empty part has no data. A non-empty part without inline
+		// text was changed in Gmail into something this page cannot edit.
+		if (message.bodyLimit || message.bodyParts.some(part => part.data === undefined && part.size > 0)) throw new gmail_ContentError("invalid_source");
+		body = gmail_body_text(message.bodyParts.map(part => ({ bytes: gmail_decode_base64(part.data ?? "", GMAIL_BODY_BYTES), charset: part.charset, mimeType: part.mimeType })));
 	} catch (error) {
 		if (error instanceof gmail_ContentError) throw new gmail_PageError(422, "draft_unreadable");
 		throw error;
 	}
-	return { clientDraftId: draft.clientDraftId, to: message.to, cc: message.cc, subject: message.subject === "(no subject)" ? "" : message.subject,
+	// Return the recipients this page saved, not the ones parsed back from the email. A display name with a comma
+	// would not survive the round trip.
+	return { clientDraftId: draft.clientDraftId, to: draft.to, cc: draft.cc, subject: message.subject === "(no subject)" ? "" : message.subject,
 		body: body.replace(/\r\n/g, "\n").replace(/\n$/, ""), isReply: draft.replyTo !== null, agentEditedAt: draft.agentEditedAt };
 }
 
@@ -147,8 +150,10 @@ async function draft_delete(ctx: ActionCtx, actor: Actor, input: { accountId: st
 	const target = await start(ctx, actor, input.accountId, input.clientDraftId, "write");
 	const { draft, gmailDraftId } = saved_draft(target);
 	const accessToken = await access_token(ctx, actor, target);
-	// A draft already gone from Gmail answers 404 in gmail_call, which also deletes the row.
-	await gmail_call(ctx, target, () => gmail_google_write("DELETE", `/drafts/${encodeURIComponent(gmailDraftId)}`, null, accessToken, 8192));
+	// A draft already gone from Gmail answers 404 in gmail_call, which also deletes the row. The member wanted it gone, so that counts as deleted.
+	await gmail_call(ctx, target, () => gmail_google_write("DELETE", `/drafts/${encodeURIComponent(gmailDraftId)}`, null, accessToken, 8192)).catch((error: unknown) => {
+		if (!(error instanceof gmail_PageError && error.code === "draft_gone")) throw error;
+	});
 	await ctx.runMutation(internal.gmail_drafts.drop_row, { draftId: draft._id });
 	return { deleted: true };
 }
@@ -169,8 +174,8 @@ async function draft_send(ctx: ActionCtx, actor: Actor, input: { accountId: stri
 	try {
 		await gmail_call(ctx, target, () => gmail_google_write("POST", "/drafts/send", { id: gmailDraftId, message: gmail_message(raw, reply) }, accessToken, 64 * 1024, 25_000));
 	} catch (error) {
-		// A timeout or a lost connection may come after Gmail sent the email. Never retry here.
-		if (error instanceof gmail_PageError) throw error;
+		// A timeout, a lost connection, or a Gmail 5xx may come after Gmail sent the email. Never retry here.
+		if (error instanceof gmail_PageError && error.code !== "gmail_busy") throw error;
 		throw new gmail_PageError(504, "send_unknown");
 	}
 	await ctx.runMutation(internal.gmail_drafts.drop_row, { draftId: draft._id });

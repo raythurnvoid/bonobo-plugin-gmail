@@ -14,6 +14,8 @@ async function setup(grantActor = gmail_test_actor) {
 	const f = await gmail_test_fixture();
 	await f.t.run(ctx => ctx.db.patch(f.accountId, { composeGranted: true }));
 	const gmail: { method: string; path: string; body: unknown }[] = [];
+	// Gmail answers by "METHOD /path". A path not listed answers with a saved draft.
+	const answers = new Map<string, () => Response>();
 	const receipts = new Set<string>();
 	vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 		const url = new URL(input instanceof Request ? input.url : String(input));
@@ -23,7 +25,10 @@ async function setup(grantActor = gmail_test_actor) {
 			return Response.json({ access_token: "access", expires_in: 3600, scope: `${GMAIL_READONLY_SCOPE} ${GMAIL_COMPOSE_SCOPE}`, token_type: "Bearer" });
 		}
 		if (url.origin === "https://gmail.googleapis.com") {
-			gmail.push({ method: init?.method ?? "GET", path: url.pathname.replace("/gmail/v1/users/me", ""), body });
+			const call = { method: init?.method ?? "GET", path: url.pathname.replace("/gmail/v1/users/me", ""), body };
+			gmail.push(call);
+			const answer = answers.get(`${call.method} ${call.path}`);
+			if (answer) return answer();
 			return Response.json({ id: "gmail-draft", message: { id: "gmail-message", threadId: "gmail-thread" } });
 		}
 		const grant = { ...grantActor, token: `psg_${"2".repeat(64)}`, scopes: [], expiresAt: Date.now() + 24 * 3600_000 };
@@ -40,7 +45,7 @@ async function setup(grantActor = gmail_test_actor) {
 	const page = (path: string, request: unknown) => f.t.fetch(path, { method: "POST", body: JSON.stringify(request),
 		headers: { Origin: "https://press.test", Authorization: `Bearer ${plu}`, "Content-Type": "application/json" } });
 	const create = () => page("/page/drafts/create", { accountId: f.accountId, clientDraftId, fields, replyToGmailMessageId: null, byAgent: false });
-	return { ...f, gmail, page, create };
+	return { ...f, gmail, answers, page, create };
 }
 
 describe("gmail drafts routes", () => {
@@ -71,5 +76,24 @@ describe("gmail drafts routes", () => {
 		expect(raw).toContain(`Subject: =?UTF-8?B?${Buffer.from("Shown subject").toString("base64")}?=`);
 		expect(raw).toContain(Buffer.from("Shown text").toString("base64"));
 		expect(await t.run(ctx => ctx.db.query("gmail_drafts").collect())).toEqual([]);
+	});
+	test("a Gmail error during send is reported as unknown, because Gmail may have sent it", async () => {
+		const { t, answers, page, create, accountId } = await setup();
+		await create();
+		answers.set("POST /drafts/send", () => Response.json({ error: { code: 503 } }, { status: 503 }));
+		const response = await page("/page/drafts/send", { accountId, clientDraftId, fields });
+		expect(response.status).toBe(504);
+		expect(await response.json()).toEqual({ code: "send_unknown" });
+		expect(await t.run(ctx => ctx.db.query("gmail_drafts").collect())).toHaveLength(1);
+	});
+	test("get returns the saved recipients and reads an empty body", async () => {
+		const { answers, page, accountId } = await setup();
+		const to = ['"Doe, Jane" <jane@example.com>'];
+		await page("/page/drafts/create", { accountId, clientDraftId, fields: { ...fields, to, body: "" }, replyToGmailMessageId: null, byAgent: false });
+		answers.set("GET /drafts/gmail-draft", () => Response.json({ id: "gmail-draft", message: { id: "a1", threadId: "a1", internalDate: "1",
+			payload: { mimeType: "text/plain", headers: [{ name: "To", value: to[0] }, { name: "Subject", value: "Hello" }], body: { size: 0 } } } }));
+		const response = await page("/page/drafts/get", { accountId, clientDraftId });
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({ to, cc: [], subject: "Hello", body: "" });
 	});
 });

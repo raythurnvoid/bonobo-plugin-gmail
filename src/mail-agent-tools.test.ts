@@ -3,7 +3,8 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { register_mail_tools, type MailView } from "./mail-agent-tools";
 
 const EMAIL_FILE = ["---", 'from: "Ada <ada@example.com>"', 'subject: "Lunch"', 'gmail-message-id: "18f2a"', "---", "", "Free on Friday?"].join("\n");
-const draft = { clientDraftId: "draft-1", to: ["ada@example.com"], cc: [], subject: "Re: Lunch", body: "Yes", isReply: true, agentEditedAt: null };
+const DRAFT_ID = "6f1c2a4e-0b7d-4c3e-9a51-2f8e7d6c5b4a";
+const draft = { clientDraftId: DRAFT_ID, to: ["ada@example.com"], cc: [], subject: "Re: Lunch", body: "Yes", isReply: true, agentEditedAt: null };
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -42,10 +43,10 @@ function make_page() {
 		folder: "drafts",
 		rows: [],
 		openEmail: null,
-		openDraftId: "draft-1",
+		openDraftId: DRAFT_ID,
 		drafts: [],
 	};
-	register_mail_tools(client, { getView: () => view, showEmail: vi.fn(), showDraft: vi.fn(), refreshDrafts: vi.fn() });
+	register_mail_tools(client, { getView: () => view, showEmail: vi.fn(), showDraft: vi.fn(), refreshDrafts: vi.fn(async () => {}) });
 	return { handlers, requests };
 }
 
@@ -57,8 +58,8 @@ describe("register_mail_tools", () => {
 			open_email: { path: "/emails/me/2026/10/18-lunch-18f2a.md" },
 			list_drafts: {},
 			create_draft: { to: ["ada@example.com"], subject: "Re: Lunch", body: "Yes", replyToPath: "/emails/me/2026/10/18-lunch-18f2a.md" },
-			update_draft: { draftId: "draft-1", body: "Yes, at noon" },
-			delete_draft: { draftId: "draft-1" },
+			update_draft: { draftId: DRAFT_ID, body: "Yes, at noon" },
+			delete_draft: { draftId: DRAFT_ID },
 		};
 
 		for (const [name, handler] of page.handlers) {
@@ -69,6 +70,18 @@ describe("register_mail_tools", () => {
 		expect(page.requests.map((request) => request.path)).toEqual(expect.arrayContaining(["/page/drafts/create", "/page/drafts/update", "/page/drafts/delete"]));
 		expect(page.requests.filter((request) => request.path.includes("send"))).toEqual([]);
 		expect(page.requests.find((request) => request.path === "/page/drafts/create")?.body).toMatchObject({ replyToGmailMessageId: "18f2a", byAgent: true });
+	});
+
+	test("create_draft called again with the same input reuses the draft id", async () => {
+		const page = make_page();
+		const input = { to: ["ada@example.com"], subject: "Hi", body: "Hello" };
+
+		await page.handlers.get("create_draft")!(input);
+		await page.handlers.get("create_draft")!(input);
+
+		const ids = page.requests.map((request) => (request.body as { clientDraftId: string }).clientDraftId);
+		expect(ids).toHaveLength(2);
+		expect(ids[1]).toBe(ids[0]);
 	});
 
 	test("create_draft refuses bad input before it writes", async () => {

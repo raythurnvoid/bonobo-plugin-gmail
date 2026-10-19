@@ -58,7 +58,7 @@ export type MailViewControls = {
 	/**
 	 * Read the draft list again after a tool changed a draft.
 	 */
-	refreshDrafts: () => void;
+	refreshDrafts: () => Promise<void>;
 };
 
 /**
@@ -148,6 +148,15 @@ function require_value<T>(value: T | undefined, key: string) {
 	return value;
 }
 
+// Draft ids are UUIDs made by new_draft_id. Say so plainly instead of sending a bad id to the backend.
+function read_draft_id(input: Record<string, unknown>) {
+	const draftId = require_value(read_string(input, "draftId"), "draftId");
+	if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(draftId)) {
+		throw new Error(`No draft has the id ${cut(draftId, MAX_PREVIEW_BYTES)}. Call list_drafts to see the ids.`);
+	}
+	return draftId;
+}
+
 /**
  * Register the page's agent tools. The names and input schemas match `agent.tools` in
  * bonobo.plugin.json. Returns one function that removes them all.
@@ -160,6 +169,10 @@ export function register_mail_tools(client: BonoboClient, controls: MailViewCont
 		}
 		return account;
 	};
+
+	// The agent may call create_draft again after a timeout. Reuse the id for the same input, so the
+	// backend sees a repeated create and makes one draft.
+	const recentCreates = new Map<string, string>();
 
 	// A backend error carries only a code. Send its text to the agent instead.
 	const register = (name: string, handler: (input: unknown) => unknown) =>
@@ -211,7 +224,7 @@ export function register_mail_tools(client: BonoboClient, controls: MailViewCont
 			const drafts = controls.getView().drafts;
 			return {
 				drafts: drafts.map(describe_draft_row),
-				note: "These are the newest drafts. get_view shows the full text of the open draft.",
+				note: "These are the newest drafts, without their text. To read one, ask the member to open it, then call get_view.",
 			};
 		}),
 
@@ -237,16 +250,21 @@ export function register_mail_tools(client: BonoboClient, controls: MailViewCont
 				}
 			}
 
-			const id = new_draft_id();
+			const createKey = JSON.stringify([account.accountId, fields, replyToGmailMessageId]);
+			const id = recentCreates.get(createKey) ?? new_draft_id();
+			recentCreates.set(createKey, id);
+			if (recentCreates.size > 20) {
+				recentCreates.delete(recentCreates.keys().next().value!);
+			}
 			await create_draft(client, { accountId: account.accountId, clientDraftId: id, fields, replyToGmailMessageId, byAgent: true });
-			controls.refreshDrafts();
+			await controls.refreshDrafts().catch(() => {});
 			controls.showDraft(id);
 			return { draftId: id, saved: true, note: NOT_SENT_NOTE };
 		}),
 
 		register("update_draft", async (input) => {
 			const object = read_object(input);
-			const draftId = require_value(read_string(object, "draftId"), "draftId");
+			const draftId = read_draft_id(object);
 			const account = require_account();
 			const draft = await get_draft(client, account.accountId, draftId);
 			const fields: DraftFields = {
@@ -257,15 +275,15 @@ export function register_mail_tools(client: BonoboClient, controls: MailViewCont
 			};
 
 			await update_draft(client, { accountId: account.accountId, clientDraftId: draftId, fields, byAgent: true });
-			controls.refreshDrafts();
+			await controls.refreshDrafts().catch(() => {});
 			controls.showDraft(draftId);
 			return { draftId, saved: true, note: NOT_SENT_NOTE };
 		}),
 
 		register("delete_draft", async (input) => {
-			const draftId = require_value(read_string(read_object(input), "draftId"), "draftId");
+			const draftId = read_draft_id(read_object(input));
 			await delete_draft(client, require_account().accountId, draftId);
-			controls.refreshDrafts();
+			await controls.refreshDrafts().catch(() => {});
 			return { draftId, deleted: true };
 		}),
 	];

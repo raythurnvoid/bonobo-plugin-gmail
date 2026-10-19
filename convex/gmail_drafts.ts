@@ -72,9 +72,13 @@ export const reserve_create = internalMutation({
 		// A page tool can run twice. The second create finds the first row and makes no second Gmail draft.
 		if (existing) return null;
 		const now = Date.now();
-		return ctx.db.insert("gmail_drafts", { accountId: args.accountId, hostActorUserId: args.actorUserId, clientDraftId: args.clientDraftId,
+		const draftId = await ctx.db.insert("gmail_drafts", { accountId: args.accountId, hostActorUserId: args.actorUserId, clientDraftId: args.clientDraftId,
 			gmailDraftId: null, to: args.to, cc: args.cc, subject: args.subject, replyTo: args.replyTo,
 			agentEditedAt: args.byAgent ? now : null, createdAt: now, updatedAt: now });
+		// If the create action crashes before it saves or drops this row, the row would stay "saving" forever.
+		// The Gmail call times out after 20 seconds, so a row still saving after 5 minutes is stuck.
+		await ctx.scheduler.runAfter(5 * 60_000, internal.gmail_drafts.drop_if_saving, { draftId });
+		return draftId;
 	},
 });
 
@@ -98,10 +102,21 @@ export const drop_row = internalMutation({
 	},
 });
 
-export const compose_lost = internalMutation({
-	args: { accountId: v.id("gmail_accounts") }, returns: v.null(),
+export const drop_if_saving = internalMutation({
+	args: { draftId: v.id("gmail_drafts") }, returns: v.null(),
 	handler: async (ctx, args) => {
-		await ctx.db.patch(args.accountId, { composeGranted: false });
+		const draft = await ctx.db.get(args.draftId);
+		if (draft && draft.gmailDraftId === null) await ctx.db.delete(draft._id);
+		return null;
+	},
+});
+
+export const compose_lost = internalMutation({
+	args: { accountId: v.id("gmail_accounts"), refreshToken: v.string() }, returns: v.null(),
+	handler: async (ctx, args) => {
+		const account = await ctx.db.get(args.accountId);
+		// Change only the token this call used. A new grant may have saved a new token in the meantime.
+		if (account?.googleRefreshToken === args.refreshToken) await ctx.db.patch(account._id, { composeGranted: false });
 		return null;
 	},
 });

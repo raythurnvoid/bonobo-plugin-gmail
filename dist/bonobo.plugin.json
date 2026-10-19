@@ -46,7 +46,7 @@
 					},
 					{
 						"name": "list_drafts",
-						"description": "List the member's Gmail drafts made in Press, newest first. Bodies are not listed; open a draft and call get_view to read it.",
+						"description": "List the member's Gmail drafts made in Press, newest first. Bodies are not listed. To read one, ask the member to open it in the Mail page, then call get_view.",
 						"inputSchema": {
 							"type": "object",
 							"properties": {},
@@ -99,7 +99,8 @@
 							"type": "object",
 							"properties": {
 								"draftId": {
-									"type": "string"
+									"type": "string",
+									"description": "A draftId from list_drafts or create_draft."
 								},
 								"to": {
 									"type": "array",
@@ -133,7 +134,8 @@
 							"type": "object",
 							"properties": {
 								"draftId": {
-									"type": "string"
+									"type": "string",
+									"description": "A draftId from list_drafts or create_draft."
 								}
 							},
 							"required": [
@@ -156,7 +158,7 @@
 		{ "path": "dist/frontend/assets/mail-app.css", "sha256": "sha256:0d403d64918dbf4b458cf83f68a0efccfb014caf671fda59d6de800e26205a22", "bytes": 6310, "contentType": "text/css" },
 		{ "path": "dist/frontend/assets/gmail-api.js", "sha256": "sha256:95ce211c21e36c9ff0e5abe1e54391d5c4878725b9147aae92ed0c3e610476a1", "bytes": 5759, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/gmail-page.js", "sha256": "sha256:b374685f3d37d9ef1bd134f800897280ba970d63b0dd7a2128db46b3f638edb7", "bytes": 28955, "contentType": "application/javascript" },
-		{ "path": "dist/frontend/assets/mail-app.js", "sha256": "sha256:f7f23d0635c5271c9cc9b8c3c7a614ce8e083e3671a9cc0563e6cdfc94ac474f", "bytes": 36775, "contentType": "application/javascript" },
+		{ "path": "dist/frontend/assets/mail-app.js", "sha256": "sha256:258b37bc617fc363d73218d44ffff13d0438c98eec8d6ae73248ffa076897845", "bytes": 37671, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/react.js", "sha256": "sha256:174b76e9a14572ed536406ddae59e27ecc91a59c258854e86f64fa10b6bc689e", "bytes": 368202, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/zod.js", "sha256": "sha256:c6fe91e3fd954ba609ed0856f4c7596e55c0e70d13095e16c7d5458cc0335214", "bytes": 92851, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/rolldown-runtime.js", "sha256": "sha256:320ac1c898c1aa30c21383fddb8070e7888b57dca34de38cb915ba06ebf01b97", "bytes": 890, "contentType": "application/javascript" }
