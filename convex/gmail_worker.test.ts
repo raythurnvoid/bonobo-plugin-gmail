@@ -2107,7 +2107,7 @@ describe("work_account_slice", () => {
 					.toEqual({ phase: "seal", clientRequestId: repair.clientRequestId });
 			} else {
 				const beforeStart = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
-				const start = await f.t.action(ctx => gmail_start(ctx, f.actor, { accountId: f.accountId, clientRequestId: gmail_random_secret() }, `plu_${"1".repeat(64)}`));
+				const start = await f.t.action(ctx => gmail_start(ctx, f.actor, { purpose: "connect", accountId: f.accountId, clientRequestId: gmail_random_secret() }, `plu_${"1".repeat(64)}`));
 				const started = { ...beforeStart, connectRequestId: start.attemptId };
 				expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toEqual(started);
 				const consent = await f.t.action(ctx => gmail_callback(ctx, new URL(start.consentUrl!).searchParams.get("state")!, "reconnect-code", false));
@@ -4122,7 +4122,7 @@ describe("permission guards", () => {
 		replacementPath = held.attachments[0].initialPath.replace(/\.pdf$/, "-2.pdf");
 		await f.t.mutation(internal.gmail_accounts.on_complete, { workId: f.workId, context: f.work, result: { kind: "success", returnValue: null } });
 		reinstalled = true;
-		const started = await f.t.action(ctx => gmail_start(ctx, actor, { clientRequestId: gmail_random_secret(), accountId: f.accountId }, `plu_${"1".repeat(64)}`));
+		const started = await f.t.action(ctx => gmail_start(ctx, actor, { clientRequestId: gmail_random_secret(), accountId: f.accountId, purpose: "connect" }, `plu_${"1".repeat(64)}`));
 		const callback = await f.t.action(ctx => gmail_callback(ctx, new URL(started.consentUrl!).searchParams.get("state")!, "reinstall-code", false));
 		expect(await f.t.action(ctx => gmail_finish(ctx, actor, { attemptId: started.attemptId, finishCode: callback.finishCode! })))
 			.toEqual({ accountId: f.accountId, connectionGeneration: 2 });

@@ -5,7 +5,7 @@ import { internal } from "./_generated/api";
 import schema from "./schema";
 import { gmail_callback, gmail_finish, gmail_start } from "./gmail_oauth";
 import { gmail_decrypt, gmail_google_token_purpose, gmail_random_secret, gmail_sha256 } from "./gmail_secrets";
-import { GMAIL_READONLY_SCOPE } from "./gmail_google";
+import { GMAIL_COMPOSE_SCOPE, GMAIL_READONLY_SCOPE } from "./gmail_google";
 import { gmail_test_fixture } from "../scripts/gmail-test-fixtures";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -15,7 +15,7 @@ beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(1_800_000_000_000); });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 function setup(t = convexTest(schema, modules)) {
-	const state = { email: "ray@example.com", googleExchanges: 0, loseGoogle: false, losePress: false, exchanges: 0,
+	const state = { email: "ray@example.com", scope: GMAIL_READONLY_SCOPE, refreshToken: "refresh", googleExchanges: 0, loseGoogle: false, losePress: false, exchanges: 0,
 		grantActor: { ...actor }, deadTokens: new Set<string>(), temporaryTokens: new Set<string>(), verifiedTokens: [] as string[] };
 	const receipts = new Map<string, { token: string; expiresAt: number; scopes: string[]; organizationId: string; workspaceId: string; installationId: string; actorUserId: string }>();
 	vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -23,7 +23,7 @@ function setup(t = convexTest(schema, modules)) {
 		if (url.origin === "https://oauth2.googleapis.com") {
 			state.googleExchanges++;
 			if (state.loseGoogle) throw new Error("Lost Google answer");
-			return Response.json({ access_token: "access", refresh_token: "refresh", expires_in: 3600, scope: GMAIL_READONLY_SCOPE, token_type: "Bearer" });
+			return Response.json({ access_token: "access", refresh_token: state.refreshToken, expires_in: 3600, scope: state.scope, token_type: "Bearer" });
 		}
 		if (url.origin === "https://gmail.googleapis.com") return Response.json({ emailAddress: state.email, historyId: "123" });
 		expect(url.origin).toBe("https://press.test");
@@ -49,9 +49,10 @@ function setup(t = convexTest(schema, modules)) {
 		return Response.json(grant);
 	}));
 	const page = (path: string, body: unknown) => t.fetch(path, { method: "POST", headers: { Origin: "https://press.test", Authorization: `Bearer ${plu}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
-	const start = (requestId = gmail_random_secret(), accountId: string | null = null) => t.action(ctx => gmail_start(ctx, actor, { clientRequestId: requestId, accountId }, plu));
-	const stage = async (accountId: string | null = null) => {
-		const started = await start(gmail_random_secret(), accountId);
+	const start = (requestId = gmail_random_secret(), accountId: string | null = null, purpose: "connect" | "compose" = "connect") =>
+		t.action(ctx => gmail_start(ctx, actor, { clientRequestId: requestId, accountId, purpose }, plu));
+	const stage = async (accountId: string | null = null, purpose: "connect" | "compose" = "connect") => {
+		const started = await start(gmail_random_secret(), accountId, purpose);
 		const consentState = new URL(started.consentUrl!).searchParams.get("state")!;
 		const callback = await t.action(ctx => gmail_callback(ctx, consentState, "google-code", false));
 		return { attemptId: started.attemptId, state: consentState, finishCode: callback.finishCode! };
@@ -100,7 +101,7 @@ describe("gmail_start", () => {
 		const account = (await t.run(ctx => ctx.db.get(first.accountId)))!;
 		const before = await t.run(ctx => ctx.db.get(account.hostGrantId!));
 		const second = await t.mutation(internal.gmail_oauth.prepare_start, {
-			...actor, clientRequestId: gmail_random_secret(), accountId: null, pageToken: plu,
+			...actor, clientRequestId: gmail_random_secret(), accountId: null, purpose: "connect", pageToken: plu,
 		});
 		if (!("_yay" in second)) throw new Error("Expected a second attempt");
 		const attempt = (await t.query(internal.gmail_oauth.get_attempt, { ...actor, attemptId: second._yay }))!;
@@ -162,7 +163,7 @@ describe("gmail_callback", () => {
 	test("the public callback accepts navigation without Origin and escapes its output", async () => {
 		const { t, state } = setup();
 		const escapedActor = { ...actor, organizationId: "<script>alert(1)</script>" }; state.grantActor = escapedActor;
-		const started = await t.action(ctx => gmail_start(ctx, escapedActor, { clientRequestId: gmail_random_secret(), accountId: null }, plu));
+		const started = await t.action(ctx => gmail_start(ctx, escapedActor, { clientRequestId: gmail_random_secret(), accountId: null, purpose: "connect" }, plu));
 		const response = await t.fetch(`/oauth/google/callback?state=${new URL(started.consentUrl!).searchParams.get("state")}&code=google-code`);
 		expect(response.status).toBe(200);
 		expect(response.headers.get("Cache-Control")).toBe("no-store");
@@ -239,7 +240,7 @@ describe("gmail_finish", () => {
 	test("concurrent Finish calls cannot exceed the final active slot", async () => {
 		const { t, state, stage } = setup(); const first = await stage();
 		const otherActor = { ...actor, actorUserId: "other" }; state.grantActor = otherActor; state.email = "other@example.com";
-		const started = await t.action(ctx => gmail_start(ctx, otherActor, { clientRequestId: gmail_random_secret(), accountId: null }, plu));
+		const started = await t.action(ctx => gmail_start(ctx, otherActor, { clientRequestId: gmail_random_secret(), accountId: null, purpose: "connect" }, plu));
 		const callback = await t.action(ctx => gmail_callback(ctx, new URL(started.consentUrl!).searchParams.get("state")!, "other-code", false));
 		const results = await Promise.allSettled([
 			t.action(ctx => gmail_finish(ctx, actor, { attemptId: first.attemptId, finishCode: first.finishCode })),
@@ -274,7 +275,7 @@ describe("gmail_finish", () => {
 		const oldAttempt = (await t.query(internal.gmail_oauth.get_attempt, { ...actor, attemptId: older.attemptId }))!;
 		const laterWriter = { ...actor, actorUserId: "later-writer" }; state.grantActor = laterWriter;
 		const newer = await t.action(ctx => gmail_start(ctx, laterWriter, {
-			clientRequestId: gmail_random_secret(), accountId: f.accountId,
+			clientRequestId: gmail_random_secret(), accountId: f.accountId, purpose: "connect",
 		}, plu));
 		const cancelled = await t.query(internal.gmail_oauth.get_attempt, { ...actor, attemptId: older.attemptId });
 		expect(cancelled?.status).toBe("cancelled");
@@ -333,7 +334,7 @@ describe("gmail_finish", () => {
 		const laterWriter = { ...actor, actorUserId: "later-writer" }; state.grantActor = laterWriter;
 		try {
 			const newer = await t.action(ctx => gmail_start(ctx, laterWriter, {
-				clientRequestId: gmail_random_secret(), accountId: f.accountId,
+				clientRequestId: gmail_random_secret(), accountId: f.accountId, purpose: "connect",
 			}, plu));
 			const callback = await t.action(ctx => gmail_callback(ctx, new URL(newer.consentUrl!).searchParams.get("state")!, "newer-code", false));
 			await t.action(ctx => gmail_finish(ctx, laterWriter, { attemptId: newer.attemptId, finishCode: callback.finishCode! }));
@@ -360,6 +361,31 @@ describe("gmail_finish", () => {
 		state.deadTokens.add(await dedicated_token(next.attemptId));
 		await expect(t.action(ctx => gmail_finish(ctx, actor, { attemptId: next.attemptId, finishCode: next.finishCode }))).rejects.toThrow("start_again");
 		expect(await t.run(ctx => ctx.db.get(receipt.accountId))).toEqual(before);
+	});
+});
+
+describe("finish_upgrade", () => {
+	test("adds compose to the same connection without restarting sync", async () => {
+		const { t, state, stage } = setup(); const first = await stage();
+		const receipt = await t.action(ctx => gmail_finish(ctx, actor, { attemptId: first.attemptId, finishCode: first.finishCode }));
+		await t.run(ctx => ctx.db.patch(receipt.accountId, { backfillComplete: true, historyId: "999", messagesSynced: 12 }));
+		const before = (await t.run(ctx => ctx.db.get(receipt.accountId)))!;
+		expect(before.composeGranted).toBe(false);
+		state.scope = `${GMAIL_READONLY_SCOPE} ${GMAIL_COMPOSE_SCOPE}`; state.refreshToken = "compose-refresh";
+		const upgrade = await stage(receipt.accountId, "compose");
+		expect(await t.action(ctx => gmail_finish(ctx, actor, { attemptId: upgrade.attemptId, finishCode: upgrade.finishCode }))).toEqual(receipt);
+		const after = (await t.run(ctx => ctx.db.get(receipt.accountId)))!;
+		expect(after).toMatchObject({ composeGranted: true, connectionGeneration: before.connectionGeneration, hostGrantId: before.hostGrantId,
+			historyId: "999", backfillComplete: true, messagesSynced: 12, syncStatus: before.syncStatus, connectRequestId: null });
+		expect(await gmail_decrypt(after.googleRefreshToken!, gmail_google_token_purpose("org", "workspace", "ray@example.com"))).toBe("compose-refresh");
+	});
+	test("only the connecting member can ask for compose", async () => {
+		const { t, state, stage } = setup(); const first = await stage();
+		const receipt = await t.action(ctx => gmail_finish(ctx, actor, { attemptId: first.attemptId, finishCode: first.finishCode }));
+		const other = { ...actor, actorUserId: "other" }; state.grantActor = other;
+		await expect(t.action(ctx => gmail_start(ctx, other, { clientRequestId: gmail_random_secret(), accountId: receipt.accountId, purpose: "compose" }, plu)))
+			.rejects.toThrow("not_composer");
+		expect(await t.run(ctx => ctx.db.query("oauth_states").collect())).toHaveLength(1);
 	});
 });
 

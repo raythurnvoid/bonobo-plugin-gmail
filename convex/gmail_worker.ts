@@ -1371,7 +1371,9 @@ export const work_account_slice = internalAction({
       const code: SliceError =
         error instanceof SourceStopped
           ? error.code
-          : error instanceof gmail_GoogleError
+          : // Sync only reads, so it never gets the compose error of a draft write.
+            error instanceof gmail_GoogleError &&
+              error.code !== "compose_not_granted"
             ? error.code
             : error instanceof gmail_HostError
               ? error.status === 401 ||

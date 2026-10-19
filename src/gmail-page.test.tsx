@@ -38,6 +38,8 @@ function account() {
     pressReady: true,
     canRepair: false,
     needsReconnect: false,
+    isComposer: true,
+    canCompose: false,
     backfillComplete: true,
     messagesSynced: 4,
     messagesSkipped: 0,
@@ -271,6 +273,7 @@ describe("GmailPage", () => {
       status: string;
       clientRequestId: string;
       accountId: null;
+      purpose: "connect";
       expiresAt: number;
     } | null = null;
     vi.stubGlobal(
@@ -295,6 +298,7 @@ describe("GmailPage", () => {
             status: "pending",
             clientRequestId: local.clientRequestId,
             accountId: null,
+            purpose: "connect",
             expiresAt: Date.now() + 60_000,
           };
           return Response.json({
@@ -322,6 +326,7 @@ describe("GmailPage", () => {
       clientRequestId: "a".repeat(64),
       accountId: null,
       attemptId: "attempt",
+      purpose: "connect" as const,
     };
     sessionStorage.setItem("gmail-connect-retry", JSON.stringify(saved));
     const calls: { url: string; body: unknown }[] = [];
@@ -357,6 +362,7 @@ describe("GmailPage", () => {
     expect(calls[1].body).toEqual({
       clientRequestId: saved.clientRequestId,
       accountId: null,
+      purpose: "connect",
     });
     expect(screen.getByRole("button", { name: "Copy link" })).toBeTruthy();
     expect(sessionStorage.getItem("gmail-connect-retry")).not.toContain(
@@ -379,6 +385,7 @@ describe("GmailPage", () => {
                     status: "pending",
                     clientRequestId: requests[1],
                     accountId: null,
+                    purpose: "connect",
                     expiresAt: Date.now() + 60_000,
                   },
           });
@@ -435,6 +442,7 @@ describe("GmailPage", () => {
       status: "awaiting_finish",
       clientRequestId: "a".repeat(64),
       accountId: null,
+      purpose: "connect",
       expiresAt: Date.now() + 60_000,
     };
     const calls: string[] = [];

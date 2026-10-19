@@ -58,6 +58,8 @@ export default defineSchema({
 		messagesSynced: v.number(), messagesSkipped: v.number(), ledgerCounts: gmail_ledger_counts,
 		attachmentsSkippedReason: v.union(v.literal("plan"), v.literal("storage"), v.null()),
 		syncWorkId: nullableString, syncRequestId: nullableString, lastSyncedAt: nullableNumber, updatedAt: v.number(),
+		// The Google token has the compose scope, so the connecting member can write drafts and send.
+		composeGranted: v.optional(v.boolean()),
 	})
 		.index("by_hostWorkspace_emailAddress", ["hostWorkspaceId", "emailAddress"])
 		.index("by_hostOrganization_hostWorkspace_emailAddress", ["hostOrganizationId", "hostWorkspaceId", "emailAddress"])
@@ -84,6 +86,8 @@ export default defineSchema({
 		grantId: v.union(v.id("host_grants"), v.null()), status: gmail_oauth_status,
 		stateHash: nullableString, encryptedState: nullableString, googleCodeHash: nullableString,
 		stagedRefreshToken: nullableString, stagedEmailAddress: nullableString, stagedHistoryId: nullableString,
+		// "compose" only swaps the Google token of an existing account. It never restarts sync.
+		purpose: v.union(v.literal("connect"), v.literal("compose")), stagedComposeGranted: v.union(v.boolean(), v.null()),
 		finishCodeHash: nullableString, encryptedFinishCode: nullableString,
 		completedAccountId: v.union(v.id("gmail_accounts"), v.null()), completedGeneration: nullableNumber,
 		expiresAt: v.number(), processingDeadline: nullableNumber, receiptExpiresAt: nullableNumber,
@@ -119,4 +123,16 @@ export default defineSchema({
 		.index("by_account_status_nextAttemptAt", ["accountId", "status", "nextAttemptAt"])
 		.index("by_account_permissionHeld_status_nextAttemptAt", ["accountId", "permissionHeld", "status", "nextAttemptAt"])
 		.index("by_account_permissionHeld_settlementNeeded_nextAttemptAt", ["accountId", "permissionHeld", "settlementNeeded", "nextAttemptAt"]),
+	// Drafts made from the Mail page. The text lives only in Gmail; a row keeps what the list shows.
+	gmail_drafts: defineTable({
+		accountId: v.id("gmail_accounts"), hostActorUserId: v.string(), clientDraftId: v.string(),
+		// Null only while the first Gmail create runs.
+		gmailDraftId: nullableString,
+		to: v.array(v.string()), cc: v.array(v.string()), subject: v.string(),
+		// The parent's headers, read once from Gmail when the reply draft is made.
+		replyTo: v.union(v.object({ gmailMessageId: v.string(), gmailThreadId: v.string(), messageIdHeader: v.string(), referencesHeader: v.string() }), v.null()),
+		agentEditedAt: nullableNumber, createdAt: v.number(), updatedAt: v.number(),
+	})
+		.index("by_account_actor_updatedAt", ["accountId", "hostActorUserId", "updatedAt"])
+		.index("by_account_clientDraftId", ["accountId", "clientDraftId"]),
 });

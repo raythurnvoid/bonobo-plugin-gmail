@@ -36,7 +36,7 @@ async function target_current(ctx: QueryCtx | MutationCtx, attempt: Doc<"oauth_s
 export async function gmail_close_attempt(ctx: MutationCtx, attempt: Doc<"oauth_states">, status: "failed" | "cancelled", error: string) {
 	if (attempt.status === "finished") return;
 	await ctx.db.patch(attempt._id, { status, error, stateHash: null, encryptedState: null, stagedRefreshToken: null,
-		stagedEmailAddress: null, stagedHistoryId: null, finishCodeHash: null, encryptedFinishCode: null, processingDeadline: null, updatedAt: Date.now() });
+		stagedEmailAddress: null, stagedHistoryId: null, stagedComposeGranted: null, finishCodeHash: null, encryptedFinishCode: null, processingDeadline: null, updatedAt: Date.now() });
 	if (attempt.accountId) {
 		const account = await ctx.db.get(attempt.accountId);
 		if (account?.connectRequestId === attempt._id) await ctx.db.patch(account._id, { connectRequestId: null });
@@ -49,13 +49,13 @@ export async function gmail_close_attempt(ctx: MutationCtx, attempt: Doc<"oauth_
 }
 
 export const prepare_start = internalMutation({
-	args: { ...gmail_host_binding, clientRequestId: v.string(), accountId: v.union(v.string(), v.null()), pageToken: v.string() },
+	args: { ...gmail_host_binding, clientRequestId: v.string(), accountId: v.union(v.string(), v.null()), purpose: v.union(v.literal("connect"), v.literal("compose")), pageToken: v.string() },
 	returns: v.union(failure, v.object({ _yay: v.id("oauth_states") })),
 	handler: async (ctx, args) => {
 		const prior = await ctx.db.query("oauth_states").withIndex("by_actorUser_installation_clientRequestId", q =>
 			q.eq("actorUserId", args.actorUserId).eq("installationId", args.installationId).eq("clientRequestId", args.clientRequestId)).unique();
 		if (prior) {
-			if (!same_binding(prior, args) || prior.accountId !== args.accountId) return refused(409, "request_changed");
+			if (!same_binding(prior, args) || prior.accountId !== args.accountId || prior.purpose !== args.purpose) return refused(409, "request_changed");
 			if (["failed", "cancelled"].includes(prior.status)) return refused(409, "start_again");
 			if (prior.status !== "finished" && (prior.expiresAt <= Date.now() || !await target_current(ctx, prior))) {
 				await gmail_close_attempt(ctx, prior, "failed", "attempt_expired"); return refused(409, "start_again");
@@ -65,6 +65,9 @@ export const prepare_start = internalMutation({
 		const accountId = args.accountId ? ctx.db.normalizeId("gmail_accounts", args.accountId) : null;
 		const account = accountId ? await ctx.db.get(accountId) : null;
 		if (args.accountId && (!account || account.hostOrganizationId !== args.organizationId || account.hostWorkspaceId !== args.workspaceId)) return refused(404, "account_not_found");
+		// Only the member who connected the account, in this installation, may add the compose scope to it.
+		if (args.purpose === "compose" && (!account || account.syncStatus === "disconnected"
+			|| account.hostActorUserId !== args.actorUserId || account.hostInstallationId !== args.installationId)) return refused(403, "not_composer");
 		if (!await gmail_rate_limit(ctx, `start:${args.actorUserId}:${args.installationId}`, 60 * 60_000, 10)) return refused(429, "rate_limited");
 		for (const status of activeStatuses) {
 			const old = await ctx.db.query("oauth_states").withIndex("by_actorUser_installation_status", q =>
@@ -79,6 +82,7 @@ export const prepare_start = internalMutation({
 			installationId: args.installationId, actorUserId: args.actorUserId, clientRequestId: args.clientRequestId,
 			accountId, expectedGeneration: account?.connectionGeneration ?? null, grantId: null, status: "preparing",
 			stateHash: null, encryptedState: null, googleCodeHash: null, stagedRefreshToken: null, stagedEmailAddress: null, stagedHistoryId: null,
+			purpose: args.purpose, stagedComposeGranted: null,
 			finishCodeHash: null, encryptedFinishCode: null, completedAccountId: null, completedGeneration: null,
 			expiresAt: Date.now() + 10 * 60_000, processingDeadline: null, receiptExpiresAt: null, error: null, updatedAt: Date.now() });
 		const state = gmail_random_secret();
@@ -113,7 +117,7 @@ export const fail_attempt = internalMutation({
 });
 
 export async function gmail_start(ctx: ActionCtx, actor: { organizationId: string; workspaceId: string; installationId: string; actorUserId: string },
-	input: { clientRequestId: string; accountId: string | null }, pageToken: string) {
+	input: { clientRequestId: string; accountId: string | null; purpose: "connect" | "compose" }, pageToken: string) {
 	// Check setup before saving an attempt. This never returns a partly configured consent URL.
 	gmail_consent_url("", callback);
 	const result = await ctx.runMutation(internal.gmail_oauth.prepare_start, { ...actor, ...input, pageToken });
@@ -158,7 +162,7 @@ export const claim_callback = internalMutation({
 });
 
 export const stage_callback = internalMutation({
-	args: { attemptId: v.id("oauth_states"), codeHash: v.string(), encryptedRefreshToken: v.string(), emailAddress: v.string(), historyId: v.string() },
+	args: { attemptId: v.id("oauth_states"), codeHash: v.string(), encryptedRefreshToken: v.string(), emailAddress: v.string(), historyId: v.string(), composeGranted: v.boolean() },
 	returns: v.union(failure, v.object({ _yay: doc(schema, "oauth_states") })),
 	handler: async (ctx, args) => {
 		const attempt = await ctx.db.get(args.attemptId);
@@ -172,7 +176,7 @@ export const stage_callback = internalMutation({
 		}
 		const finishCode = gmail_random_secret();
 		await ctx.db.patch(attempt._id, { status: "awaiting_finish", stagedRefreshToken: args.encryptedRefreshToken,
-			stagedEmailAddress: args.emailAddress, stagedHistoryId: args.historyId, finishCodeHash: await gmail_sha256(finishCode),
+			stagedEmailAddress: args.emailAddress, stagedHistoryId: args.historyId, stagedComposeGranted: args.composeGranted, finishCodeHash: await gmail_sha256(finishCode),
 			encryptedFinishCode: await gmail_encrypt(finishCode, `attempt:${attempt._id}:finish`), expiresAt: Date.now() + 10 * 60_000,
 			processingDeadline: null, updatedAt: Date.now() });
 		return { _yay: (await ctx.db.get(attempt._id))! };
@@ -191,7 +195,7 @@ export async function gmail_callback(ctx: ActionCtx, state: string, code: string
 			if (!profile.success) throw new Error("Invalid profile");
 			const staged = await ctx.runMutation(internal.gmail_oauth.stage_callback, { attemptId: attempt._id, codeHash: codeHash!,
 				encryptedRefreshToken: await gmail_encrypt(token.refresh_token!, `attempt:${attempt._id}:google-refresh`),
-				emailAddress: profile.data.emailAddress.trim().toLowerCase(), historyId: profile.data.historyId });
+				emailAddress: profile.data.emailAddress.trim().toLowerCase(), historyId: profile.data.historyId, composeGranted: token.composeGranted });
 			if ("_nay" in staged) throw new gmail_PageError(staged._nay.status, staged._nay.code);
 			attempt = staged._yay;
 		} catch (error) {
@@ -261,7 +265,7 @@ export const promote = internalMutation({
 				historyPageToken: null, historyAnchor: null, historyPageSize: 25, nextSyncAt: null, permissionProbeNotBefore: null, temporaryFailures: 0,
 				nextSliceKind: "backfill", messagesSynced: 0, messagesSkipped: 0,
 				ledgerCounts: { pending: 0, done: 0, skipped: 0, failed: 0, given_up: 0, emailAssumed: 0, permissionHeld: 0 },
-				attachmentsSkippedReason: null, syncWorkId: null, syncRequestId: null, lastSyncedAt: null, updatedAt: Date.now(),
+				attachmentsSkippedReason: null, syncWorkId: null, syncRequestId: null, lastSyncedAt: null, updatedAt: Date.now(), composeGranted: false,
 			});
 			account = (await ctx.db.get(id))!;
 		}
@@ -272,17 +276,47 @@ export const promote = internalMutation({
 		}
 		const generation = account.connectionGeneration + 1;
 		await ctx.db.patch(account._id, { hostInstallationId: attempt.installationId, hostActorUserId: attempt.actorUserId,
-			googleRefreshToken: args.accountRefreshToken, connectionGeneration: generation, connectRequestId: null, hostGrantId: grant._id,
+			googleRefreshToken: args.accountRefreshToken, composeGranted: attempt.stagedComposeGranted === true, connectionGeneration: generation, connectRequestId: null, hostGrantId: grant._id,
 			historyId: null, syncStatus: "backfilling", syncError: null, sourceError: null, backfillPageToken: null, backfillPage: null, backfillComplete: false,
 			historyPageToken: null, historyAnchor: null, historyPageSize: 25, nextSliceKind: "backfill", temporaryFailures: 0,
 			nextSyncAt: null, syncWorkId: null, syncRequestId: null, lastSyncedAt: null, updatedAt: Date.now() });
 		await ctx.db.patch(grant._id, { accountId: account._id, attemptId: null, connectionGeneration: generation, phase: "seal",
 			destinationPath: account.destinationPath, sourceSecret: grant.interactiveSecret, lifecycleRequestId: gmail_random_secret(), nextAttemptAt: Date.now(), updatedAt: Date.now() });
-		await ctx.db.patch(attempt._id, { status: "finished", stagedRefreshToken: null, stagedEmailAddress: null, stagedHistoryId: null,
+		await ctx.db.patch(attempt._id, { status: "finished", stagedRefreshToken: null, stagedEmailAddress: null, stagedHistoryId: null, stagedComposeGranted: null,
 			encryptedState: null, encryptedFinishCode: null, completedAccountId: account._id, completedGeneration: generation,
 			receiptExpiresAt: Date.now() + 24 * 60 * 60_000, expiresAt: Date.now() + 24 * 60 * 60_000, updatedAt: Date.now() });
 		await ctx.scheduler.runAfter(0, internal.gmail_grants.connect, { grantId: grant._id });
 		return { _yay: { accountId: account._id, connectionGeneration: generation } };
+	},
+});
+
+export const finish_upgrade = internalMutation({
+	args: { attemptId: v.id("oauth_states"), grantId: v.id("host_grants"), lifecycleRequestId: v.string(), finishCodeHash: v.string(), accountRefreshToken: v.string() },
+	returns: v.union(failure, v.object({ _yay: v.object({ accountId: v.id("gmail_accounts"), connectionGeneration: v.number() }) })),
+	handler: async (ctx, args) => {
+		const attempt = await ctx.db.get(args.attemptId);
+		if (attempt?.status === "finished" && attempt.finishCodeHash === args.finishCodeHash && (attempt.receiptExpiresAt ?? 0) > Date.now()) {
+			const account = attempt.completedAccountId ? await ctx.db.get(attempt.completedAccountId) : null;
+			return account && account.connectionGeneration === attempt.completedGeneration
+				? { _yay: { accountId: account._id, connectionGeneration: account.connectionGeneration } } : refused(409, "connection_changed");
+		}
+		if (!attempt || attempt.purpose !== "compose" || attempt.status !== "awaiting_finish" || attempt.expiresAt <= Date.now() || attempt.finishCodeHash !== args.finishCodeHash
+			|| attempt.grantId !== args.grantId || !attempt.stagedRefreshToken || !attempt.stagedEmailAddress || !attempt.accountId || !await target_current(ctx, attempt)) return refused(409, "start_again");
+		const grant = await ctx.db.get(args.grantId);
+		if (!grant || grant.phase !== "awaiting_finish" || grant.attemptId !== attempt._id || grant.accountId !== null
+			|| grant.lifecycleRequestId !== args.lifecycleRequestId || !same_binding(attempt, grant)) return refused(409, "start_again");
+		const account = await ctx.db.get(attempt.accountId);
+		if (!account || account.emailAddress !== attempt.stagedEmailAddress) return refused(409, "gmail_account_changed");
+		if (account.syncStatus === "disconnected" || account.hostActorUserId !== attempt.actorUserId || account.hostInstallationId !== attempt.installationId) return refused(403, "not_composer");
+		// Swap only the Google token. Sync state, the account's own Press grant and the generation stay, so sync does not start over.
+		await ctx.db.patch(account._id, { googleRefreshToken: args.accountRefreshToken, composeGranted: attempt.stagedComposeGranted === true,
+			connectRequestId: null, updatedAt: Date.now() });
+		// The start made a Press grant for this attempt. An upgrade does not use it, so close it now.
+		await ctx.db.patch(grant._id, { phase: "cancelled", sourceSecret: null, interactiveSecret: null, sealedSecret: null, nextAttemptAt: null, updatedAt: Date.now() });
+		await ctx.db.patch(attempt._id, { status: "finished", stagedRefreshToken: null, stagedEmailAddress: null, stagedHistoryId: null, stagedComposeGranted: null,
+			encryptedState: null, encryptedFinishCode: null, completedAccountId: account._id, completedGeneration: account.connectionGeneration,
+			receiptExpiresAt: Date.now() + 24 * 60 * 60_000, expiresAt: Date.now() + 24 * 60 * 60_000, updatedAt: Date.now() });
+		return { _yay: { accountId: account._id, connectionGeneration: account.connectionGeneration } };
 	},
 });
 
@@ -306,11 +340,11 @@ export async function gmail_finish(ctx: ActionCtx, actor: { organizationId: stri
 	}
 	if (!attempt.stagedRefreshToken || !attempt.stagedEmailAddress) throw new gmail_PageError(409, "start_again");
 	const refreshToken = await gmail_decrypt(attempt.stagedRefreshToken, `attempt:${attempt._id}:google-refresh`);
-	const promoted = await ctx.runMutation(internal.gmail_oauth.promote, { attemptId: attempt._id, grantId: grant!._id,
+	const promoted = await ctx.runMutation(attempt.purpose === "compose" ? internal.gmail_oauth.finish_upgrade : internal.gmail_oauth.promote, { attemptId: attempt._id, grantId: grant!._id,
 		lifecycleRequestId: grant!.lifecycleRequestId, finishCodeHash,
 		accountRefreshToken: await gmail_encrypt(refreshToken, gmail_google_token_purpose(attempt.organizationId, attempt.workspaceId, attempt.stagedEmailAddress)) });
 	if ("_nay" in promoted) {
-		if (["start_again", "choose_reconnect", "gmail_account_changed"].includes(promoted._nay.code)) await ctx.runMutation(internal.gmail_oauth.fail_attempt, { attemptId: attempt._id, error: promoted._nay.code, googleCodeHash: attempt.googleCodeHash });
+		if (["start_again", "choose_reconnect", "gmail_account_changed", "not_composer"].includes(promoted._nay.code)) await ctx.runMutation(internal.gmail_oauth.fail_attempt, { attemptId: attempt._id, error: promoted._nay.code, googleCodeHash: attempt.googleCodeHash });
 		throw new gmail_PageError(promoted._nay.status, promoted._nay.code);
 	}
 	return promoted._yay;

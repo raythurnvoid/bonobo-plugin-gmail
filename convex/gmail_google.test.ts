@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { GMAIL_READONLY_SCOPE, gmail_consent_url, gmail_google_get, gmail_google_token } from "./gmail_google";
+import { GMAIL_COMPOSE_SCOPE, GMAIL_READONLY_SCOPE, gmail_consent_url, gmail_google_get, gmail_google_token } from "./gmail_google";
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("gmail_consent_url", () => {
-	test("asks only for offline readonly access with the exact callback", () => {
+	test("asks only for offline read and compose access with the exact callback", () => {
 		const url = new URL(gmail_consent_url("state", "https://gmail.test/oauth/google/callback"));
 		expect(url.origin + url.pathname).toBe("https://accounts.google.com/o/oauth2/v2/auth");
 		expect(Object.fromEntries(url.searchParams)).toEqual({ client_id: "test-client", redirect_uri: "https://gmail.test/oauth/google/callback",
-			response_type: "code", access_type: "offline", prompt: "consent", include_granted_scopes: "false", scope: GMAIL_READONLY_SCOPE, state: "state" });
+			response_type: "code", access_type: "offline", prompt: "consent", include_granted_scopes: "false", scope: `${GMAIL_READONLY_SCOPE} ${GMAIL_COMPOSE_SCOPE}`, state: "state" });
 	});
 });
 
@@ -22,7 +22,7 @@ describe("gmail_google_token", () => {
 		const body = fetchMock.mock.calls[0]?.[1]?.body;
 		expect(body).toBeInstanceOf(URLSearchParams);
 		expect(String(body)).toContain("grant_type=authorization_code");
-		expect((await gmail_google_token({ refreshToken: "refresh" })).access_token).toBe("access");
+		expect(await gmail_google_token({ refreshToken: "refresh" })).toMatchObject({ access_token: "access", composeGranted: false });
 		expect(String(fetchMock.mock.calls[1]?.[1]?.body)).toContain("grant_type=refresh_token");
 	});
 	test.each([

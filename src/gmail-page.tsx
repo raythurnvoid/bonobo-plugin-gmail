@@ -4,40 +4,17 @@ import { z } from "zod";
 import {
   gmail_ApiError,
   gmail_check_status,
+  gmail_error_message,
   gmail_failures_response,
   gmail_page_post,
   gmail_saved_start,
   gmail_start_response,
   gmail_status_response,
 } from "./gmail-api";
+import "./gmail.css";
 
 const storageKey = "gmail-connect-retry";
 const empty_response = z.object({});
-const messages: Record<string, string> = {
-  press_access_changed:
-    "Press access changed. Reopen the Gmail page to resume.",
-  page_write_refused: "You need write access to change this connection.",
-  account_capacity:
-    "This service has reached its connection limit. Ask the operator to check hosting capacity.",
-  rate_limited: "Too many requests. Wait a minute and try again.",
-  start_again: "This connection expired or stopped. Start again.",
-  choose_reconnect:
-    "This Gmail account already exists here. Use Reconnect Gmail.",
-  gmail_account_changed: "Use the same Gmail account for Reconnect.",
-  invalid_finish_code:
-    "The finish code is not valid. Copy it from the Google callback page.",
-  connection_changed: "The connection changed. Refresh this page.",
-  google_reconnect_needed: "Use Reconnect Gmail for this account.",
-  attempt_expired: "This connection expired. Start again.",
-};
-
-function error_message(error: unknown) {
-  return error instanceof gmail_ApiError
-    ? (messages[error.code] ??
-        "Gmail service is unavailable. Retry or ask the operator to check Convex.")
-    : "Gmail service is unavailable. Retry or ask the operator to check Convex.";
-}
-
 function new_request_id() {
   return [...crypto.getRandomValues(new Uint8Array(32))]
     .map((value) => value.toString(16).padStart(2, "0"))
@@ -129,6 +106,7 @@ export function GmailPage({
             clientRequestId: value.attempt.clientRequestId,
             accountId: value.attempt.accountId,
             attemptId: value.attempt.attemptId,
+            purpose: value.attempt.purpose,
           };
         else if (local?.attemptId) local = null;
         keep_start(local);
@@ -140,6 +118,7 @@ export function GmailPage({
               {
                 clientRequestId: local.clientRequestId,
                 accountId: local.accountId,
+                purpose: local.purpose,
               },
               gmail_start_response,
             );
@@ -148,7 +127,7 @@ export function GmailPage({
               setConsentUrl(result.consentUrl ?? null);
             }
           } catch (failure) {
-            if (mounted.current) setError(error_message(failure));
+            if (mounted.current) setError(gmail_error_message(failure));
           }
         }
       } else if (
@@ -160,6 +139,7 @@ export function GmailPage({
           clientRequestId: value.attempt.clientRequestId,
           accountId: value.attempt.accountId,
           attemptId: value.attempt.attemptId,
+          purpose: value.attempt.purpose,
         };
         keep_start(local);
         if (value.canWrite) {
@@ -170,12 +150,13 @@ export function GmailPage({
               {
                 clientRequestId: local.clientRequestId,
                 accountId: local.accountId,
+                purpose: local.purpose,
               },
               gmail_start_response,
             );
             if (mounted.current) setConsentUrl(result.consentUrl ?? null);
           } catch (failure) {
-            if (mounted.current) setError(error_message(failure));
+            if (mounted.current) setError(gmail_error_message(failure));
           }
         }
       } else if (!value.attempt && savedStart.current?.attemptId)
@@ -196,7 +177,7 @@ export function GmailPage({
               empty_response,
             );
           } catch (failure) {
-            if (mounted.current) setError(error_message(failure));
+            if (mounted.current) setError(gmail_error_message(failure));
           }
         }
       }
@@ -247,7 +228,7 @@ export function GmailPage({
       await run();
       await refresh();
     } catch (failure) {
-      setError(error_message(failure));
+      setError(gmail_error_message(failure));
       if (
         failure instanceof gmail_ApiError &&
         [
@@ -263,19 +244,23 @@ export function GmailPage({
     }
   }
 
-  async function start(accountId: string | null) {
+  async function start(
+    accountId: string | null,
+    purpose: "connect" | "compose",
+  ) {
     if (!status) return;
     const local = {
       binding: status.binding,
       clientRequestId: new_request_id(),
       accountId,
       attemptId: null,
+      purpose,
     };
     keep_start(local); // Save only bound retry IDs before the request can be lost.
     const result = await gmail_page_post(
       client,
       "/page/connect/start",
-      { clientRequestId: local.clientRequestId, accountId },
+      { clientRequestId: local.clientRequestId, accountId, purpose },
       gmail_start_response,
     );
     keep_start({ ...local, attemptId: result.attemptId });
@@ -329,7 +314,7 @@ export function GmailPage({
             {!attempt && (
               <button
                 disabled={busy || !status.canWrite}
-                onClick={() => void action(() => start(null))}
+                onClick={() => void action(() => start(null, "connect"))}
               >
                 Connect Gmail
               </button>
@@ -339,7 +324,11 @@ export function GmailPage({
                 className="GmailCard"
                 data-gmail-connect-status={attempt.status}
               >
-                <h2>Connect Gmail</h2>
+                <h2>
+                  {attempt.purpose === "compose"
+                    ? "Allow drafts and Send"
+                    : "Connect Gmail"}
+                </h2>
                 <p>
                   Organization ID: <code>{status.binding.organizationId}</code>
                   <br />
@@ -372,6 +361,7 @@ export function GmailPage({
                               {
                                 clientRequestId: attempt.clientRequestId,
                                 accountId: attempt.accountId,
+                                purpose: attempt.purpose,
                               },
                               gmail_start_response,
                             );
@@ -535,6 +525,17 @@ export function GmailPage({
                       assumed because the path already existed.
                     </p>
                   )}
+                  {account.syncStatus !== "disconnected" && (
+                    <p
+                      data-gmail-compose-status={
+                        account.canCompose ? "on" : "off"
+                      }
+                    >
+                      Drafts and Send: {account.canCompose ? "on" : "off"}.
+                      {!account.isComposer &&
+                        ` Only the member who connected ${account.emailAddress} can write drafts for it.`}
+                    </p>
+                  )}
                   {account.sourceError === "google_revoked" && (
                     <p>Google access stopped. Reconnect Gmail.</p>
                   )}
@@ -571,12 +572,27 @@ export function GmailPage({
                       <button
                         disabled={busy || !status.canWrite || !!attempt}
                         onClick={() =>
-                          void action(() => start(account.accountId))
+                          void action(() => start(account.accountId, "connect"))
                         }
                       >
                         Reconnect Gmail
                       </button>
                     )}
+                    {account.isComposer &&
+                      !account.canCompose &&
+                      !account.needsReconnect &&
+                      account.syncStatus !== "disconnected" && (
+                        <button
+                          disabled={busy || !status.canWrite || !!attempt}
+                          onClick={() =>
+                            void action(() =>
+                              start(account.accountId, "compose"),
+                            )
+                          }
+                        >
+                          Allow drafts and Send
+                        </button>
+                      )}
                     {account.canRepair && (
                       <button
                         disabled={busy}

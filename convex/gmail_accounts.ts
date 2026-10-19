@@ -81,6 +81,8 @@ const public_account = v.object({
 	pressReady: v.boolean(),
 	canRepair: v.boolean(),
 	needsReconnect: v.boolean(),
+	isComposer: v.boolean(),
+	canCompose: v.boolean(),
 	backfillComplete: v.boolean(),
 	messagesSynced: v.number(),
 	messagesSkipped: v.number(),
@@ -105,6 +107,7 @@ export const status = internalQuery({
 				expiresAt: v.number(),
 				clientRequestId: v.string(),
 				accountId: v.union(v.string(), v.null()),
+				purpose: v.union(v.literal("connect"), v.literal("compose")),
 			}),
 			v.null(),
 		),
@@ -170,6 +173,7 @@ export const status = internalQuery({
 				"gmail_temporary",
 				"sync_error",
 			];
+			const isComposer = account.hostActorUserId === args.actorUserId && account.hostInstallationId === args.installationId;
 			accounts.push({
 				accountId: account._id,
 				emailAddress: account.emailAddress,
@@ -194,6 +198,9 @@ export const status = internalQuery({
 					account.hostActorUserId !== args.actorUserId ||
 					account.sourceError === "google_revoked" ||
 					account.syncError === "actor_lost",
+				// Only the connecting member, in this installation, writes drafts and sends.
+				isComposer,
+				canCompose: isComposer && account.composeGranted === true && account.syncStatus !== "disconnected",
 				backfillComplete: account.backfillComplete,
 				messagesSynced: account.messagesSynced,
 				messagesSkipped: account.messagesSkipped,
@@ -224,6 +231,7 @@ export const status = internalQuery({
 					expiresAt: attempt.expiresAt,
 					clientRequestId: attempt.clientRequestId,
 					accountId: attempt.accountId,
+					purpose: attempt.purpose,
 				};
 				break;
 			}

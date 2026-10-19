@@ -6,6 +6,7 @@ import { gmail_PageError, gmail_page_auth } from "./gmail_page";
 import { gmail_HostError, press_HTTP_URL } from "./press";
 import { gmail_callback, gmail_finish, gmail_start } from "./gmail_oauth";
 import { gmail_repair } from "./gmail_accounts";
+import { gmail_drafts_list } from "./gmail_drafts";
 
 const allowedOrigins = new Set([new URL(press_HTTP_URL).origin]);
 if (process.env.DEV_PLUGIN_ORIGIN) {
@@ -20,14 +21,24 @@ const http = httpRouter();
 const status_body = z.object({ cursor: z.string().max(2048).nullable().optional() }).strict();
 const id = z.string().min(1).max(64);
 const secret = z.string().regex(/^[0-9a-f]{64}$/);
-const start_body = z.object({ clientRequestId: secret, accountId: id.nullable() }).strict();
+const start_body = z.object({ clientRequestId: secret, accountId: id.nullable(), purpose: z.enum(["connect", "compose"]) }).strict();
 const finish_body = z.object({ attemptId: id, finishCode: secret }).strict();
 const cancel_body = z.object({ attemptId: id }).strict();
 const account_body = z.object({ accountId: id, expectedGeneration: z.number().int().positive() }).strict();
 const repair_body = account_body.extend({ clientRequestId: secret });
 const failures_body = z.object({ accountId: id, cursor: z.string().max(2048).nullable().optional() }).strict();
+const drafts_list_body = z.object({ accountId: id, cursor: z.string().max(2048).nullable() }).strict();
+const draft_body = z.object({ accountId: id, clientDraftId: z.uuid() }).strict();
+const recipients = z.array(z.string().min(1).max(998)).max(50);
+// The text limit is checked in bytes when the email is built. This only stops much bigger bodies early.
+const draft_fields = z.object({ to: recipients, cc: recipients, subject: z.string().max(998), body: z.string().max(50_000) }).strict();
+const draft_write_body = draft_body.extend({ fields: draft_fields, byAgent: z.boolean() });
+const draft_create_body = draft_write_body.extend({ replyToGmailMessageId: z.string().regex(/^[0-9a-f]{1,32}$/).nullable() });
+const draft_send_body = draft_body.extend({ fields: draft_fields });
+// Draft routes carry an email body, so they take a larger request than the other routes.
+const DRAFT_REQUEST_BYTES = 64 * 1024;
 
-async function read_body(request: Request) {
+async function read_body(request: Request, maximum: number) {
 	if (!request.body) return {};
 	const reader = request.body.getReader();
 	let size = 0;
@@ -36,7 +47,7 @@ async function read_body(request: Request) {
 		const next = await reader.read();
 		if (next.done) break;
 		size += next.value.byteLength;
-		if (size > 8192) {
+		if (size > maximum) {
 			await reader.cancel();
 			throw new gmail_PageError(413, "body_too_large");
 		}
@@ -56,6 +67,11 @@ async function read_body(request: Request) {
 	}
 }
 
+function page_result<T>(result: { _nay: { status: number; code: string } } | { _yay: T }) {
+	if ("_nay" in result) throw new gmail_PageError(result._nay.status, result._nay.code);
+	return result._yay;
+}
+
 function page_route<T>(
 	path: string,
 	validator: z.ZodType<T>,
@@ -67,6 +83,7 @@ function page_route<T>(
 		token: string,
 		canWrite: boolean,
 	) => Promise<unknown>,
+	maximumBodyBytes = 8192,
 ) {
 	http.route({
 		path,
@@ -100,7 +117,7 @@ function page_route<T>(
 				Vary: "Origin",
 			};
 			try {
-				const parsed = validator.safeParse(await read_body(request));
+				const parsed = validator.safeParse(await read_body(request, maximumBodyBytes));
 				if (!parsed.success) throw new gmail_PageError(400, "invalid_body");
 				const authorization = request.headers.get("Authorization") ?? "";
 				if (!authorization.startsWith("Bearer ")) throw new gmail_PageError(401, "press_access_changed");
@@ -157,6 +174,15 @@ page_route("/page/failures", failures_body, false, async (ctx, actor, body) => {
 	if ("_nay" in result) throw new gmail_PageError(result._nay.status, result._nay.code);
 	return result._yay;
 });
+page_route("/page/drafts/list", drafts_list_body, false, gmail_drafts_list);
+page_route("/page/drafts/get", draft_body, false, async (ctx, actor, body) => page_result(await ctx.runAction(internal.gmail_drafts_google.get, { ...actor, ...body })));
+page_route("/page/drafts/create", draft_create_body, true, async (ctx, actor, body) =>
+	page_result(await ctx.runAction(internal.gmail_drafts_google.create, { ...actor, ...body })), DRAFT_REQUEST_BYTES);
+page_route("/page/drafts/update", draft_write_body, true, async (ctx, actor, body) =>
+	page_result(await ctx.runAction(internal.gmail_drafts_google.update, { ...actor, ...body })), DRAFT_REQUEST_BYTES);
+page_route("/page/drafts/delete", draft_body, true, async (ctx, actor, body) => page_result(await ctx.runAction(internal.gmail_drafts_google.remove, { ...actor, ...body })));
+page_route("/page/drafts/send", draft_send_body, true, async (ctx, actor, body) =>
+	page_result(await ctx.runAction(internal.gmail_drafts_google.send, { ...actor, ...body })), DRAFT_REQUEST_BYTES);
 
 function escape_html(value: string) {
 	return value.replace(

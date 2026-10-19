@@ -2,18 +2,161 @@
 	"schemaVersion": 1,
 	"name": "gmail",
 	"displayName": "Gmail",
-	"version": "0.2.4",
-	"description": "Save sent and received Gmail emails and attachments in Press Files.",
+	"version": "0.3.0",
+	"description": "Save sent and received Gmail emails and attachments in Press Files. Read them in Mail, and write Gmail drafts with the chat agent.",
 	"compatibility": { "bonoboPluginRuntime": "1" },
 	"events": [],
-	"pages": [{ "id": "gmail", "title": "Gmail", "entry": "dist/frontend/index.html", "navItem": { "label": "Gmail" } }],
-	"capabilities": ["plugin.service.connect", "ui.outbound.fetch", "workspace.files.write"],
+	"pages": [
+		{ "id": "gmail", "title": "Gmail", "entry": "dist/frontend/index.html", "navItem": { "label": "Gmail" } },
+		{
+			"id": "mail",
+			"title": "Mail",
+			"entry": "dist/frontend/index.html",
+			"navItem": {
+				"label": "Mail",
+				"icon": "mail"
+			},
+			"agent": {
+				"tools": [
+					{
+						"name": "get_view",
+						"description": "Show what the member sees in Mail right now: the account, the mailbox folder, the open email or draft, and the newest emails in the list.",
+						"inputSchema": {
+							"type": "object",
+							"properties": {},
+							"additionalProperties": false
+						}
+					},
+					{
+						"name": "open_email",
+						"description": "Open one email in the Mail page and return its headers and text. Use a path from get_view or from the Files tools, for example /emails/me-example-com/2026/10/18-hello-18f2a.md.",
+						"inputSchema": {
+							"type": "object",
+							"properties": {
+								"path": {
+									"type": "string",
+									"description": "The email's Files path."
+								}
+							},
+							"required": [
+								"path"
+							],
+							"additionalProperties": false
+						}
+					},
+					{
+						"name": "list_drafts",
+						"description": "List the member's Gmail drafts made in Press, newest first. Bodies are not listed; open a draft and call get_view to read it.",
+						"inputSchema": {
+							"type": "object",
+							"properties": {},
+							"additionalProperties": false
+						}
+					},
+					{
+						"name": "create_draft",
+						"description": "Write a new Gmail draft and open it in the Mail page so the member can review it. Saved as a Gmail draft. It is not sent; only the member can send it. To reply, pass the email's path as replyToPath.",
+						"inputSchema": {
+							"type": "object",
+							"properties": {
+								"to": {
+									"type": "array",
+									"items": {
+										"type": "string"
+									},
+									"description": "Recipient addresses."
+								},
+								"cc": {
+									"type": "array",
+									"items": {
+										"type": "string"
+									}
+								},
+								"subject": {
+									"type": "string"
+								},
+								"body": {
+									"type": "string",
+									"description": "Plain text body."
+								},
+								"replyToPath": {
+									"type": "string",
+									"description": "Files path of the email this draft answers."
+								}
+							},
+							"required": [
+								"to",
+								"subject",
+								"body"
+							],
+							"additionalProperties": false
+						}
+					},
+					{
+						"name": "update_draft",
+						"description": "Change a Gmail draft and open it in the Mail page. Fields you leave out stay the same. Saved as a Gmail draft. It is not sent; only the member can send it.",
+						"inputSchema": {
+							"type": "object",
+							"properties": {
+								"draftId": {
+									"type": "string"
+								},
+								"to": {
+									"type": "array",
+									"items": {
+										"type": "string"
+									}
+								},
+								"cc": {
+									"type": "array",
+									"items": {
+										"type": "string"
+									}
+								},
+								"subject": {
+									"type": "string"
+								},
+								"body": {
+									"type": "string"
+								}
+							},
+							"required": [
+								"draftId"
+							],
+							"additionalProperties": false
+						}
+					},
+					{
+						"name": "delete_draft",
+						"description": "Delete one of the member's Gmail drafts.",
+						"inputSchema": {
+							"type": "object",
+							"properties": {
+								"draftId": {
+									"type": "string"
+								}
+							},
+							"required": [
+								"draftId"
+							],
+							"additionalProperties": false
+						}
+					}
+				]
+			}
+		}
+	],
+	"capabilities": ["plugin.service.connect", "ui.outbound.fetch", "workspace.files.read", "workspace.files.write", "agent.page-tools"],
 	"outboundOrigins": [],
 	"uiOutboundOrigins": ["https://kindhearted-mallard-511.convex.site"],
 	"files": [
-		{ "path": "dist/frontend/index.html", "sha256": "sha256:d3de3f73d9f4c10c05441a5b96f084b2696c77785aa8c6d979ae123c75d2c562", "bytes": 565, "contentType": "text/html" },
-		{ "path": "dist/frontend/assets/index.js", "sha256": "sha256:0d46108967185ba4dbe4247ecfab04b55e44ad1b9a65b7da5bf9e2927364ad6d", "bytes": 136249, "contentType": "application/javascript" },
-		{ "path": "dist/frontend/assets/index.css", "sha256": "sha256:0080682c7f1a01d174fa68c5c7d93a9480e6f8ca30a9e0b9ec1aa7b5947c5de5", "bytes": 1517, "contentType": "text/css" },
+		{ "path": "dist/frontend/index.html", "sha256": "sha256:0f1543e7d0ad370fe64039ff2d49ff01174d9239e7257de765e0eb775aa3a96a", "bytes": 437, "contentType": "text/html" },
+		{ "path": "dist/frontend/assets/index.js", "sha256": "sha256:09247cf301ce433f3d2962b477c3d1dad5a2022ed2864e22bd3f4bc46b58f3f4", "bytes": 109638, "contentType": "application/javascript" },
+		{ "path": "dist/frontend/assets/gmail-page.css", "sha256": "sha256:0080682c7f1a01d174fa68c5c7d93a9480e6f8ca30a9e0b9ec1aa7b5947c5de5", "bytes": 1517, "contentType": "text/css" },
+		{ "path": "dist/frontend/assets/mail-app.css", "sha256": "sha256:0d403d64918dbf4b458cf83f68a0efccfb014caf671fda59d6de800e26205a22", "bytes": 6310, "contentType": "text/css" },
+		{ "path": "dist/frontend/assets/gmail-api.js", "sha256": "sha256:95ce211c21e36c9ff0e5abe1e54391d5c4878725b9147aae92ed0c3e610476a1", "bytes": 5759, "contentType": "application/javascript" },
+		{ "path": "dist/frontend/assets/gmail-page.js", "sha256": "sha256:b374685f3d37d9ef1bd134f800897280ba970d63b0dd7a2128db46b3f638edb7", "bytes": 28955, "contentType": "application/javascript" },
+		{ "path": "dist/frontend/assets/mail-app.js", "sha256": "sha256:f7f23d0635c5271c9cc9b8c3c7a614ce8e083e3671a9cc0563e6cdfc94ac474f", "bytes": 36775, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/react.js", "sha256": "sha256:174b76e9a14572ed536406ddae59e27ecc91a59c258854e86f64fa10b6bc689e", "bytes": 368202, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/zod.js", "sha256": "sha256:c6fe91e3fd954ba609ed0856f4c7596e55c0e70d13095e16c7d5458cc0335214", "bytes": 92851, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/rolldown-runtime.js", "sha256": "sha256:320ac1c898c1aa30c21383fddb8070e7888b57dca34de38cb915ba06ebf01b97", "bytes": 890, "contentType": "application/javascript" }

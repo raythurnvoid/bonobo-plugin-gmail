@@ -23,7 +23,8 @@ export default defineConfig({
 		rolldownOptions: { output: {
 			entryFileNames: "assets/index.js",
 			chunkFileNames: "assets/[name].js",
-			assetFileNames: "assets/index[extname]",
+			// Each page chunk brings its own CSS file, named after the chunk.
+			assetFileNames: "assets/[name][extname]",
 			codeSplitting: {
 				groups: [
 					{ name: "react", test: /node_modules[\\/](?:react(?:-dom)?|scheduler)[\\/]/ },

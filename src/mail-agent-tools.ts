@@ -1,0 +1,278 @@
+import type { BonoboClient } from "bonobo-plugin-sdk/frontend";
+// Never import ./mail-send here. The agent may write drafts, but only the member's click sends one.
+import {
+	create_draft,
+	delete_draft,
+	get_draft,
+	new_draft_id,
+	update_draft,
+	validate_draft_fields,
+	type DraftFields,
+	type DraftRow,
+	type DraftText,
+} from "./mail-drafts";
+import { read_email, type Email, type EmailRow } from "./mail-emails";
+import { get_error_message } from "./mail-retry";
+
+/**
+ * The host drops a tool answer over 32 KiB. These byte limits keep every answer below it: one long
+ * text, a few short previews, and capped address lists.
+ */
+const MAX_TEXT_BYTES = 12_000;
+const MAX_PREVIEW_BYTES = 300;
+const MAX_LISTED_ADDRESSES = 10;
+const MAX_VIEW_ROWS = 25;
+
+const TEXT_ENCODER = new TextEncoder();
+const TEXT_DECODER = new TextDecoder();
+
+const NOT_SENT_NOTE = "Saved as a Gmail draft and open in the Mail page. It was not sent. Only the member can send it.";
+
+export type MailAccount = {
+	accountId: string;
+	emailAddress: string;
+	destinationPath: string;
+	canCompose: boolean;
+	isComposer: boolean;
+};
+
+/**
+ * What the page shows right now. The tools read it on each call, so they always see the latest view.
+ */
+export type MailView = {
+	account: MailAccount | null;
+	folder: "all" | "drafts";
+	rows: EmailRow[];
+	openEmail: Email | null;
+	openDraftId: string | null;
+	drafts: DraftRow[];
+};
+
+/**
+ * What a tool may change in the page.
+ */
+export type MailViewControls = {
+	getView: () => MailView;
+	showEmail: (email: Email) => void;
+	showDraft: (id: string) => void;
+	/**
+	 * Read the draft list again after a tool changed a draft.
+	 */
+	refreshDrafts: () => void;
+};
+
+/**
+ * Cut text to at most `maxBytes` UTF-8 bytes. A character cut in half becomes U+FFFD.
+ */
+function cut(text: string, maxBytes: number) {
+	const bytes = TEXT_ENCODER.encode(text);
+	return bytes.byteLength <= maxBytes
+		? text
+		: `${TEXT_DECODER.decode(bytes.slice(0, maxBytes))}\n[Shortened. Open the file for the rest.]`;
+}
+
+function addresses(list: string[]) {
+	return list.slice(0, MAX_LISTED_ADDRESSES).map((address) => cut(address, MAX_PREVIEW_BYTES));
+}
+
+function describe_email(email: Email) {
+	return {
+		path: email.path,
+		from: cut(email.headers.from, MAX_PREVIEW_BYTES),
+		to: addresses(email.headers.to),
+		cc: addresses(email.headers.cc),
+		subject: cut(email.headers.subject, MAX_PREVIEW_BYTES),
+		date: email.headers.date,
+		direction: email.headers.direction,
+		body: cut(email.body, MAX_TEXT_BYTES),
+	};
+}
+
+function describe_draft_row(draft: DraftRow) {
+	return {
+		draftId: draft.clientDraftId,
+		to: addresses(draft.to),
+		cc: addresses(draft.cc),
+		subject: cut(draft.subject, MAX_PREVIEW_BYTES),
+		isReply: draft.isReply,
+		editedByAgent: draft.agentEditedAt !== null,
+	};
+}
+
+function describe_draft(draft: DraftText) {
+	return {
+		draftId: draft.clientDraftId,
+		to: addresses(draft.to),
+		cc: addresses(draft.cc),
+		subject: cut(draft.subject, MAX_PREVIEW_BYTES),
+		body: cut(draft.body, MAX_TEXT_BYTES),
+		isReply: draft.isReply,
+		editedByAgent: draft.agentEditedAt !== null,
+	};
+}
+
+// The model writes tool input, so check every field before use, even with the manifest schema.
+function read_object(input: unknown) {
+	if (typeof input !== "object" || input === null || Array.isArray(input)) {
+		throw new Error("The input must be an object");
+	}
+	return input as Record<string, unknown>;
+}
+
+function read_string(input: Record<string, unknown>, key: string) {
+	const value = input[key];
+	if (value === undefined) {
+		return undefined;
+	}
+	if (typeof value !== "string") {
+		throw new Error(`${key} must be a string`);
+	}
+	return value;
+}
+
+function read_strings(input: Record<string, unknown>, key: string) {
+	const value = input[key];
+	if (value === undefined) {
+		return undefined;
+	}
+	if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
+		throw new Error(`${key} must be a list of strings`);
+	}
+	return value as string[];
+}
+
+function require_value<T>(value: T | undefined, key: string) {
+	if (value === undefined) {
+		throw new Error(`${key} is required`);
+	}
+	return value;
+}
+
+/**
+ * Register the page's agent tools. The names and input schemas match `agent.tools` in
+ * bonobo.plugin.json. Returns one function that removes them all.
+ */
+export function register_mail_tools(client: BonoboClient, controls: MailViewControls) {
+	const require_account = () => {
+		const account = controls.getView().account;
+		if (!account) {
+			throw new Error("No Gmail account is connected. Connect one on the Gmail page.");
+		}
+		return account;
+	};
+
+	// A backend error carries only a code. Send its text to the agent instead.
+	const register = (name: string, handler: (input: unknown) => unknown) =>
+		client.agent.registerTool(name, async (input) => {
+			try {
+				return await handler(input);
+			} catch (error) {
+				throw new Error(get_error_message(error));
+			}
+		});
+
+	const unregister = [
+		register("get_view", async () => {
+			const view = controls.getView();
+			// The open draft's text lives in Gmail. A draft that cannot be read now shows as null.
+			const openDraft =
+				view.account && view.openDraftId
+					? await get_draft(client, view.account.accountId, view.openDraftId).catch(() => null)
+					: null;
+			return {
+				account: view.account?.emailAddress ?? null,
+				canWriteDrafts: view.account?.canCompose ?? false,
+				folder: view.folder,
+				openEmail: view.openEmail ? describe_email(view.openEmail) : null,
+				openDraft: openDraft ? describe_draft(openDraft) : null,
+				emails: view.rows.slice(0, MAX_VIEW_ROWS).map((row) => ({
+					path: row.path,
+					from: row.headers ? cut(row.headers.from, MAX_PREVIEW_BYTES) : null,
+					subject: cut(row.headers?.subject ?? row.subject, MAX_PREVIEW_BYTES),
+					date: row.headers?.date ?? row.day,
+					direction: row.headers?.direction ?? null,
+				})),
+				draftCount: view.drafts.length,
+			};
+		}),
+
+		register("open_email", async (input) => {
+			const path = require_value(read_string(read_object(input), "path"), "path");
+			if (!path.startsWith("/") || !path.endsWith(".md")) {
+				throw new Error("path must be a Files path that ends with .md");
+			}
+
+			const email = await read_email(client, path);
+			controls.showEmail(email);
+			return describe_email(email);
+		}),
+
+		register("list_drafts", () => {
+			const drafts = controls.getView().drafts;
+			return {
+				drafts: drafts.map(describe_draft_row),
+				note: "These are the newest drafts. get_view shows the full text of the open draft.",
+			};
+		}),
+
+		register("create_draft", async (input) => {
+			const object = read_object(input);
+			const fields: DraftFields = {
+				to: require_value(read_strings(object, "to"), "to"),
+				cc: read_strings(object, "cc") ?? [],
+				subject: require_value(read_string(object, "subject"), "subject"),
+				body: require_value(read_string(object, "body"), "body"),
+			};
+			const replyToPath = read_string(object, "replyToPath");
+			validate_draft_fields(fields);
+			const account = require_account();
+
+			// A reply needs the Gmail id of the email it answers. The sync writes it in the file.
+			let replyToGmailMessageId: string | null = null;
+			if (replyToPath !== undefined) {
+				const email = await read_email(client, replyToPath);
+				replyToGmailMessageId = email.headers.gmailMessageId;
+				if (replyToGmailMessageId === null) {
+					throw new Error(`${replyToPath} has no Gmail id, so a reply cannot be made from it`);
+				}
+			}
+
+			const id = new_draft_id();
+			await create_draft(client, { accountId: account.accountId, clientDraftId: id, fields, replyToGmailMessageId, byAgent: true });
+			controls.refreshDrafts();
+			controls.showDraft(id);
+			return { draftId: id, saved: true, note: NOT_SENT_NOTE };
+		}),
+
+		register("update_draft", async (input) => {
+			const object = read_object(input);
+			const draftId = require_value(read_string(object, "draftId"), "draftId");
+			const account = require_account();
+			const draft = await get_draft(client, account.accountId, draftId);
+			const fields: DraftFields = {
+				to: read_strings(object, "to") ?? draft.to,
+				cc: read_strings(object, "cc") ?? draft.cc,
+				subject: read_string(object, "subject") ?? draft.subject,
+				body: read_string(object, "body") ?? draft.body,
+			};
+
+			await update_draft(client, { accountId: account.accountId, clientDraftId: draftId, fields, byAgent: true });
+			controls.refreshDrafts();
+			controls.showDraft(draftId);
+			return { draftId, saved: true, note: NOT_SENT_NOTE };
+		}),
+
+		register("delete_draft", async (input) => {
+			const draftId = require_value(read_string(read_object(input), "draftId"), "draftId");
+			await delete_draft(client, require_account().accountId, draftId);
+			controls.refreshDrafts();
+			return { draftId, deleted: true };
+		}),
+	];
+
+	return () => {
+		for (const remove of unregister) {
+			remove();
+		}
+	};
+}

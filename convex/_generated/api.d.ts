@@ -10,6 +10,8 @@
 
 import type * as crons from "../crons.js";
 import type * as gmail_accounts from "../gmail_accounts.js";
+import type * as gmail_drafts from "../gmail_drafts.js";
+import type * as gmail_drafts_google from "../gmail_drafts_google.js";
 import type * as gmail_google from "../gmail_google.js";
 import type * as gmail_grants from "../gmail_grants.js";
 import type * as gmail_oauth from "../gmail_oauth.js";
@@ -29,6 +31,8 @@ import type {
 declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   gmail_accounts: typeof gmail_accounts;
+  gmail_drafts: typeof gmail_drafts;
+  gmail_drafts_google: typeof gmail_drafts_google;
   gmail_google: typeof gmail_google;
   gmail_grants: typeof gmail_grants;
   gmail_oauth: typeof gmail_oauth;
