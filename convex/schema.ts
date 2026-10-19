@@ -59,7 +59,7 @@ export default defineSchema({
 		attachmentsSkippedReason: v.union(v.literal("plan"), v.literal("storage"), v.null()),
 		syncWorkId: nullableString, syncRequestId: nullableString, lastSyncedAt: nullableNumber, updatedAt: v.number(),
 		// The Google token has the compose scope, so the connecting member can write drafts and send.
-		composeGranted: v.optional(v.boolean()),
+		composeGranted: v.boolean(),
 	})
 		.index("by_hostWorkspace_emailAddress", ["hostWorkspaceId", "emailAddress"])
 		.index("by_hostOrganization_hostWorkspace_emailAddress", ["hostOrganizationId", "hostWorkspaceId", "emailAddress"])
