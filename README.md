@@ -2,7 +2,7 @@
 
 Gmail is a Press plugin with its own Convex backend. It saves received and sent mail as Markdown files. Attachments are saved beside each email. Press owns Files, permissions, billing, and installation.
 
-The build follows plan v4. Version 0.2.4 includes the connection page and background sync. Live Gmail and hosting checks are still open. The integration is not release ready yet.
+The build follows plan v4. Version 0.2.4 added the connection page and background sync. Version 0.3.0 adds the Mail page: read the saved emails, and write Gmail drafts with the chat agent. It replaces the separate Mail plugin. Live Gmail and hosting checks are still open. The integration is not release ready yet.
 
 The frontend build keeps the page, React, and Zod in separate files. Each file is formatted and listed in the manifest with its hash. This lets the publisher read the page code within its scan limit.
 
@@ -29,11 +29,25 @@ Set these on the plugin backend. Never commit them or put them on Press.
 - `GMAIL_MAX_CONNECTED_ACCOUNTS`: the atomic connection cap; dev starts at 1.
 - `DEV_PLUGIN_ORIGIN`: optional exact dev origin, such as `http://localhost:5173`. Do not include a path or trailing slash.
 
-Google uses only the Gmail read-only scope. Connecting requires Google consent and an authenticated Finish step on the original Press page. Disconnect clears saved Gmail access and keeps Files. Disconnect before uninstalling.
+Connect asks Google only for the Gmail read-only scope. **Allow drafts and Send** asks again, for read-only plus `gmail.compose`. Only the member who connected the account sees that button. Each step requires Google consent and an authenticated Finish step on the original Press page. Disconnect clears saved Gmail access and keeps Files. Disconnect before uninstalling.
+
+## Mail page
+
+The Mail page lists the emails the sync saved in Files, newest first, and opens one as text. Anyone who can open the page and read those files can read mail there.
+
+Drafts are real Gmail drafts:
+
+- Only the member who connected the account, in this installation, can write drafts and send. It also needs **Allow drafts and Send**. Other members can read but not write.
+- The chat agent can create, change, and delete drafts with page tools. No tool can send. Only the member's **Send** click sends.
+- Send sends the To, Cc, subject, and body the editor shows at that moment. A save or an agent edit that lands at the same time cannot change it.
+- If Gmail does not answer a send in time, the page says it could not confirm the send. Check Sent in Gmail before you press Send again.
+- The backend stores each draft's subject, recipients, and reply ids, for the list. The text lives only in Gmail.
+- Drafts made in Gmail itself are not listed. Gmail's own Send works on Press drafts too. An edit made in Gmail is replaced by the next save from Press.
+- Limits per member and account, per hour: 600 reads, 300 writes, 20 sends.
 
 ## Google configuration
 
-Create a Google Cloud project and enable the Gmail API. Configure Google Auth Platform with an External audience. Set the app name and support contact, then add only `https://www.googleapis.com/auth/gmail.readonly` in Data Access. In Testing, add the account used for the dev connection as a test user.
+Create a Google Cloud project and enable the Gmail API. Configure Google Auth Platform with an External audience. Set the app name and support contact, then add `https://www.googleapis.com/auth/gmail.readonly` and `https://www.googleapis.com/auth/gmail.compose` in Data Access. Add nothing else. In Testing, add the account used for the dev connection as a test user.
 
 Create a Web application OAuth client. Its only redirect URI is `https://<plugin-deployment>.convex.site/oauth/google/callback`. Use the plugin backend deployment, not the Press deployment. The server handles consent, token exchange, and background reads. No separate Clerk or Polar project is needed.
 

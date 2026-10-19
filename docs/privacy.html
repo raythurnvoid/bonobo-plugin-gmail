@@ -15,14 +15,15 @@
 	<main>
 		<p><a href="index.html">Bonobo Gmail</a></p>
 		<h1>Privacy policy</h1>
-		<p>Updated 5 October 2026. This page covers the Bonobo Gmail plugin. Your Press workspace and its other features have their own data controls.</p>
+		<p>Updated 19 October 2026. This page covers the Bonobo Gmail plugin. Your Press workspace and its other features have their own data controls.</p>
 		<h2>What the plugin accesses</h2>
-		<p>With your Google consent, the plugin reads your Gmail address, email headers, message bodies, attachments, labels, and change history. It uses only the <code>gmail.readonly</code> scope. It does not send email or change your Gmail mailbox.</p>
+		<p>With your Google consent, the plugin reads your Gmail address, email headers, message bodies, attachments, labels, and change history. It uses the <code>gmail.readonly</code> scope for this.</p>
+		<p>If the member who connected the account chooses Allow drafts and Send, the plugin also uses the <code>gmail.compose</code> scope. With it, the plugin creates, changes, and deletes the Gmail drafts made from the Mail page, and sends a draft when that member presses Send. The Press agent can write drafts but cannot send them. The plugin does not delete emails or change other parts of your mailbox.</p>
 		<h2>Why it uses this data</h2>
 		<p>The plugin backs up sent and received email as Markdown files and attachments in the Press workspace you choose. It checks for new mail and keeps progress records so it can resume after a failure.</p>
 		<p>Our use of Google user data follows the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a> and its Limited Use requirements.</p>
 		<h2>Where data is stored and shared</h2>
-		<p>The plugin's Convex backend stores your Gmail address, encrypted access credentials, workspace and account IDs, sync cursors, message IDs, saved file paths, attachment names, and retry or upload records. It reads message content while processing it. It saves email content and attachments in Press Files.</p>
+		<p>The plugin's Convex backend stores your Gmail address, encrypted access credentials, workspace and account IDs, sync cursors, message IDs, saved file paths, attachment names, and retry or upload records. For each draft made from the Mail page, it stores the subject, the recipients, and the IDs of the email it answers. The draft text stays in Gmail. It reads message content while processing it. It saves email content and attachments in Press Files.</p>
 		<p>Google provides the mail data. Convex runs the plugin backend. Press and its storage services hold the copied files. Saved mail uses ordinary workspace file permissions. Other members with file access can read it. Check the workspace and these permissions before connecting.</p>
 		<p>If you ask a Press agent to read saved files, Press handles that request using its configured AI services. The Gmail plugin does not train AI models. It does not sell Google user data or use it for advertising, credit decisions, or general AI model training.</p>
 		<h2>Security and retention</h2>
