@@ -6,6 +6,7 @@ import {
   gmail_check_status,
   gmail_error_message,
   gmail_failures_response,
+  gmail_new_request_id,
   gmail_page_post,
   gmail_saved_start,
   gmail_start_response,
@@ -15,11 +16,6 @@ import "./gmail.css";
 
 const storageKey = "gmail-connect-retry";
 const empty_response = z.object({});
-function new_request_id() {
-  return [...crypto.getRandomValues(new Uint8Array(32))]
-    .map((value) => value.toString(16).padStart(2, "0"))
-    .join("");
-}
 function time_label(value: number | null) {
   return value === null ? "—" : new Date(value).toLocaleString();
 }
@@ -172,7 +168,7 @@ export function GmailPage({
               {
                 accountId: account.accountId,
                 expectedGeneration: account.connectionGeneration,
-                clientRequestId: new_request_id(),
+                clientRequestId: gmail_new_request_id(),
               },
               empty_response,
             );
@@ -251,7 +247,7 @@ export function GmailPage({
     if (!status) return;
     const local = {
       binding: status.binding,
-      clientRequestId: new_request_id(),
+      clientRequestId: gmail_new_request_id(),
       accountId,
       attemptId: null,
       purpose,
@@ -601,7 +597,7 @@ export function GmailPage({
                             await gmail_page_post(
                               client,
                               "/page/press-repair",
-                              { ...change, clientRequestId: new_request_id() },
+                              { ...change, clientRequestId: gmail_new_request_id() },
                               empty_response,
                             );
                           })

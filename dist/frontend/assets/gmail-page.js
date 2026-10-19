@@ -5,61 +5,57 @@ import {
   a as i,
   c as a,
   i as o,
-  n as s,
-  o as c,
-  r as l,
-  s as u,
-  t as d,
+  l as s,
+  n as c,
+  o as l,
+  r as u,
+  s as d,
+  t as f,
 } from "./gmail-api.js";
-var f = e(t(), 1),
-  p = n(),
-  m = `gmail-connect-retry`,
-  h = r({});
-function g() {
-  return [...crypto.getRandomValues(new Uint8Array(32))]
-    .map((e) => e.toString(16).padStart(2, `0`))
-    .join(``);
-}
+var p = e(t(), 1),
+  m = n(),
+  h = `gmail-connect-retry`,
+  g = r({});
 function _(e) {
   return e === null ? `—` : new Date(e).toLocaleString();
 }
 function v({ client: e }) {
-  let [t, n] = (0, f.useState)(null),
-    [r, v] = (0, f.useState)(`loading`),
-    [y, b] = (0, f.useState)(null),
-    [x, S] = (0, f.useState)(!1),
-    [C, w] = (0, f.useState)(null),
-    [T, E] = (0, f.useState)(``),
-    [D, O] = (0, f.useState)(``),
-    [k, A] = (0, f.useState)(null),
-    [j, M] = (0, f.useState)(null),
-    [N, P] = (0, f.useState)(Date.now()),
-    [F, I] = (0, f.useState)(null),
-    L = (0, f.useId)(),
-    R = (0, f.useRef)(null),
-    z = (0, f.useRef)(!1),
-    B = (0, f.useRef)(!1),
-    V = (0, f.useRef)(new Set()),
-    H = (0, f.useRef)(!1),
-    U = (0, f.useRef)(0);
+  let [t, n] = (0, p.useState)(null),
+    [r, v] = (0, p.useState)(`loading`),
+    [y, b] = (0, p.useState)(null),
+    [x, S] = (0, p.useState)(!1),
+    [C, w] = (0, p.useState)(null),
+    [T, E] = (0, p.useState)(``),
+    [D, O] = (0, p.useState)(``),
+    [k, A] = (0, p.useState)(null),
+    [j, M] = (0, p.useState)(null),
+    [N, P] = (0, p.useState)(Date.now()),
+    [F, I] = (0, p.useState)(null),
+    L = (0, p.useId)(),
+    R = (0, p.useRef)(null),
+    z = (0, p.useRef)(!1),
+    B = (0, p.useRef)(!1),
+    V = (0, p.useRef)(new Set()),
+    H = (0, p.useRef)(!1),
+    U = (0, p.useRef)(0);
   function W(e) {
     ((R.current = e),
       e
-        ? sessionStorage.setItem(m, JSON.stringify(e))
-        : (sessionStorage.removeItem(m), w(null), E(``), I(null), O(``)));
+        ? sessionStorage.setItem(h, JSON.stringify(e))
+        : (sessionStorage.removeItem(h), w(null), E(``), I(null), O(``)));
   }
-  let G = (0, f.useCallback)(async () => {
+  let G = (0, p.useCallback)(async () => {
     if (B.current) return;
     B.current = !0;
     let t = U.current;
     try {
-      let r = await i(e, `/page/status`, { cursor: k }, a);
+      let r = await l(e, `/page/status`, { cursor: k }, s);
       if (!H.current || t !== U.current) return;
       if ((n(r), v(`ready`), P(Date.now()), !z.current)) {
         z.current = !0;
         let t = null;
         try {
-          let e = c.safeParse(JSON.parse(sessionStorage.getItem(m) ?? `null`));
+          let e = d.safeParse(JSON.parse(sessionStorage.getItem(h) ?? `null`));
           e.success && (t = e.data);
         } catch {}
         if (
@@ -79,7 +75,7 @@ function v({ client: e }) {
           t && r.canWrite)
         )
           try {
-            let n = await i(
+            let n = await l(
               e,
               `/page/connect/start`,
               {
@@ -87,12 +83,12 @@ function v({ client: e }) {
                 accountId: t.accountId,
                 purpose: t.purpose,
               },
-              u,
+              a,
             );
             H.current &&
               (W({ ...t, attemptId: n.attemptId }), w(n.consentUrl ?? null));
           } catch (e) {
-            H.current && b(l(e));
+            H.current && b(u(e));
           }
       } else if (r.attempt && R.current?.attemptId !== r.attempt.attemptId) {
         let t = {
@@ -104,7 +100,7 @@ function v({ client: e }) {
         };
         if ((W(t), r.canWrite))
           try {
-            let n = await i(
+            let n = await l(
               e,
               `/page/connect/start`,
               {
@@ -112,11 +108,11 @@ function v({ client: e }) {
                 accountId: t.accountId,
                 purpose: t.purpose,
               },
-              u,
+              a,
             );
             H.current && w(n.consentUrl ?? null);
           } catch (e) {
-            H.current && b(l(e));
+            H.current && b(u(e));
           }
       } else !r.attempt && R.current?.attemptId && W(null);
       for (let t of r.accounts) {
@@ -124,18 +120,18 @@ function v({ client: e }) {
         if (t.canRepair && !V.current.has(n)) {
           V.current.add(n);
           try {
-            await i(
+            await l(
               e,
               `/page/press-repair`,
               {
                 accountId: t.accountId,
                 expectedGeneration: t.connectionGeneration,
-                clientRequestId: g(),
+                clientRequestId: i(),
               },
-              h,
+              g,
             );
           } catch (e) {
-            H.current && b(l(e));
+            H.current && b(u(e));
           }
         }
       }
@@ -149,7 +145,7 @@ function v({ client: e }) {
           G());
     }
   }, [e, k]);
-  (0, f.useEffect)(() => {
+  (0, p.useEffect)(() => {
     H.current = !0;
     let e = null;
     function t() {
@@ -179,8 +175,8 @@ function v({ client: e }) {
     try {
       (await e(), await G());
     } catch (e) {
-      (b(l(e)),
-        e instanceof d &&
+      (b(u(e)),
+        e instanceof f &&
           [
             `start_again`,
             `attempt_expired`,
@@ -194,21 +190,21 @@ function v({ client: e }) {
   }
   async function q(n, r) {
     if (!t) return;
-    let a = {
+    let o = {
       binding: t.binding,
-      clientRequestId: g(),
+      clientRequestId: i(),
       accountId: n,
       attemptId: null,
       purpose: r,
     };
-    W(a);
-    let o = await i(
+    W(o);
+    let s = await l(
       e,
       `/page/connect/start`,
-      { clientRequestId: a.clientRequestId, accountId: n, purpose: r },
-      u,
+      { clientRequestId: o.clientRequestId, accountId: n, purpose: r },
+      a,
     );
-    (W({ ...a, attemptId: o.attemptId }), w(o.consentUrl ?? null));
+    (W({ ...o, attemptId: s.attemptId }), w(s.consentUrl ?? null));
   }
   async function J() {
     try {
@@ -218,76 +214,76 @@ function v({ client: e }) {
     }
   }
   let Y = t?.attempt;
-  return (0, p.jsxs)(`main`, {
+  return (0, m.jsxs)(`main`, {
     className: `GmailPage`,
     "data-gmail-service-status": r,
     children: [
-      (0, p.jsx)(`h1`, { children: `Gmail` }),
-      (0, p.jsx)(`p`, {
+      (0, m.jsx)(`h1`, { children: `Gmail` }),
+      (0, m.jsx)(`p`, {
         children: `Save sent and received emails in Files. People with file access can read them.`,
       }),
       y &&
         r === `ready` &&
-        (0, p.jsx)(`p`, {
+        (0, m.jsx)(`p`, {
           role: `alert`,
           className: `GmailError`,
           children: y,
         }),
       r === `ready`
         ? t &&
-          (0, p.jsxs)(p.Fragment, {
+          (0, m.jsxs)(m.Fragment, {
             children: [
               !t.canWrite &&
-                (0, p.jsx)(`p`, {
+                (0, m.jsx)(`p`, {
                   children: `You can view this page. Write access is needed to change a connection.`,
                 }),
               !Y &&
-                (0, p.jsx)(`button`, {
+                (0, m.jsx)(`button`, {
                   disabled: x || !t.canWrite,
                   onClick: () => void K(() => q(null, `connect`)),
                   children: `Connect Gmail`,
                 }),
               Y &&
-                (0, p.jsxs)(`section`, {
+                (0, m.jsxs)(`section`, {
                   className: `GmailCard`,
                   "data-gmail-connect-status": Y.status,
                   children: [
-                    (0, p.jsx)(`h2`, {
+                    (0, m.jsx)(`h2`, {
                       children:
                         Y.purpose === `compose`
                           ? `Allow drafts and Send`
                           : `Connect Gmail`,
                     }),
-                    (0, p.jsxs)(`p`, {
+                    (0, m.jsxs)(`p`, {
                       children: [
                         `Organization ID: `,
-                        (0, p.jsx)(`code`, {
+                        (0, m.jsx)(`code`, {
                           children: t.binding.organizationId,
                         }),
-                        (0, p.jsx)(`br`, {}),
+                        (0, m.jsx)(`br`, {}),
                         `Workspace ID: `,
-                        (0, p.jsx)(`code`, { children: t.binding.workspaceId }),
+                        (0, m.jsx)(`code`, { children: t.binding.workspaceId }),
                       ],
                     }),
-                    (0, p.jsx)(`p`, {
+                    (0, m.jsx)(`p`, {
                       children: `Open this link in a new tab. Allow access. Copy the finish code back here. Compare these IDs with the callback page.`,
                     }),
                     C
-                      ? (0, p.jsxs)(p.Fragment, {
+                      ? (0, m.jsxs)(m.Fragment, {
                           children: [
-                            (0, p.jsx)(`button`, {
+                            (0, m.jsx)(`button`, {
                               onClick: () => void J(),
                               children: `Copy link`,
                             }),
-                            (0, p.jsx)(`p`, {
+                            (0, m.jsx)(`p`, {
                               className: `GmailLink`,
                               children: C,
                             }),
                           ],
                         })
-                      : (0, p.jsxs)(p.Fragment, {
+                      : (0, m.jsxs)(m.Fragment, {
                           children: [
-                            (0, p.jsx)(`p`, {
+                            (0, m.jsx)(`p`, {
                               role: `status`,
                               children:
                                 Y.status === `awaiting_finish`
@@ -295,11 +291,11 @@ function v({ client: e }) {
                                   : `Preparing the Google link…`,
                             }),
                             Y.status !== `awaiting_finish` &&
-                              (0, p.jsx)(`button`, {
+                              (0, m.jsx)(`button`, {
                                 disabled: x || !t.canWrite,
                                 onClick: () =>
                                   void K(async () => {
-                                    let t = await i(
+                                    let t = await l(
                                       e,
                                       `/page/connect/start`,
                                       {
@@ -307,7 +303,7 @@ function v({ client: e }) {
                                         accountId: Y.accountId,
                                         purpose: Y.purpose,
                                       },
-                                      u,
+                                      a,
                                     );
                                     w(t.consentUrl ?? null);
                                   }),
@@ -315,8 +311,8 @@ function v({ client: e }) {
                               }),
                           ],
                         }),
-                    D && (0, p.jsx)(`p`, { role: `status`, children: D }),
-                    (0, p.jsxs)(`form`, {
+                    D && (0, m.jsx)(`p`, { role: `status`, children: D }),
+                    (0, m.jsxs)(`form`, {
                       noValidate: !0,
                       onSubmit: (t) => {
                         if (
@@ -328,21 +324,21 @@ function v({ client: e }) {
                           return;
                         }
                         K(async () => {
-                          (await i(
+                          (await l(
                             e,
                             `/page/connect/finish`,
                             { attemptId: Y.attemptId, finishCode: T },
-                            h,
+                            g,
                           ),
                             W(null));
                         });
                       },
                       children: [
-                        (0, p.jsx)(`label`, {
+                        (0, m.jsx)(`label`, {
                           htmlFor: L,
                           children: `Finish code`,
                         }),
-                        (0, p.jsx)(`input`, {
+                        (0, m.jsx)(`input`, {
                           id: L,
                           value: T,
                           onChange: (e) => {
@@ -355,25 +351,25 @@ function v({ client: e }) {
                           autoComplete: `off`,
                           spellCheck: !1,
                         }),
-                        F && (0, p.jsx)(`p`, { role: `alert`, children: F }),
-                        (0, p.jsxs)(`div`, {
+                        F && (0, m.jsx)(`p`, { role: `alert`, children: F }),
+                        (0, m.jsxs)(`div`, {
                           className: `GmailActions`,
                           children: [
-                            (0, p.jsx)(`button`, {
+                            (0, m.jsx)(`button`, {
                               type: `submit`,
                               disabled: x || !t.canWrite,
                               children: `Finish connection`,
                             }),
-                            (0, p.jsx)(`button`, {
+                            (0, m.jsx)(`button`, {
                               type: `button`,
                               disabled: x || !t.canWrite,
                               onClick: () =>
                                 void K(async () => {
-                                  (await i(
+                                  (await l(
                                     e,
                                     `/page/connect/cancel`,
                                     { attemptId: Y.attemptId },
-                                    h,
+                                    g,
                                   ),
                                     W(null));
                                 }),
@@ -383,7 +379,7 @@ function v({ client: e }) {
                         }),
                       ],
                     }),
-                    (0, p.jsxs)(`p`, {
+                    (0, m.jsxs)(`p`, {
                       children: [
                         `Expires at `,
                         _(Y.expiresAt),
@@ -393,34 +389,34 @@ function v({ client: e }) {
                   ],
                 }),
               t.accounts.map((n) => {
-                let r = s(n.lastSyncedAt, N),
+                let r = c(n.lastSyncedAt, N),
                   a = {
                     accountId: n.accountId,
                     expectedGeneration: n.connectionGeneration,
                   },
-                  c = n.ledgerCounts.permissionHeld,
-                  l = n.syncStatus === `blocked` || n.syncStatus === `error`;
-                return (0, p.jsxs)(
+                  s = n.ledgerCounts.permissionHeld,
+                  u = n.syncStatus === `blocked` || n.syncStatus === `error`;
+                return (0, m.jsxs)(
                   `section`,
                   {
                     className: `GmailCard`,
                     "data-gmail-sync-status": n.syncStatus,
                     "data-gmail-check-status": r,
-                    "data-gmail-files-status": c ? `write_refused` : `normal`,
+                    "data-gmail-files-status": s ? `write_refused` : `normal`,
                     children: [
-                      (0, p.jsx)(`h2`, { children: n.emailAddress }),
-                      (0, p.jsxs)(`p`, {
+                      (0, m.jsx)(`h2`, { children: n.emailAddress }),
+                      (0, m.jsxs)(`p`, {
                         children: [
                           `Destination: `,
-                          (0, p.jsx)(`code`, { children: n.destinationPath }),
+                          (0, m.jsx)(`code`, { children: n.destinationPath }),
                         ],
                       }),
-                      (0, p.jsx)(`p`, {
+                      (0, m.jsx)(`p`, {
                         role: `status`,
                         children:
                           n.syncStatus === `disconnected`
                             ? `Disconnected`
-                            : l && !n.pressReady
+                            : u && !n.pressReady
                               ? `Press connection needs attention`
                               : n.pressReady
                                 ? n.backfillComplete
@@ -428,7 +424,7 @@ function v({ client: e }) {
                                   : `Backfilling… ${n.messagesSynced} emails saved`
                                 : `Finishing Press connection`,
                       }),
-                      (0, p.jsxs)(`p`, {
+                      (0, m.jsxs)(`p`, {
                         children: [
                           n.messagesSkipped,
                           ` skipped.`,
@@ -440,33 +436,33 @@ function v({ client: e }) {
                           ` failed.`,
                         ],
                       }),
-                      (0, p.jsxs)(`p`, {
+                      (0, m.jsxs)(`p`, {
                         children: [
                           r === `unchecked`
                             ? `No mail check completed yet`
                             : r === `delayed`
                               ? `Sync is delayed`
-                              : !l &&
+                              : !u &&
                                   n.pressReady &&
                                   n.syncStatus !== `disconnected` &&
-                                  !c
+                                  !s
                                 ? `Checking for new mail`
                                 : `Last completed mail check`,
                           n.lastSyncedAt !== null &&
-                            (0, p.jsxs)(p.Fragment, {
+                            (0, m.jsxs)(m.Fragment, {
                               children: [`: `, _(n.lastSyncedAt)],
                             }),
                         ],
                       }),
-                      c > 0 &&
-                        (0, p.jsxs)(`p`, {
+                      s > 0 &&
+                        (0, m.jsxs)(`p`, {
                           className: `GmailAttention`,
                           children: [
                             `Some saves were refused by Files. `,
-                            c,
+                            s,
                             ` emails are waiting for access. Check the connecting member and Gmail service account Can write on the workspace, destination and restricted folders. Permission retries are limited while access is refused.`,
                             n.nextPermissionRetryAt !== null &&
-                              (0, p.jsxs)(p.Fragment, {
+                              (0, m.jsxs)(m.Fragment, {
                                 children: [
                                   ` `,
                                   `Next permission retry:`,
@@ -478,7 +474,7 @@ function v({ client: e }) {
                           ],
                         }),
                       n.attachmentsSkippedReason &&
-                        (0, p.jsxs)(`p`, {
+                        (0, m.jsxs)(`p`, {
                           children: [
                             `Some attachments were not saved because of the workspace`,
                             ` `,
@@ -489,14 +485,14 @@ function v({ client: e }) {
                           ],
                         }),
                       n.ledgerCounts.emailAssumed > 0 &&
-                        (0, p.jsxs)(`p`, {
+                        (0, m.jsxs)(`p`, {
                           children: [
                             n.ledgerCounts.emailAssumed,
                             ` email saves were assumed because the path already existed.`,
                           ],
                         }),
                       n.syncStatus !== `disconnected` &&
-                        (0, p.jsxs)(`p`, {
+                        (0, m.jsxs)(`p`, {
                           "data-gmail-compose-status": n.canCompose
                             ? `on`
                             : `off`,
@@ -509,25 +505,25 @@ function v({ client: e }) {
                           ],
                         }),
                       n.sourceError === `google_revoked` &&
-                        (0, p.jsx)(`p`, {
+                        (0, m.jsx)(`p`, {
                           children: `Google access stopped. Reconnect Gmail.`,
                         }),
                       [`gmail_request`, `history_response_too_large`].includes(
                         n.sourceError ?? ``,
                       ) &&
-                        (0, p.jsx)(`p`, {
+                        (0, m.jsx)(`p`, {
                           children: `Gmail could not complete a request. Retry sync or ask the operator to check the source limit.`,
                         }),
                       n.syncError === `credits` &&
-                        (0, p.jsx)(`p`, {
+                        (0, m.jsx)(`p`, {
                           children: `Add credits in Billing.`,
                         }),
                       n.canRepair &&
-                        (0, p.jsx)(`p`, {
+                        (0, m.jsx)(`p`, {
                           children: `Press access needs repair.`,
                         }),
                       n.syncError === `actor_lost` &&
-                        (0, p.jsx)(`p`, {
+                        (0, m.jsx)(`p`, {
                           children: `The connecting member lost write access. A writer must reconnect Gmail.`,
                         }),
                       [
@@ -537,15 +533,15 @@ function v({ client: e }) {
                         `credits`,
                       ].includes(n.syncError ?? ``) &&
                         n.nextSyncAt !== null &&
-                        (0, p.jsxs)(`p`, {
+                        (0, m.jsxs)(`p`, {
                           children: [`Retrying at `, _(n.nextSyncAt), `.`],
                         }),
-                      (0, p.jsxs)(`div`, {
+                      (0, m.jsxs)(`div`, {
                         className: `GmailActions`,
                         children: [
                           (n.needsReconnect ||
                             n.syncStatus === `disconnected`) &&
-                            (0, p.jsx)(`button`, {
+                            (0, m.jsx)(`button`, {
                               disabled: x || !t.canWrite || !!Y,
                               onClick: () =>
                                 void K(() => q(n.accountId, `connect`)),
@@ -555,46 +551,46 @@ function v({ client: e }) {
                             !n.canCompose &&
                             !n.needsReconnect &&
                             n.syncStatus !== `disconnected` &&
-                            (0, p.jsx)(`button`, {
+                            (0, m.jsx)(`button`, {
                               disabled: x || !t.canWrite || !!Y,
                               onClick: () =>
                                 void K(() => q(n.accountId, `compose`)),
                               children: `Allow drafts and Send`,
                             }),
                           n.canRepair &&
-                            (0, p.jsx)(`button`, {
+                            (0, m.jsx)(`button`, {
                               disabled: x,
                               onClick: () =>
                                 void K(async () => {
-                                  await i(
+                                  await l(
                                     e,
                                     `/page/press-repair`,
-                                    { ...a, clientRequestId: g() },
-                                    h,
+                                    { ...a, clientRequestId: i() },
+                                    g,
                                   );
                                 }),
                               children: `Repair Press access`,
                             }),
                           n.sourceError !== `google_revoked` &&
                             n.sourceError !== null &&
-                            (0, p.jsx)(`button`, {
+                            (0, m.jsx)(`button`, {
                               disabled: x || !t.canWrite,
                               onClick: () =>
                                 void K(async () => {
-                                  await i(e, `/page/retry-sync`, a, h);
+                                  await l(e, `/page/retry-sync`, a, g);
                                 }),
                               children: `Retry sync`,
                             }),
                           n.ledgerCounts.given_up > 0 &&
-                            (0, p.jsxs)(p.Fragment, {
+                            (0, m.jsxs)(m.Fragment, {
                               children: [
-                                (0, p.jsx)(`button`, {
+                                (0, m.jsx)(`button`, {
                                   disabled: x,
                                   onClick: () =>
                                     void K(async () => {
                                       M({
                                         accountId: n.accountId,
-                                        page: await i(
+                                        page: await l(
                                           e,
                                           `/page/failures`,
                                           { accountId: n.accountId },
@@ -604,25 +600,25 @@ function v({ client: e }) {
                                     }),
                                   children: `View failed emails`,
                                 }),
-                                (0, p.jsx)(`button`, {
+                                (0, m.jsx)(`button`, {
                                   disabled:
                                     x ||
                                     !t.canWrite ||
                                     n.syncStatus === `disconnected`,
                                   onClick: () =>
                                     void K(async () => {
-                                      await i(e, `/page/retry-failed`, a, h);
+                                      await l(e, `/page/retry-failed`, a, g);
                                     }),
                                   children: `Retry failed emails`,
                                 }),
                               ],
                             }),
                           n.syncStatus !== `disconnected` &&
-                            (0, p.jsx)(`button`, {
+                            (0, m.jsx)(`button`, {
                               disabled: x || !t.canWrite,
                               onClick: () =>
                                 void K(async () => {
-                                  (await i(e, `/page/disconnect`, a, h),
+                                  (await l(e, `/page/disconnect`, a, g),
                                     W(null));
                                 }),
                               children: `Disconnect`,
@@ -630,15 +626,15 @@ function v({ client: e }) {
                         ],
                       }),
                       j?.accountId === n.accountId &&
-                        (0, p.jsxs)(`div`, {
+                        (0, m.jsxs)(`div`, {
                           children: [
-                            (0, p.jsx)(`ul`, {
+                            (0, m.jsx)(`ul`, {
                               children: j.page.items.map((e) =>
-                                (0, p.jsxs)(
+                                (0, m.jsxs)(
                                   `li`,
                                   {
                                     children: [
-                                      (0, p.jsx)(`code`, {
+                                      (0, m.jsx)(`code`, {
                                         children: e.gmailMessageId,
                                       }),
                                       `:`,
@@ -651,13 +647,13 @@ function v({ client: e }) {
                               ),
                             }),
                             j.page.cursor &&
-                              (0, p.jsx)(`button`, {
+                              (0, m.jsx)(`button`, {
                                 disabled: x,
                                 onClick: () =>
                                   void K(async () => {
                                     M({
                                       accountId: n.accountId,
-                                      page: await i(
+                                      page: await l(
                                         e,
                                         `/page/failures`,
                                         {
@@ -677,35 +673,35 @@ function v({ client: e }) {
                   n.accountId,
                 );
               }),
-              (0, p.jsxs)(`div`, {
+              (0, m.jsxs)(`div`, {
                 className: `GmailActions`,
                 children: [
                   k !== null &&
-                    (0, p.jsx)(`button`, {
+                    (0, m.jsx)(`button`, {
                       disabled: x,
                       onClick: () => A(null),
                       children: `First accounts`,
                     }),
                   t.cursor !== null &&
-                    (0, p.jsx)(`button`, {
+                    (0, m.jsx)(`button`, {
                       disabled: x,
                       onClick: () => A(t.cursor),
                       children: `More accounts`,
                     }),
                 ],
               }),
-              (0, p.jsx)(`p`, {
+              (0, m.jsx)(`p`, {
                 className: `GmailLimits`,
                 children: `Bodies are limited to 2 MiB and may be shortened. Up to 16 attachments per email, each up to 32 MiB. Attachments use the workspace upload plan and credits.`,
               }),
-              (0, p.jsx)(`p`, {
+              (0, m.jsx)(`p`, {
                 children: `Disconnect Gmail before uninstalling this plugin. This clears its saved Gmail access. Files stay. Removing the app in Google Account Security stops all its workspace connections.`,
               }),
             ],
           })
-        : (0, p.jsxs)(`section`, {
+        : (0, m.jsxs)(`section`, {
             children: [
-              (0, p.jsx)(`p`, {
+              (0, m.jsx)(`p`, {
                 role: `status`,
                 children:
                   r === `loading`
@@ -713,7 +709,7 @@ function v({ client: e }) {
                     : `Gmail service is unavailable. Retry or ask the operator to check Convex.`,
               }),
               r === `unavailable` &&
-                (0, p.jsx)(`button`, {
+                (0, m.jsx)(`button`, {
                   disabled: x,
                   onClick: () => void G(),
                   children: `Retry`,

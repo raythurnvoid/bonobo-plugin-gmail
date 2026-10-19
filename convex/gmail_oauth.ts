@@ -203,7 +203,7 @@ export async function gmail_callback(ctx: ActionCtx, state: string, code: string
 			throw error instanceof gmail_PageError ? error : new gmail_PageError(400, "start_again");
 		}
 	}
-	return { status: attempt.status, organizationId: attempt.organizationId, workspaceId: attempt.workspaceId,
+	return { status: attempt.status, purpose: attempt.purpose, organizationId: attempt.organizationId, workspaceId: attempt.workspaceId,
 		emailAddress: attempt.stagedEmailAddress, ...(attempt.status === "awaiting_finish" && attempt.encryptedFinishCode
 			? { finishCode: await gmail_decrypt(attempt.encryptedFinishCode, `attempt:${attempt._id}:finish`) } : {}) };
 }

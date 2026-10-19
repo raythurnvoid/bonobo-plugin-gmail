@@ -1,7 +1,7 @@
 import type { BonoboClient } from "bonobo-plugin-sdk/frontend";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { z } from "zod";
-import { gmail_ApiError, gmail_page_post, gmail_status_response } from "./gmail-api";
+import { z } from "zod";
+import { gmail_ApiError, gmail_new_request_id, gmail_page_post, gmail_status_response } from "./gmail-api";
 import { register_mail_tools, type MailAccount, type MailView } from "./mail-agent-tools";
 import {
 	create_draft,
@@ -117,6 +117,10 @@ function compose_block(account: MailAccount) {
 
 /**
  * Read every connected account from the status route. It pages 25 accounts at a time.
+ *
+ * It also renews the sync's Press grant when Press stopped accepting it. A plugin update does that:
+ * Press ties each grant to the installed version, and only an open plugin page can get a new one.
+ * The Gmail page does the same, so sync keeps running for a member who only opens Mail.
  */
 async function list_accounts(client: Pick<BonoboClient, "getToken" | "refreshToken">) {
 	const accounts: MailAccount[] = [];
@@ -124,6 +128,16 @@ async function list_accounts(client: Pick<BonoboClient, "getToken" | "refreshTok
 	do {
 		const page: z.infer<typeof gmail_status_response> = await gmail_page_post(client, "/page/status", { cursor }, gmail_status_response);
 		for (const account of page.accounts) {
+			if (account.canRepair) {
+				gmail_page_post(
+					client,
+					"/page/press-repair",
+					{ accountId: account.accountId, expectedGeneration: account.connectionGeneration, clientRequestId: gmail_new_request_id() },
+					z.object({}),
+				).catch((error: unknown) => {
+					console.error("[MailApp.list_accounts] Failed to renew the Press grant", { error, accountId: account.accountId });
+				});
+			}
 			if (account.syncStatus !== "disconnected") {
 				accounts.push({
 					accountId: account.accountId,

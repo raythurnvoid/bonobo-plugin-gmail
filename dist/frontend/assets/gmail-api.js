@@ -136,13 +136,18 @@ var c = o().min(1).max(128),
     gmail_refused: `Gmail refused the request. Try again, or check the draft in Gmail.`,
     body_too_large: `This draft is too large to save.`,
   };
-function x(e) {
+function x() {
+  return [...crypto.getRandomValues(new Uint8Array(32))]
+    .map((e) => e.toString(16).padStart(2, `0`))
+    .join(``);
+}
+function S(e) {
   return e instanceof y
     ? (b[e.code] ??
         `Gmail service is unavailable. Retry or ask the operator to check Convex.`)
     : `Gmail service is unavailable. Retry or ask the operator to check Convex.`;
 }
-async function S(e, t, n, r, i = 2e4) {
+async function C(e, t, n, r, i = 2e4) {
   let a = await e.getToken();
   for (let o = 0; o < 2; o++) {
     let s = await fetch(`${_}${t}`, {
@@ -171,7 +176,17 @@ async function S(e, t, n, r, i = 2e4) {
   }
   throw new y(`press_access_changed`);
 }
-function C(e, t) {
+function w(e, t) {
   return e === null ? `unchecked` : t - e > 10 * 6e4 ? `delayed` : `recent`;
 }
-export { S as a, h as c, g as i, C as n, f as o, x as r, m as s, y as t };
+export {
+  x as a,
+  m as c,
+  g as i,
+  h as l,
+  w as n,
+  C as o,
+  S as r,
+  f as s,
+  y as t,
+};

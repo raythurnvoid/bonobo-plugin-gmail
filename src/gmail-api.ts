@@ -122,6 +122,13 @@ const messages: Record<string, string> = {
 };
 
 /**
+ * A random 64-character hex id. The backend uses it to recognize a repeated request.
+ */
+export function gmail_new_request_id() {
+	return [...crypto.getRandomValues(new Uint8Array(32))].map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+/**
  * The text a page shows for a backend error code.
  */
 export function gmail_error_message(error: unknown) {

@@ -205,6 +205,8 @@ http.route({
 		};
 		let content: string;
 		let status = 200;
+		// Match the Press page. An error before the attempt is read keeps the Connect heading.
+		let heading = "Connect Gmail";
 		try {
 			const url = new URL(request.url);
 			const state = url.searchParams.get("state");
@@ -220,6 +222,7 @@ http.route({
 			)
 				throw new gmail_PageError(400, "invalid_callback");
 			const result = await gmail_callback(ctx, state, code, !!denial);
+			if (result.purpose === "compose") heading = "Allow drafts and Send";
 			content =
 				result.status === "finished"
 					? "<p>Gmail is connected. You can close this tab.</p>"
@@ -235,7 +238,7 @@ http.route({
 			content = `<p>${message}</p>`;
 		}
 		return new Response(
-			`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect Gmail</title><style>body{font:16px system-ui;max-width:640px;margin:40px auto;padding:20px;line-height:1.5}textarea{display:block;width:100%;font:16px monospace;box-sizing:border-box}code{overflow-wrap:anywhere}</style></head><body><h1>Connect Gmail</h1>${content}</body></html>`,
+			`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${heading}</title><style>body{font:16px system-ui;max-width:640px;margin:40px auto;padding:20px;line-height:1.5}textarea{display:block;width:100%;font:16px monospace;box-sizing:border-box}code{overflow-wrap:anywhere}</style></head><body><h1>${heading}</h1>${content}</body></html>`,
 			{ status, headers },
 		);
 	}),
