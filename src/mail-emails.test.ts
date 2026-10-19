@@ -77,4 +77,24 @@ describe("create_mailbox_walk", () => {
 		expect((await walk.next())?.map((row) => row.path.slice(row.path.lastIndexOf("/") + 1))).toEqual(["31-old-1.md"]);
 		expect(await walk.next()).toBeNull();
 	});
+
+	test("orders one day's emails by Gmail id, not by subject", async () => {
+		const names = ["19-alpha-19a0000000000002.md", "19-zulu-19a0000000000001.md", "19-mike-19a0000000000003.md", "18-zulu-19a0000000000000.md"];
+		const fetchJson = vi.fn(async (_path: string, body: { path: string }) => ({
+			status: 200,
+			body: {
+				items: names.map((name) => ({ name, kind: "file", path: `${body.path}/${name}` })),
+				cursor: "",
+				isDone: true,
+			},
+		}));
+		const walk = create_mailbox_walk({ fetchJson } as unknown as BonoboClient, "/emails/me/2026/10");
+
+		expect((await walk.next())?.map((row) => row.path.slice(row.path.lastIndexOf("/") + 1))).toEqual([
+			"19-mike-19a0000000000003.md",
+			"19-alpha-19a0000000000002.md",
+			"19-zulu-19a0000000000001.md",
+			"18-zulu-19a0000000000000.md",
+		]);
+	});
 });

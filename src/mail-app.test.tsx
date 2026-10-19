@@ -29,6 +29,7 @@ const account = {
 afterEach(() => {
 	cleanup();
 	vi.unstubAllGlobals();
+	vi.useRealTimers();
 });
 
 describe("MailApp", () => {
@@ -57,5 +58,53 @@ describe("MailApp", () => {
 
 		await vi.waitFor(() => expect(requests.map((request) => request.path)).toContain("/page/press-repair"));
 		expect(requests.find((request) => request.path === "/page/press-repair")?.body).toMatchObject({ accountId: "account", expectedGeneration: 1 });
+	});
+
+	test("shows new mail at the top after the sync saved it", async () => {
+		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+		let messagesSynced = 4;
+		const tree: Record<string, string[]> = {
+			"/emails/ray-example.com": ["2026"],
+			"/emails/ray-example.com/2026": ["10"],
+			"/emails/ray-example.com/2026/10": ["19-old-mail-19a0000000000001.md"],
+		};
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL) => {
+				const path = new URL(String(input)).pathname;
+				if (path === "/page/status") {
+					const binding = { organizationId: "org", workspaceId: "workspace", installationId: "installation", actorUserId: "actor" };
+					return Response.json({ binding, canWrite: true, cursor: null, attempt: null, accounts: [{ ...account, canRepair: false, messagesSynced }] });
+				}
+				return Response.json(path === "/page/drafts/list" ? { drafts: [], cursor: null } : {});
+			}),
+		);
+		const client = {
+			getToken: async () => "plu_test",
+			refreshToken: async () => "plu_new",
+			fetchJson: async (path: string, body: { path: string }) =>
+				path === "/api/v1/files/list"
+					? {
+							status: 200,
+							body: {
+								items: (tree[body.path] ?? []).map((name) => ({ name, kind: name.endsWith(".md") ? "file" : "folder", path: `${body.path}/${name}` })),
+								cursor: "",
+								isDone: true,
+							},
+						}
+					: { status: 404, body: { message: "Not found" } },
+			agent: { registerTool: () => () => {} },
+		} as unknown as BonoboClient;
+
+		render(<MailApp client={client} />);
+		await vi.waitFor(() => expect(document.body.textContent).toContain("old mail"));
+
+		tree["/emails/ray-example.com/2026/10"].push("20-new-mail-19a0000000000002.md");
+		messagesSynced = 5;
+		await vi.advanceTimersByTimeAsync(15_000);
+
+		await vi.waitFor(() =>
+			expect([...document.querySelectorAll(".mail-row-subject")].map((element) => element.textContent)).toEqual(["new mail", "old mail"]),
+		);
 	});
 });

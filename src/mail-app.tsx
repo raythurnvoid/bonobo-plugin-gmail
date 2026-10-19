@@ -47,6 +47,12 @@ const AUTOSAVE_DELAY_MS = 10_000;
  */
 const DRAFTS_POLL_MS = 5000;
 
+/**
+ * Read the sync status this often while the page is visible. The email list is read again only
+ * when the sync saved more emails.
+ */
+const NEW_MAIL_POLL_MS = 15_000;
+
 type Selection = { kind: "email"; path: string } | { kind: "draft"; id: string } | null;
 
 type ReplyDraft = { fields: DraftFields; replyToGmailMessageId: string | null };
@@ -120,15 +126,19 @@ function compose_block(account: MailAccount) {
  *
  * It also renews the sync's Press grant when Press stopped accepting it. A plugin update does that:
  * Press ties each grant to the installed version, and only an open plugin page can get a new one.
- * The Gmail page does the same, so sync keeps running for a member who only opens Mail.
+ * The Gmail page does the same, so sync keeps running for a member who only opens Mail. Renew only
+ * when the page loads (`repair`), so the new-mail check does not ask for a grant every few seconds.
+ *
+ * `messagesSynced` maps each account id to how many emails the sync saved so far.
  */
-async function list_accounts(client: Pick<BonoboClient, "getToken" | "refreshToken">) {
+async function list_accounts(client: Pick<BonoboClient, "getToken" | "refreshToken">, repair: boolean) {
 	const accounts: MailAccount[] = [];
+	const messagesSynced = new Map<string, number>();
 	let cursor: string | null = null;
 	do {
 		const page: z.infer<typeof gmail_status_response> = await gmail_page_post(client, "/page/status", { cursor }, gmail_status_response);
 		for (const account of page.accounts) {
-			if (account.canRepair) {
+			if (repair && account.canRepair) {
 				gmail_page_post(
 					client,
 					"/page/press-repair",
@@ -146,11 +156,12 @@ async function list_accounts(client: Pick<BonoboClient, "getToken" | "refreshTok
 					canCompose: account.canCompose,
 					isComposer: account.isComposer,
 				});
+				messagesSynced.set(account.accountId, account.messagesSynced);
 			}
 		}
 		cursor = page.cursor;
 	} while (cursor !== null);
-	return accounts;
+	return { accounts, messagesSynced };
 }
 
 export function MailApp(props: { client: BonoboClient }) {
@@ -330,6 +341,31 @@ export function MailApp(props: { client: BonoboClient }) {
 		}
 	};
 
+	/**
+	 * Put new mail at the top. A new walk reads only the newest folder of emails, and its rows replace
+	 * that folder's rows in the list. Rows already in the list keep the headers they read.
+	 */
+	const show_new_mail = (fromWalk: MailboxWalk, accountPath: string) => {
+		create_mailbox_walk(client, accountPath)
+			.next()
+			.then((newest) => {
+				if (walkRef.current !== fromWalk || newest === null) {
+					return;
+				}
+				const newestPaths = new Set(newest.map((row) => row.path));
+				setRows((current) => {
+					// The first fill has not added the newest folder yet. It will add it with the new mail.
+					if (current.length === 0) {
+						return current;
+					}
+					const known = new Map(current.map((row) => [row.path, row]));
+					return [...newest.map((row) => known.get(row.path) ?? row), ...current.filter((row) => !newestPaths.has(row.path))];
+				});
+			})
+			// Keep the list as it is. The next new email tries again.
+			.catch(() => {});
+	};
+
 	const pump_row_reads = () => {
 		while (rowReadsActiveRef.current < ROW_READ_CONCURRENCY) {
 			const path = rowReadQueueRef.current.shift();
@@ -356,10 +392,10 @@ export function MailApp(props: { client: BonoboClient }) {
 
 	// Find the connected accounts once.
 	useEffect(() => {
-		list_accounts(client).then(
+		list_accounts(client, true).then(
 			(found) => {
-				setAccounts(found);
-				setAccountId(found[0]?.accountId ?? null);
+				setAccounts(found.accounts);
+				setAccountId(found.accounts[0]?.accountId ?? null);
 			},
 			(listAccountsError: unknown) => {
 				setAccounts([]);
@@ -416,6 +452,39 @@ export function MailApp(props: { client: BonoboClient }) {
 		const timer = setInterval(read, DRAFTS_POLL_MS);
 		return () => clearInterval(timer);
 	}, [client, account?.accountId, composeBlock]);
+
+	// Check for new mail every 15 seconds while the page is visible. The first check only records
+	// the count, because the list was just read.
+	useEffect(() => {
+		if (walk === null || account === null) {
+			return;
+		}
+
+		const { accountId, destinationPath } = account;
+		let lastSynced: number | null = null;
+		const check = () => {
+			if (document.visibilityState !== "visible") {
+				return;
+			}
+			list_accounts(client, false).then(
+				(found) => {
+					const synced = found.messagesSynced.get(accountId);
+					if (synced === undefined) {
+						return;
+					}
+					if (lastSynced !== null && synced > lastSynced) {
+						show_new_mail(walk, destinationPath);
+					}
+					lastSynced = synced;
+				},
+				// A failed check tries again on the next tick.
+				() => {},
+			);
+		};
+		check();
+		const timer = setInterval(check, NEW_MAIL_POLL_MS);
+		return () => clearInterval(timer);
+	}, [client, walk]);
 
 	// Register the agent tools for as long as the page is open.
 	useEffect(

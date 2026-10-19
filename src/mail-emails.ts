@@ -120,6 +120,17 @@ export async function read_email(client: BonoboClient, path: string) {
 type ListedChild = { path: string; name: string; kind: "folder" | "file" };
 
 /**
+ * Sort key for an email file: its day, then its Gmail id. A plain name sort would put one day's
+ * emails in subject order. Gmail ids grow with time in practice, so the id puts them in time order.
+ * Google does not promise this. If it is ever wrong, only the order inside one day changes.
+ */
+function email_sort_key(name: string) {
+	const match = /^(\d{2})-.*-([0-9a-f]{1,16})\.md$/u.exec(name);
+	// Pad the id, so a string sort is a number sort.
+	return match ? `${match[1]}-${match[2].padStart(16, "0")}` : name;
+}
+
+/**
  * List every child of one folder, following the cursor.
  *
  * This reads the whole folder. That is fine for the Gmail layout: an account folder holds years, a
@@ -164,8 +175,8 @@ async function list_folder(client: BonoboClient, path: string) {
 /**
  * Walk one account newest first, one folder of emails per `next()` call.
  *
- * The walk keeps a stack of folders. Names are years, months, and `DD-...` file names, so a reverse
- * name sort is a newest-first sort.
+ * The walk keeps a stack of folders. Folder names are years and months, so a reverse name sort is a
+ * newest-first sort. Files sort by `email_sort_key`.
  */
 export type MailboxWalk = { next(): Promise<EmailRow[] | null> };
 
@@ -185,14 +196,14 @@ export function create_mailbox_walk(client: BonoboClient, accountPath: string): 
 				// Take the folder off the stack only after it was listed, so a failed list is tried again.
 				const children = await list_folder(client, folderPath);
 				top.folders.shift();
-				const by_name_desc = (a: ListedChild, b: ListedChild) => (a.name < b.name ? 1 : a.name > b.name ? -1 : 0);
+				const desc = (a: string, b: string) => (a < b ? 1 : a > b ? -1 : 0);
 				// The Gmail plugin saves attachments in a `<email>-attachments` folder next to the email.
 				const folders = children
 					.filter((child) => child.kind === "folder" && !child.name.endsWith("-attachments"))
-					.sort(by_name_desc);
+					.sort((a, b) => desc(a.name, b.name));
 				const files = children
 					.filter((child) => child.kind === "file" && child.name.endsWith(".md"))
-					.sort(by_name_desc);
+					.sort((a, b) => desc(email_sort_key(a.name), email_sort_key(b.name)));
 
 				if (folders.length > 0) {
 					stack.push({ folders: folders.map((folder) => folder.path) });

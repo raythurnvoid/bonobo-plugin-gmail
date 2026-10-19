@@ -154,7 +154,11 @@ async function N(e, t) {
   }
   return te(t, n.body.content);
 }
-async function P(e, t) {
+function P(e) {
+  let t = /^(\d{2})-.*-([0-9a-f]{1,16})\.md$/u.exec(e);
+  return t ? `${t[1]}-${t[2].padStart(16, `0`)}` : e;
+}
+async function ne(e, t) {
   let n = [],
     r = null;
   for (;;) {
@@ -189,7 +193,7 @@ async function P(e, t) {
     r = i.body.cursor;
   }
 }
-function ne(e, t) {
+function re(e, t) {
   let n = [{ folders: [t] }];
   return {
     async next() {
@@ -200,17 +204,17 @@ function ne(e, t) {
           n.pop();
           continue;
         }
-        let i = await P(e, r);
+        let i = await ne(e, r);
         t.folders.shift();
-        let a = (e, t) => (e.name < t.name ? 1 : e.name > t.name ? -1 : 0),
+        let a = (e, t) => (e < t ? 1 : e > t ? -1 : 0),
           o = i
             .filter(
               (e) => e.kind === `folder` && !e.name.endsWith(`-attachments`),
             )
-            .sort(a),
+            .sort((e, t) => a(e.name, t.name)),
           s = i
             .filter((e) => e.kind === `file` && e.name.endsWith(`.md`))
-            .sort(a);
+            .sort((e, t) => a(P(e.name), P(t.name)));
         if (
           (o.length > 0 && n.push({ folders: o.map((e) => e.path) }),
           s.length > 0)
@@ -242,7 +246,7 @@ function H(e, t) {
 function U(e) {
   return e.slice(0, L).map((e) => H(e, I));
 }
-function W(e) {
+function ie(e) {
   return {
     path: e.path,
     from: H(e.headers.from, I),
@@ -254,7 +258,7 @@ function W(e) {
     body: H(e.body, F),
   };
 }
-function re(e) {
+function W(e) {
   return {
     draftId: e.clientDraftId,
     to: U(e.to),
@@ -264,7 +268,7 @@ function re(e) {
     editedByAgent: e.agentEditedAt !== null,
   };
 }
-function G(e) {
+function ae(e) {
   return {
     draftId: e.clientDraftId,
     to: U(e.to),
@@ -275,19 +279,19 @@ function G(e) {
     editedByAgent: e.agentEditedAt !== null,
   };
 }
-function K(e) {
+function G(e) {
   if (typeof e != `object` || !e || Array.isArray(e))
     throw Error(`The input must be an object`);
   return e;
 }
-function q(e, t) {
+function K(e, t) {
   let n = e[t];
   if (n !== void 0) {
     if (typeof n != `string`) throw Error(`${t} must be a string`);
     return n;
   }
 }
-function J(e, t) {
+function q(e, t) {
   let n = e[t];
   if (n !== void 0) {
     if (!Array.isArray(n) || !n.every((e) => typeof e == `string`))
@@ -295,12 +299,12 @@ function J(e, t) {
     return n;
   }
 }
-function Y(e, t) {
+function J(e, t) {
   if (e === void 0) throw Error(`${t} is required`);
   return e;
 }
-function ie(e) {
-  let t = Y(q(e, `draftId`), `draftId`);
+function Y(e) {
+  let t = J(K(e, `draftId`), `draftId`);
   if (
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(t)
   )
@@ -309,7 +313,7 @@ function ie(e) {
     );
   return t;
 }
-function ae(e, t) {
+function oe(e, t) {
   let n = () => {
       let e = t.getView().account;
       if (!e)
@@ -338,8 +342,8 @@ function ae(e, t) {
           account: n.account?.emailAddress ?? null,
           canWriteDrafts: n.account?.canCompose ?? !1,
           folder: n.folder,
-          openEmail: n.openEmail ? W(n.openEmail) : null,
-          openDraft: r ? G(r) : null,
+          openEmail: n.openEmail ? ie(n.openEmail) : null,
+          openDraft: r ? ae(r) : null,
           emails: n.rows
             .slice(0, R)
             .map((e) => ({
@@ -353,25 +357,25 @@ function ae(e, t) {
         };
       }),
       i(`open_email`, async (n) => {
-        let r = Y(q(K(n), `path`), `path`);
+        let r = J(K(G(n), `path`), `path`);
         if (!r.startsWith(`/`) || !r.endsWith(`.md`))
           throw Error(`path must be a Files path that ends with .md`);
         let i = await N(e, r);
-        return (t.showEmail(i), W(i));
+        return (t.showEmail(i), ie(i));
       }),
       i(`list_drafts`, () => ({
-        drafts: t.getView().drafts.map(re),
+        drafts: t.getView().drafts.map(W),
         note: `These are the newest drafts, without their text. To read one, ask the member to open it, then call get_view.`,
       })),
       i(`create_draft`, async (i) => {
-        let a = K(i),
+        let a = G(i),
           o = {
-            to: Y(J(a, `to`), `to`),
-            cc: J(a, `cc`) ?? [],
-            subject: Y(q(a, `subject`), `subject`),
-            body: Y(q(a, `body`), `body`),
+            to: J(q(a, `to`), `to`),
+            cc: q(a, `cc`) ?? [],
+            subject: J(K(a, `subject`), `subject`),
+            body: J(K(a, `body`), `body`),
           },
-          s = q(a, `replyToPath`);
+          s = K(a, `replyToPath`);
         y(o);
         let c = n(),
           l = null;
@@ -400,15 +404,15 @@ function ae(e, t) {
         );
       }),
       i(`update_draft`, async (r) => {
-        let i = K(r),
-          a = ie(i),
+        let i = G(r),
+          a = Y(i),
           o = n(),
           s = await x(e, o.accountId, a),
           c = {
-            to: J(i, `to`) ?? s.to,
-            cc: J(i, `cc`) ?? s.cc,
-            subject: q(i, `subject`) ?? s.subject,
-            body: q(i, `body`) ?? s.body,
+            to: q(i, `to`) ?? s.to,
+            cc: q(i, `cc`) ?? s.cc,
+            subject: K(i, `subject`) ?? s.subject,
+            body: K(i, `body`) ?? s.body,
           };
         return (
           await C(e, {
@@ -423,7 +427,7 @@ function ae(e, t) {
         );
       }),
       i(`delete_draft`, async (r) => {
-        let i = ie(K(r));
+        let i = Y(G(r));
         return (
           await w(e, n().accountId, i),
           await t.refreshDrafts().catch(() => {}),
@@ -435,23 +439,24 @@ function ae(e, t) {
     for (let e of a) e();
   };
 }
-var oe = 45e3;
-async function se(e, t) {
-  await u(e, `/page/drafts/send`, t, a({ sent: o() }), oe);
+var se = 45e3;
+async function ce(e, t) {
+  await u(e, `/page/drafts/send`, t, a({ sent: o() }), se);
 }
 var X = n(),
-  ce = 30,
-  le = 4,
-  ue = 3e3,
-  de = 1e4,
-  fe = 5e3;
-function pe(e) {
+  le = 30,
+  ue = 4,
+  de = 3e3,
+  fe = 1e4,
+  pe = 5e3,
+  me = 15e3;
+function he(e) {
   let t = new Date(e);
   return Number.isNaN(t.getTime())
     ? ``
     : t.toLocaleString(void 0, { dateStyle: `medium`, timeStyle: `short` });
 }
-function me(e) {
+function ge(e) {
   let t = /^\s*"?([^"<]+?)"?\s*<[^>]+>\s*$/u.exec(e);
   return t ? t[1] : e;
 }
@@ -467,11 +472,11 @@ function Q(e) {
 function $(e) {
   return /<([^<>]+)>\s*$/u.exec(e)?.[1] ?? e;
 }
-function he(e) {
+function _e(e) {
   let t = /^re:/iu.test(e.headers.subject)
       ? e.headers.subject
       : `Re: ${e.headers.subject}`,
-    n = (e.body.length > ue ? `${e.body.slice(0, ue)}…` : e.body)
+    n = (e.body.length > de ? `${e.body.slice(0, de)}…` : e.body)
       .split(
         `
 `,
@@ -483,59 +488,62 @@ function he(e) {
       to: e.headers.direction === `sent` ? e.headers.to : [e.headers.from],
       cc: [],
       subject: t,
-      body: `\n\nOn ${pe(e.headers.date)}, ${e.headers.from} wrote:\n${n}`,
+      body: `\n\nOn ${he(e.headers.date)}, ${e.headers.from} wrote:\n${n}`,
     },
     replyToGmailMessageId: e.headers.gmailMessageId,
   };
 }
-function ge(e) {
+function ve(e) {
   return e.isComposer
     ? e.canCompose
       ? null
       : `Drafts are off for ${e.emailAddress}. Open the Gmail page and press Allow drafts and Send.`
     : `Only the member who connected ${e.emailAddress} can write drafts for it.`;
 }
-async function _e(e) {
-  let t = [],
-    n = null;
+async function ye(e, t) {
+  let n = [],
+    r = new Map(),
+    i = null;
   do {
-    let r = await u(e, `/page/status`, { cursor: n }, l);
-    for (let n of r.accounts)
-      (n.canRepair &&
+    let o = await u(e, `/page/status`, { cursor: i }, l);
+    for (let i of o.accounts)
+      (t &&
+        i.canRepair &&
         u(
           e,
           `/page/press-repair`,
           {
-            accountId: n.accountId,
-            expectedGeneration: n.connectionGeneration,
+            accountId: i.accountId,
+            expectedGeneration: i.connectionGeneration,
             clientRequestId: c(),
           },
           a({}),
         ).catch((e) => {
           console.error(
             `[MailApp.list_accounts] Failed to renew the Press grant`,
-            { error: e, accountId: n.accountId },
+            { error: e, accountId: i.accountId },
           );
         }),
-        n.syncStatus !== `disconnected` &&
-          t.push({
-            accountId: n.accountId,
-            emailAddress: n.emailAddress,
-            destinationPath: n.destinationPath,
-            canCompose: n.canCompose,
-            isComposer: n.isComposer,
-          }));
-    n = r.cursor;
-  } while (n !== null);
-  return t;
+        i.syncStatus !== `disconnected` &&
+          (n.push({
+            accountId: i.accountId,
+            emailAddress: i.emailAddress,
+            destinationPath: i.destinationPath,
+            canCompose: i.canCompose,
+            isComposer: i.isComposer,
+          }),
+          r.set(i.accountId, i.messagesSynced)));
+    i = o.cursor;
+  } while (i !== null);
+  return { accounts: n, messagesSynced: r };
 }
-function ve(e) {
+function be(e) {
   let { client: t } = e,
     [n, r] = (0, p.useState)(null),
     [i, a] = (0, p.useState)(null),
     [o, s] = (0, p.useState)(`all`),
     [c, l] = (0, p.useState)([]),
-    [u, d] = (0, p.useState)(ce),
+    [u, d] = (0, p.useState)(le),
     [f, m] = (0, p.useState)(!1),
     [h, g] = (0, p.useState)(!1),
     [_, v] = (0, p.useState)(null),
@@ -545,91 +553,91 @@ function ve(e) {
     [O, k] = (0, p.useState)(null),
     [A, j] = (0, p.useState)(!1),
     [M, te] = (0, p.useState)(null),
-    [P, F] = (0, p.useState)(null),
-    [I, L] = (0, p.useState)(null),
-    R = n?.find((e) => e.accountId === i) ?? null,
-    z = R ? ge(R) : null,
-    B = (0, p.useMemo)(
-      () => (R === null ? null : ne(t, R.destinationPath)),
-      [t, R?.destinationPath],
+    [P, ne] = (0, p.useState)(null),
+    [F, I] = (0, p.useState)(null),
+    L = n?.find((e) => e.accountId === i) ?? null,
+    R = L ? ve(L) : null,
+    z = (0, p.useMemo)(
+      () => (L === null ? null : re(t, L.destinationPath)),
+      [t, L?.destinationPath],
     ),
-    V = (0, p.useRef)(null),
-    H = (0, p.useRef)(!1),
-    U = (0, p.useRef)([]),
-    W = (0, p.useRef)(new Set()),
-    re = (0, p.useRef)(0),
-    G = (0, p.useRef)(null),
-    K = (0, p.useRef)({
-      account: R,
+    B = (0, p.useRef)(null),
+    V = (0, p.useRef)(!1),
+    H = (0, p.useRef)([]),
+    U = (0, p.useRef)(new Set()),
+    ie = (0, p.useRef)(0),
+    W = (0, p.useRef)(null),
+    ae = (0, p.useRef)({
+      account: L,
       folder: o,
       rows: c,
       openEmail: C,
       openDraftId: null,
       drafts: [],
     });
-  K.current = {
-    account: R,
+  ae.current = {
+    account: L,
     folder: o,
     rows: c,
     openEmail: y?.kind === `email` ? C : null,
     openDraftId: y?.kind === `draft` ? y.id : null,
     drafts: O ?? [],
   };
-  let q = async () => {
-      let e = K.current.account;
-      if (e === null || ge(e) !== null) return;
+  let G = async () => {
+      let e = ae.current.account;
+      if (e === null || ve(e) !== null) return;
       let n = await b(t, e.accountId, null);
-      K.current.account?.accountId === e.accountId &&
+      ae.current.account?.accountId === e.accountId &&
         (te(null), k(n.drafts), j(n.cursor !== null));
     },
-    J = () => {
-      q().catch(() => {});
+    K = () => {
+      G().catch(() => {});
     },
-    Y = (e) => {
-      ((G.current = e.path),
+    q = (e) => {
+      ((W.current = e.path),
         s(`all`),
         x({ kind: `email`, path: e.path }),
         w(e),
         E(null));
     },
-    ie = (e) => {
-      ((G.current = e),
+    J = (e) => {
+      ((W.current = e),
         x({ kind: `email`, path: e }),
         w(null),
         E(null),
         N(t, e).then(
           (t) => {
-            G.current === e && w(t);
+            W.current === e && w(t);
           },
           (t) => {
-            G.current === e && E(D(t));
+            W.current === e && E(D(t));
           },
         ));
     },
-    oe = (e) => {
-      ((G.current = null), s(`drafts`), x({ kind: `draft`, id: e }), L(null));
+    Y = (e) => {
+      ((W.current = null), s(`drafts`), x({ kind: `draft`, id: e }), I(null));
     },
     se = (e) => {
-      if (R === null) return;
+      if (L === null) return;
       let n = ee();
-      (F(null),
-        S(t, { accountId: R.accountId, clientDraftId: n, ...e, byAgent: !1 })
-          .then(() => q().catch(() => {}))
+      (ne(null),
+        S(t, { accountId: L.accountId, clientDraftId: n, ...e, byAgent: !1 })
+          .then(() => G().catch(() => {}))
           .then(
-            () => oe(n),
-            (e) => F(D(e)),
+            () => Y(n),
+            (e) => ne(D(e)),
           ));
     },
-    ue = (e, t, n) => {
-      H.current ||
-        ((H.current = !0),
+    ce = (e, t, n) => {
+      V.current ||
+        ((V.current = !0),
         g(!0),
         v(null),
         (async () => {
           let r = t;
           for (; r < n; ) {
             let t = await e.next();
-            if (V.current !== e) return;
+            if (B.current !== e) return;
             if (t === null) {
               m(!0);
               return;
@@ -638,22 +646,39 @@ function ve(e) {
           }
         })()
           .catch((t) => {
-            V.current === e && v(D(t));
+            B.current === e && v(D(t));
           })
           .finally(() => {
-            ((H.current = !1), V.current === e && g(!1));
+            ((V.current = !1), B.current === e && g(!1));
           }));
     },
     de = () => {
-      if (B === null || h) return;
-      let e = u + ce;
-      (d(e), c.length < e && !f && ue(B, c.length, e));
+      if (z === null || h) return;
+      let e = u + le;
+      (d(e), c.length < e && !f && ce(z, c.length, e));
+    },
+    fe = (e, n) => {
+      re(t, n)
+        .next()
+        .then((t) => {
+          if (B.current !== e || t === null) return;
+          let n = new Set(t.map((e) => e.path));
+          l((e) => {
+            if (e.length === 0) return e;
+            let r = new Map(e.map((e) => [e.path, e]));
+            return [
+              ...t.map((e) => r.get(e.path) ?? e),
+              ...e.filter((e) => !n.has(e.path)),
+            ];
+          });
+        })
+        .catch(() => {});
     },
     Q = () => {
-      for (; re.current < le; ) {
-        let e = U.current.shift();
+      for (; ie.current < ue; ) {
+        let e = H.current.shift();
         if (e === void 0) return;
-        ((re.current += 1),
+        ((ie.current += 1),
           N(t, e)
             .then(
               (t) =>
@@ -665,14 +690,14 @@ function ve(e) {
               () => {},
             )
             .finally(() => {
-              (--re.current, Q());
+              (--ie.current, Q());
             }));
       }
     };
   ((0, p.useEffect)(() => {
-    _e(t).then(
+    ye(t, !0).then(
       (e) => {
-        (r(e), a(e[0]?.accountId ?? null));
+        (r(e.accounts), a(e.accounts[0]?.accountId ?? null));
       },
       (e) => {
         (r([]), v(D(e)));
@@ -684,39 +709,57 @@ function ve(e) {
         k(null),
         x(null),
         w(null),
-        (G.current = null),
-        d(ce),
+        (W.current = null),
+        d(le),
         m(!1),
         g(!1),
-        (U.current = []),
-        W.current.clear(),
-        (V.current = B),
-        (H.current = !1),
-        B !== null && ue(B, 0, ce));
-    }, [B]),
+        (H.current = []),
+        U.current.clear(),
+        (B.current = z),
+        (V.current = !1),
+        z !== null && ce(z, 0, le));
+    }, [z]),
     (0, p.useEffect)(() => {
       for (let e of c.slice(0, u))
         e.headers === null &&
-          !W.current.has(e.path) &&
-          (W.current.add(e.path), U.current.push(e.path));
+          !U.current.has(e.path) &&
+          (U.current.add(e.path), H.current.push(e.path));
       Q();
     }, [t, c, u]),
     (0, p.useEffect)(() => {
-      if (R === null || z !== null) return;
+      if (L === null || R !== null) return;
       let e = () => {
-        document.visibilityState === `visible` && q().catch((e) => te(D(e)));
+        document.visibilityState === `visible` && G().catch((e) => te(D(e)));
       };
       e();
-      let t = setInterval(e, fe);
+      let t = setInterval(e, pe);
       return () => clearInterval(t);
-    }, [t, R?.accountId, z]),
+    }, [t, L?.accountId, R]),
+    (0, p.useEffect)(() => {
+      if (z === null || L === null) return;
+      let { accountId: e, destinationPath: n } = L,
+        r = null,
+        i = () => {
+          document.visibilityState === `visible` &&
+            ye(t, !1).then(
+              (t) => {
+                let i = t.messagesSynced.get(e);
+                i !== void 0 && (r !== null && i > r && fe(z, n), (r = i));
+              },
+              () => {},
+            );
+        };
+      i();
+      let a = setInterval(i, me);
+      return () => clearInterval(a);
+    }, [t, z]),
     (0, p.useEffect)(
       () =>
-        ae(t, {
-          getView: () => K.current,
-          showEmail: Y,
-          showDraft: oe,
-          refreshDrafts: q,
+        oe(t, {
+          getView: () => ae.current,
+          showEmail: q,
+          showDraft: Y,
+          refreshDrafts: G,
         }),
       [t],
     ));
@@ -733,7 +776,7 @@ function ve(e) {
         children: [
           (0, X.jsx)(`button`, {
             className: `button is-primary`,
-            disabled: R === null || z !== null,
+            disabled: L === null || R !== null,
             onClick: () =>
               se({
                 fields: { to: [], cc: [], subject: ``, body: `` },
@@ -748,9 +791,9 @@ function ve(e) {
                 role: `alert`,
                 children: P,
               }),
-          z === null
+          R === null
             ? null
-            : (0, X.jsx)(`p`, { className: `mail-status`, children: z }),
+            : (0, X.jsx)(`p`, { className: `mail-status`, children: R }),
           (0, X.jsx)(`button`, {
             className: `mail-rail-item`,
             "aria-current": o === `all` ? `page` : void 0,
@@ -820,7 +863,7 @@ function ve(e) {
                                   ? `true`
                                   : void 0,
                               "data-direction": e.headers?.direction ?? void 0,
-                              onClick: () => ie(e.path),
+                              onClick: () => J(e.path),
                               children: [
                                 (0, X.jsx)(`span`, {
                                   className: `mail-row-from`,
@@ -828,13 +871,13 @@ function ve(e) {
                                     e.headers === null
                                       ? ``
                                       : e.headers.direction === `sent`
-                                        ? `To: ${me(e.headers.to[0] ?? ``)}`
-                                        : me(e.headers.from),
+                                        ? `To: ${ge(e.headers.to[0] ?? ``)}`
+                                        : ge(e.headers.from),
                                 }),
                                 (0, X.jsx)(`span`, {
                                   className: `mail-row-date`,
                                   children: e.headers
-                                    ? pe(e.headers.date)
+                                    ? he(e.headers.date)
                                     : e.day,
                                 }),
                                 (0, X.jsx)(`span`, {
@@ -855,7 +898,7 @@ function ve(e) {
                         children: `Loading…`,
                       })
                     : null,
-                  !h && B !== null && (c.length > u || !f)
+                  !h && z !== null && (c.length > u || !f)
                     ? (0, X.jsx)(`button`, {
                         className: `button mail-more`,
                         onClick: de,
@@ -873,11 +916,11 @@ function ve(e) {
               })
             : (0, X.jsxs)(X.Fragment, {
                 children: [
-                  z === null
+                  R === null
                     ? null
                     : (0, X.jsx)(`p`, {
                         className: `mail-status`,
-                        children: z,
+                        children: R,
                       }),
                   M === null
                     ? null
@@ -904,7 +947,7 @@ function ve(e) {
                               y?.kind === `draft` && y.id === e.clientDraftId
                                 ? `true`
                                 : void 0,
-                            onClick: () => oe(e.clientDraftId),
+                            onClick: () => Y(e.clientDraftId),
                             children: [
                               (0, X.jsx)(`span`, {
                                 className: `mail-row-from`,
@@ -946,14 +989,14 @@ function ve(e) {
       (0, X.jsxs)(`main`, {
         className: `mail-reader`,
         children: [
-          I === null
+          F === null
             ? null
             : (0, X.jsx)(`p`, {
                 className: `mail-status`,
                 role: `status`,
-                children: I,
+                children: F,
               }),
-          y === null && I === null
+          y === null && F === null
             ? (0, X.jsx)(`p`, {
                 className: `mail-status`,
                 children: `Choose an email or a draft.`,
@@ -967,10 +1010,10 @@ function ve(e) {
                     role: `status`,
                     children: `Opening…`,
                   })
-                : (0, X.jsx)(ye, {
+                : (0, X.jsx)(xe, {
                     email: C,
-                    replyBlock: z,
-                    onReply: () => se(he(C)),
+                    replyBlock: R,
+                    onReply: () => se(_e(C)),
                   })
               : (0, X.jsx)(`p`, {
                   className: `mail-status is-error`,
@@ -978,17 +1021,17 @@ function ve(e) {
                   children: T,
                 })
             : null,
-          y?.kind === `draft` && R !== null
+          y?.kind === `draft` && L !== null
             ? $ !== null && !$.saving
               ? (0, X.jsx)(
-                  be,
+                  Se,
                   {
                     client: t,
-                    accountId: R.accountId,
+                    accountId: L.accountId,
                     draft: $,
-                    onChanged: J,
+                    onChanged: K,
                     onClosed: (e) => {
-                      (x(null), L(e), J());
+                      (x(null), I(e), K());
                     },
                   },
                   `${$.clientDraftId}:${$.agentEditedAt ?? 0}`,
@@ -1007,7 +1050,7 @@ function ve(e) {
     ],
   });
 }
-function ye(e) {
+function xe(e) {
   let { email: t, replyBlock: n, onReply: r } = e;
   return (0, X.jsxs)(`article`, {
     className: `mail-email`,
@@ -1032,7 +1075,7 @@ function ye(e) {
                   })
                 : null,
               (0, X.jsx)(`dt`, { children: `Date` }),
-              (0, X.jsx)(`dd`, { children: pe(t.headers.date) }),
+              (0, X.jsx)(`dd`, { children: he(t.headers.date) }),
             ],
           }),
           (0, X.jsxs)(`div`, {
@@ -1058,7 +1101,7 @@ function ye(e) {
     ],
   });
 }
-function be(e) {
+function Se(e) {
   let { client: t, accountId: n, draft: r, onChanged: i, onClosed: a } = e,
     [o, s] = (0, p.useState)(null),
     [c, l] = (0, p.useState)(null),
@@ -1109,12 +1152,12 @@ function be(e) {
           (await w(t, n, r.clientDraftId), a(`Draft deleted.`));
         }, `Deleted`));
     },
-    F = () => {
+    re = () => {
       let e = j();
       (b(!1),
         T(!0),
         O({ text: `Sending…`, isError: !1 }),
-        se(t, { ...k, fields: e }).then(
+        ce(t, { ...k, fields: e }).then(
           () => a(`Sent: ${e.subject || `(no subject)`}`),
           (t) => {
             T(!1);
@@ -1155,7 +1198,7 @@ function be(e) {
     }, [t, n, r.clientDraftId]),
     (0, p.useEffect)(() => {
       if (!y) return;
-      let e = setTimeout(N, de);
+      let e = setTimeout(N, fe);
       return () => clearTimeout(e);
     }, [y, u, m, g, v]),
     c !== null)
@@ -1171,8 +1214,8 @@ function be(e) {
       role: `status`,
       children: `Opening the draft…`,
     });
-  let I = [...Q(u), ...Q(m)].map($),
-    L = () => {
+  let F = [...Q(u), ...Q(m)].map($),
+    I = () => {
       y && N();
     };
   return (0, X.jsxs)(`form`, {
@@ -1201,7 +1244,7 @@ function be(e) {
           (0, X.jsx)(`input`, {
             value: u,
             readOnly: S,
-            onBlur: L,
+            onBlur: I,
             onInput: (e) => {
               (d(e.currentTarget.value), b(!0));
             },
@@ -1216,7 +1259,7 @@ function be(e) {
           (0, X.jsx)(`input`, {
             value: m,
             readOnly: S,
-            onBlur: L,
+            onBlur: I,
             onInput: (e) => {
               (h(e.currentTarget.value), b(!0));
             },
@@ -1231,7 +1274,7 @@ function be(e) {
           (0, X.jsx)(`input`, {
             value: g,
             readOnly: S,
-            onBlur: L,
+            onBlur: I,
             onInput: (e) => {
               (_(e.currentTarget.value), b(!0));
             },
@@ -1245,7 +1288,7 @@ function be(e) {
           (0, X.jsx)(`textarea`, {
             value: v,
             readOnly: S,
-            onBlur: L,
+            onBlur: I,
             onInput: (e) => {
               (ee(e.currentTarget.value), b(!0));
             },
@@ -1254,10 +1297,10 @@ function be(e) {
       }),
       (0, X.jsx)(`p`, {
         className: `mail-note`,
-        "data-mail-send-recipients": I.join(`,`),
+        "data-mail-send-recipients": F.join(`,`),
         children:
-          I.length > 0
-            ? `Send goes to: ${I.join(`, `)}`
+          F.length > 0
+            ? `Send goes to: ${F.join(`, `)}`
             : `Add a recipient to send.`,
       }),
       (0, X.jsxs)(`div`, {
@@ -1266,8 +1309,8 @@ function be(e) {
           (0, X.jsx)(`button`, {
             className: `button is-primary`,
             type: `button`,
-            disabled: S || I.length === 0,
-            onClick: F,
+            disabled: S || F.length === 0,
+            onClick: re,
             children: `Send`,
           }),
           (0, X.jsx)(`button`, {
@@ -1308,4 +1351,4 @@ function be(e) {
     ],
   });
 }
-export { ve as MailApp };
+export { be as MailApp };

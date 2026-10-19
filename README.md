@@ -37,6 +37,8 @@ After each plugin update, open the Gmail or Mail page once. Press ties the sync'
 
 The Mail page lists the emails the sync saved in Files, newest first, and opens one as text. Anyone who can open the page and read those files can read mail there.
 
+File names keep only the day, so inside one day the page orders emails by their Gmail id. Gmail ids grow with time in practice, but Google does not promise it. If that ever changes, only the order inside one day is off. While the page is open, it checks the sync status every 15 seconds. When the sync saved more emails, it reads the newest folder again and shows the new mail at the top.
+
 Drafts are real Gmail drafts:
 
 - Only the member who connected the account, in this installation, can write drafts and send. It also needs **Allow drafts and Send**. Other members can read but not write.
