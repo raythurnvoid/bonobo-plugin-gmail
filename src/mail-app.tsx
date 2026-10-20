@@ -126,19 +126,23 @@ function compose_block(account: MailAccount) {
  *
  * It also renews the sync's Press grant when Press stopped accepting it. A plugin update does that:
  * Press ties each grant to the installed version, and only an open plugin page can get a new one.
- * The Gmail page does the same, so sync keeps running for a member who only opens Mail. Renew only
- * when the page loads (`repair`), so the new-mail check does not ask for a grant every few seconds.
+ * The Gmail page does the same, so sync keeps running for a member who only opens Mail. The sync
+ * notices a refused grant only at its next Press write, which can be minutes after the page loaded,
+ * so the new-mail check calls this too. Like the Gmail page, renew once per account connection while
+ * the page is open (`repaired`).
  *
  * `messagesSynced` maps each account id to how many emails the sync saved so far.
  */
-async function list_accounts(client: Pick<BonoboClient, "getToken" | "refreshToken">, repair: boolean) {
+async function list_accounts(client: Pick<BonoboClient, "getToken" | "refreshToken">, repaired: Set<string>) {
 	const accounts: MailAccount[] = [];
 	const messagesSynced = new Map<string, number>();
 	let cursor: string | null = null;
 	do {
 		const page: z.infer<typeof gmail_status_response> = await gmail_page_post(client, "/page/status", { cursor }, gmail_status_response);
 		for (const account of page.accounts) {
-			if (repair && account.canRepair) {
+			const repairKey = `${account.accountId}:${account.connectionGeneration}`;
+			if (account.canRepair && !repaired.has(repairKey)) {
+				repaired.add(repairKey);
 				gmail_page_post(
 					client,
 					"/page/press-repair",
@@ -201,6 +205,8 @@ export function MailApp(props: { client: BonoboClient }) {
 	const rowReadsActiveRef = useRef(0);
 	// The email the member asked for last. A slower read of an older click is dropped.
 	const requestedEmailRef = useRef<string | null>(null);
+	// Account connections whose Press grant this page already renewed.
+	const repairedRef = useRef(new Set<string>());
 
 	// The agent tools run outside React. Give them the latest view on every call.
 	const viewRef = useRef<MailView>({ account, folder, rows, openEmail, openDraftId: null, drafts: [] });
@@ -392,7 +398,7 @@ export function MailApp(props: { client: BonoboClient }) {
 
 	// Find the connected accounts once.
 	useEffect(() => {
-		list_accounts(client, true).then(
+		list_accounts(client, repairedRef.current).then(
 			(found) => {
 				setAccounts(found.accounts);
 				setAccountId(found.accounts[0]?.accountId ?? null);
@@ -453,8 +459,8 @@ export function MailApp(props: { client: BonoboClient }) {
 		return () => clearInterval(timer);
 	}, [client, account?.accountId, composeBlock]);
 
-	// Check for new mail every 15 seconds while the page is visible. The first check only records
-	// the count, because the list was just read.
+	// Check for new mail every 15 seconds while the page is visible. The same status read renews a
+	// refused Press grant. The first check only records the count, because the list was just read.
 	useEffect(() => {
 		if (walk === null || account === null) {
 			return;
@@ -466,7 +472,7 @@ export function MailApp(props: { client: BonoboClient }) {
 			if (document.visibilityState !== "visible") {
 				return;
 			}
-			list_accounts(client, false).then(
+			list_accounts(client, repairedRef.current).then(
 				(found) => {
 					const synced = found.messagesSynced.get(accountId);
 					if (synced === undefined) {

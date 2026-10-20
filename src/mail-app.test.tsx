@@ -33,7 +33,10 @@ afterEach(() => {
 });
 
 describe("MailApp", () => {
-	test("renews the sync's Press grant when Press stopped accepting it", async () => {
+	test("renews the sync's Press grant once when Press stops accepting it after the page loaded", async () => {
+		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+		// The sync notices the refused grant only at its next Press write, a while after the page loaded.
+		let canRepair = false;
 		const requests: { path: string; body: unknown }[] = [];
 		vi.stubGlobal(
 			"fetch",
@@ -42,7 +45,7 @@ describe("MailApp", () => {
 				requests.push({ path, body: JSON.parse(String(init?.body)) });
 				if (path === "/page/status") {
 					const binding = { organizationId: "org", workspaceId: "workspace", installationId: "installation", actorUserId: "actor" };
-					return Response.json({ binding, canWrite: true, cursor: null, attempt: null, accounts: [account] });
+					return Response.json({ binding, canWrite: true, cursor: null, attempt: null, accounts: [{ ...account, canRepair }] });
 				}
 				return Response.json(path === "/page/drafts/list" ? { drafts: [], cursor: null } : {});
 			}),
@@ -55,9 +58,16 @@ describe("MailApp", () => {
 		} as unknown as BonoboClient;
 
 		render(<MailApp client={client} />);
+		await vi.waitFor(() => expect(requests.filter((request) => request.path === "/page/status").length).toBeGreaterThanOrEqual(2));
 
+		canRepair = true;
+		await vi.advanceTimersByTimeAsync(15_000);
 		await vi.waitFor(() => expect(requests.map((request) => request.path)).toContain("/page/press-repair"));
-		expect(requests.find((request) => request.path === "/page/press-repair")?.body).toMatchObject({ accountId: "account", expectedGeneration: 1 });
+		await vi.advanceTimersByTimeAsync(30_000);
+
+		const repairs = requests.filter((request) => request.path === "/page/press-repair");
+		expect(repairs).toHaveLength(1);
+		expect(repairs[0].body).toMatchObject({ accountId: "account", expectedGeneration: 1 });
 	});
 
 	test("shows new mail at the top after the sync saved it", async () => {

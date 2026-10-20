@@ -31,7 +31,7 @@ Set these on the plugin backend. Never commit them or put them on Press.
 
 Connect asks Google only for the Gmail read-only scope. **Allow drafts and Send** asks again, for read-only plus `gmail.compose`. Only the member who connected the account sees that button. Each step requires Google consent and an authenticated Finish step on the original Press page. Disconnect clears saved Gmail access and keeps Files. Disconnect before uninstalling.
 
-After each plugin update, open the Gmail or Mail page once. Press ties the sync's Press grant to the installed version, so after an update Press refuses it. Sync then stops with "Press connection needs attention". Only an open plugin page can get a new grant, and both pages do it on their own when they load.
+After each plugin update, open the Gmail or Mail page and keep it open until sync runs again. Press ties the sync's Press grant to the installed version, so after an update Press refuses it. Sync then stops with "Press connection needs attention". Sync notices this only at its next Press write, which can be minutes after the update. Only an open plugin page can get a new grant. Both pages check the sync status while they are open (Gmail every 5 seconds, Mail every 15 seconds) and renew the grant on their own, once per connection.
 
 ## Mail page
 
