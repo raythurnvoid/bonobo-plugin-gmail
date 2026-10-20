@@ -37,6 +37,21 @@ describe("status", () => {
 		expect(second.accounts.map(account => account.accountId)).toEqual([matchingIds[25], accountId]);
 		expect(second.cursor).toBeNull();
 	});
+
+	test("reports the Gmail time of the newest saved email, not of a newer email still in the queue", async () => {
+		const { t, actor, ledgerId } = await gmail_test_fixture();
+		await t.run(async ctx => {
+			const { _id, _creationTime, ...row } = (await ctx.db.get(ledgerId))!;
+			await ctx.db.patch(ledgerId, { internalDate: 1_700_000_000_000 });
+			await ctx.db.insert("messages_ledger", { ...row, gmailMessageId: "older", internalDate: 1_600_000_000_000 });
+			await ctx.db.insert("messages_ledger", { ...row, gmailMessageId: "queued", internalDate: 1_750_000_000_000,
+				emailWritten: false, filePath: null });
+		});
+
+		const status = await t.query(internal.gmail_accounts.status, { ...actor, canWrite: false,
+			paginationOpts: { numItems: 25, cursor: null } });
+		expect(status.accounts[0].newestEmailAt).toBe(1_700_000_000_000);
+	});
 });
 
 describe("disconnect", () => {

@@ -91,6 +91,9 @@ const public_account = v.object({
 	nextSyncAt: v.union(v.number(), v.null()),
 	nextPermissionRetryAt: v.union(v.number(), v.null()),
 	lastSyncedAt: v.union(v.number(), v.null()),
+	// Gmail `internalDate` of the newest saved email, or null before the first one. Backfill saves
+	// older mail, so this grows only when newer mail is saved.
+	newestEmailAt: v.union(v.number(), v.null()),
 });
 
 export const status = internalQuery({
@@ -174,6 +177,12 @@ export const status = internalQuery({
 				"sync_error",
 			];
 			const isComposer = account.hostActorUserId === args.actorUserId && account.hostInstallationId === args.installationId;
+			// The worker saves `internalDate` together with the file path, so a saved row always has one.
+			const newestEmail = await ctx.db
+				.query("messages_ledger")
+				.withIndex("by_account_emailWritten_internalDate", (q) => q.eq("accountId", account._id).eq("emailWritten", true))
+				.order("desc")
+				.first();
 			accounts.push({
 				accountId: account._id,
 				emailAddress: account.emailAddress,
@@ -209,6 +218,7 @@ export const status = internalQuery({
 				nextSyncAt: account.nextSyncAt,
 				nextPermissionRetryAt,
 				lastSyncedAt: account.lastSyncedAt,
+				newestEmailAt: newestEmail?.internalDate ?? null,
 			});
 		}
 		let pending = null;

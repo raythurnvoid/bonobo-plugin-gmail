@@ -120,6 +120,8 @@ export default defineSchema({
 		error: nullableString, deletedAt: nullableNumber, updatedAt: v.number(),
 	})
 		.index("by_account_gmailMessageId", ["accountId", "gmailMessageId"])
+		// The status route reads the newest saved email from here.
+		.index("by_account_emailWritten_internalDate", ["accountId", "emailWritten", "internalDate"])
 		.index("by_account_status_nextAttemptAt", ["accountId", "status", "nextAttemptAt"])
 		.index("by_account_permissionHeld_status_nextAttemptAt", ["accountId", "permissionHeld", "status", "nextAttemptAt"])
 		.index("by_account_permissionHeld_settlementNeeded_nextAttemptAt", ["accountId", "permissionHeld", "settlementNeeded", "nextAttemptAt"]),

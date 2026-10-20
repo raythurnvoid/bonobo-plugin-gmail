@@ -56,6 +56,7 @@ function account() {
     nextSyncAt: Date.now() + 60_000,
     nextPermissionRetryAt: null,
     lastSyncedAt: Date.now(),
+    newestEmailAt: null,
   };
 }
 function visible(state: "visible" | "hidden") {

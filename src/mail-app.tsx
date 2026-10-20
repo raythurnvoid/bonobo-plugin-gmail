@@ -49,7 +49,7 @@ const DRAFTS_POLL_MS = 5000;
 
 /**
  * Read the sync status this often while the page is visible. The email list is read again only
- * when the sync saved more emails.
+ * when the sync saved a newer email.
  */
 const NEW_MAIL_POLL_MS = 15_000;
 
@@ -131,11 +131,12 @@ function compose_block(account: MailAccount) {
  * so the new-mail check calls this too. Like the Gmail page, renew once per account connection while
  * the page is open (`repaired`).
  *
- * `messagesSynced` maps each account id to how many emails the sync saved so far.
+ * `newestEmailAt` maps each account id to the Gmail time of its newest saved email, or 0 before the
+ * first one. Backfill saves older mail, so only newer mail makes it grow.
  */
 async function list_accounts(client: Pick<BonoboClient, "getToken" | "refreshToken">, repaired: Set<string>) {
 	const accounts: MailAccount[] = [];
-	const messagesSynced = new Map<string, number>();
+	const newestEmailAt = new Map<string, number>();
 	let cursor: string | null = null;
 	do {
 		const page: z.infer<typeof gmail_status_response> = await gmail_page_post(client, "/page/status", { cursor }, gmail_status_response);
@@ -160,12 +161,12 @@ async function list_accounts(client: Pick<BonoboClient, "getToken" | "refreshTok
 					canCompose: account.canCompose,
 					isComposer: account.isComposer,
 				});
-				messagesSynced.set(account.accountId, account.messagesSynced);
+				newestEmailAt.set(account.accountId, account.newestEmailAt ?? 0);
 			}
 		}
 		cursor = page.cursor;
 	} while (cursor !== null);
-	return { accounts, messagesSynced };
+	return { accounts, newestEmailAt };
 }
 
 export function MailApp(props: { client: BonoboClient }) {
@@ -179,6 +180,8 @@ export function MailApp(props: { client: BonoboClient }) {
 	const [walkDone, setWalkDone] = useState(false);
 	const [loading, setLoading] = useState(false);
 	const [listError, setListError] = useState<string | null>(null);
+	// Folders the member cannot open. The walk skips them.
+	const [lockedFolders, setLockedFolders] = useState<string[]>([]);
 	const [selection, setSelection] = useState<Selection>(null);
 	const [openEmail, setOpenEmail] = useState<Email | null>(null);
 	const [readerError, setReaderError] = useState<string | null>(null);
@@ -255,6 +258,10 @@ export function MailApp(props: { client: BonoboClient }) {
 		setSelection({ kind: "email", path });
 		setOpenEmail(null);
 		setReaderError(null);
+		if (rows.some((row) => row.path === path && row.locked)) {
+			setReaderError(`You cannot open ${path}. It is locked in Files. Ask a member who can manage it to give you access.`);
+			return;
+		}
 		read_email(client, path).then(
 			(email) => {
 				if (requestedEmailRef.current === path) {
@@ -312,6 +319,7 @@ export function MailApp(props: { client: BonoboClient }) {
 				if (walkRef.current !== fromWalk) {
 					return;
 				}
+				setLockedFolders([...fromWalk.lockedFolders]);
 				if (next === null) {
 					setWalkDone(true);
 					return;
@@ -419,6 +427,7 @@ export function MailApp(props: { client: BonoboClient }) {
 		requestedEmailRef.current = null;
 		setVisibleCount(PAGE_SIZE);
 		setWalkDone(false);
+		setLockedFolders([]);
 		setLoading(false);
 		rowReadQueueRef.current = [];
 		rowReadQueuedRef.current.clear();
@@ -434,7 +443,8 @@ export function MailApp(props: { client: BonoboClient }) {
 	// Queue a read for each shown row that was not read yet.
 	useEffect(() => {
 		for (const row of rows.slice(0, visibleCount)) {
-			if (row.headers === null && !rowReadQueuedRef.current.has(row.path)) {
+			// A locked file answers 403, so do not read it.
+			if (!row.locked && row.headers === null && !rowReadQueuedRef.current.has(row.path)) {
 				rowReadQueuedRef.current.add(row.path);
 				rowReadQueueRef.current.push(row.path);
 			}
@@ -460,28 +470,28 @@ export function MailApp(props: { client: BonoboClient }) {
 	}, [client, account?.accountId, composeBlock]);
 
 	// Check for new mail every 15 seconds while the page is visible. The same status read renews a
-	// refused Press grant. The first check only records the count, because the list was just read.
+	// refused Press grant. The first check only records the time, because the list was just read.
 	useEffect(() => {
 		if (walk === null || account === null) {
 			return;
 		}
 
 		const { accountId, destinationPath } = account;
-		let lastSynced: number | null = null;
+		let lastNewest: number | null = null;
 		const check = () => {
 			if (document.visibilityState !== "visible") {
 				return;
 			}
 			list_accounts(client, repairedRef.current).then(
 				(found) => {
-					const synced = found.messagesSynced.get(accountId);
-					if (synced === undefined) {
+					const newest = found.newestEmailAt.get(accountId);
+					if (newest === undefined) {
 						return;
 					}
-					if (lastSynced !== null && synced > lastSynced) {
+					if (lastNewest !== null && newest > lastNewest) {
 						show_new_mail(walk, destinationPath);
 					}
-					lastSynced = synced;
+					lastNewest = newest;
 				},
 				// A failed check tries again on the next tick.
 				() => {},
@@ -558,6 +568,17 @@ export function MailApp(props: { client: BonoboClient }) {
 						{accounts !== null && accounts.length === 0 && listError === null ? (
 							<p className="mail-status">No Gmail account is connected. Connect one on the Gmail page.</p>
 						) : null}
+						{account !== null && lockedFolders.includes(account.destinationPath) ? (
+							<p className="mail-status is-error" role="alert" data-mail-locked-folders={lockedFolders.join(",")}>
+								You cannot open {account.destinationPath}, so Mail cannot show its emails. Ask a member who can
+								manage this folder in Files to give you access.
+							</p>
+						) : lockedFolders.length > 0 ? (
+							<p className="mail-status" data-mail-locked-folders={lockedFolders.join(",")}>
+								Mail skipped emails in folders you cannot open: {lockedFolders.join(", ")}. Ask a member who can
+								manage them in Files to give you access.
+							</p>
+						) : null}
 						<ul className="mail-rows">
 							{rows.slice(0, visibleCount).map((row) => (
 								<li key={row.path}>
@@ -565,10 +586,13 @@ export function MailApp(props: { client: BonoboClient }) {
 										className="mail-row"
 										aria-current={selection?.kind === "email" && selection.path === row.path ? "true" : undefined}
 										data-direction={row.headers?.direction ?? undefined}
+										data-locked={row.locked ? "" : undefined}
 										onClick={() => open_email(row.path)}
 									>
 										<span className="mail-row-from">
-											{row.headers === null
+											{row.locked ? (
+												<span className="mail-badge">Locked</span>
+											) : row.headers === null
 												? ""
 												: row.headers.direction === "sent"
 													? `To: ${sender_name(row.headers.to[0] ?? "")}`

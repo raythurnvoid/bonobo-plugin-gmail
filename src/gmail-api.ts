@@ -74,6 +74,7 @@ export const gmail_status_response = z.object({
 				nextSyncAt: time,
 				nextPermissionRetryAt: time,
 				lastSyncedAt: time,
+				newestEmailAt: time,
 			}),
 		)
 		.max(25),

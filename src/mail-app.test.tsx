@@ -24,6 +24,7 @@ const account = {
 	nextSyncAt: null,
 	nextPermissionRetryAt: null,
 	lastSyncedAt: 1_800_000_000_000,
+	newestEmailAt: 1_800_000_000_000,
 };
 
 afterEach(() => {
@@ -70,9 +71,11 @@ describe("MailApp", () => {
 		expect(repairs[0].body).toMatchObject({ accountId: "account", expectedGeneration: 1 });
 	});
 
-	test("shows new mail at the top after the sync saved it", async () => {
+	test("reads the list again only when the sync saved a newer email", async () => {
 		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
 		let messagesSynced = 4;
+		let newestEmailAt = 1_800_000_000_000;
+		let listCalls = 0;
 		const tree: Record<string, string[]> = {
 			"/emails/ray-example.com": ["2026"],
 			"/emails/ray-example.com/2026": ["10"],
@@ -84,7 +87,7 @@ describe("MailApp", () => {
 				const path = new URL(String(input)).pathname;
 				if (path === "/page/status") {
 					const binding = { organizationId: "org", workspaceId: "workspace", installationId: "installation", actorUserId: "actor" };
-					return Response.json({ binding, canWrite: true, cursor: null, attempt: null, accounts: [{ ...account, canRepair: false, messagesSynced }] });
+					return Response.json({ binding, canWrite: true, cursor: null, attempt: null, accounts: [{ ...account, canRepair: false, messagesSynced, newestEmailAt }] });
 				}
 				return Response.json(path === "/page/drafts/list" ? { drafts: [], cursor: null } : {});
 			}),
@@ -92,25 +95,35 @@ describe("MailApp", () => {
 		const client = {
 			getToken: async () => "plu_test",
 			refreshToken: async () => "plu_new",
-			fetchJson: async (path: string, body: { path: string }) =>
-				path === "/api/v1/files/list"
-					? {
-							status: 200,
-							body: {
-								items: (tree[body.path] ?? []).map((name) => ({ name, kind: name.endsWith(".md") ? "file" : "folder", path: `${body.path}/${name}` })),
-								cursor: "",
-								isDone: true,
-							},
-						}
-					: { status: 404, body: { message: "Not found" } },
+			fetchJson: async (path: string, body: { path: string }) => {
+				if (path !== "/api/v1/files/list") {
+					return { status: 404, body: { message: "Not found" } };
+				}
+				listCalls += 1;
+				return {
+					status: 200,
+					body: {
+						items: (tree[body.path] ?? []).map((name) => ({ name, kind: name.endsWith(".md") ? "file" : "folder", locked: false, path: `${body.path}/${name}` })),
+						cursor: "",
+						isDone: true,
+					},
+				};
+			},
 			agent: { registerTool: () => () => {} },
 		} as unknown as BonoboClient;
 
 		render(<MailApp client={client} />);
 		await vi.waitFor(() => expect(document.body.textContent).toContain("old mail"));
 
-		tree["/emails/ray-example.com/2026/10"].push("20-new-mail-19a0000000000002.md");
+		// Backfill saved an older email. The newest email did not change, so the list is not read again.
+		const listCallsAfterLoad = listCalls;
 		messagesSynced = 5;
+		await vi.advanceTimersByTimeAsync(15_000);
+		expect(listCalls).toBe(listCallsAfterLoad);
+
+		tree["/emails/ray-example.com/2026/10"].push("20-new-mail-19a0000000000002.md");
+		messagesSynced = 6;
+		newestEmailAt += 60_000;
 		await vi.advanceTimersByTimeAsync(15_000);
 
 		await vi.waitFor(() =>

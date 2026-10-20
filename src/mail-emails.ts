@@ -26,12 +26,14 @@ export type Email = {
 /**
  * One row in the message list. `subject` and `day` come from the file path, so a row is useful
  * before its file is read. `headers` is null until the file was read, and stays null when the read
- * failed.
+ * failed. A `locked` row is a file the member cannot open in Files. It shows its name only and is
+ * never read.
  */
 export type EmailRow = {
 	path: string;
 	subject: string;
 	day: string;
+	locked: boolean;
 	headers: EmailHeaders | null;
 };
 
@@ -117,7 +119,7 @@ export async function read_email(client: BonoboClient, path: string) {
 	return parse_email_markdown(path, answer.body.content);
 }
 
-type ListedChild = { path: string; name: string; kind: "folder" | "file" };
+type ListedChild = { path: string; name: string; kind: "folder" | "file"; locked: boolean };
 
 /**
  * Sort key for an email file: its day, then its Gmail id. A plain name sort would put one day's
@@ -135,6 +137,8 @@ function email_sort_key(name: string) {
  *
  * This reads the whole folder. That is fine for the Gmail layout: an account folder holds years, a
  * year holds months, and only a month folder holds emails, so one folder is one month of mail.
+ *
+ * Returns null when the member cannot open the folder.
  */
 async function list_folder(client: BonoboClient, path: string) {
 	const children: ListedChild[] = [];
@@ -153,8 +157,11 @@ async function list_folder(client: BonoboClient, path: string) {
 			continue;
 		}
 		// A locked folder answers 403, and a folder moved away after its parent was listed answers 404.
-		// Trying again never helps, so skip it and keep reading older mail.
-		if (answer.status === 403 || answer.status === 404) {
+		// Trying again never helps, so the walk skips it and keeps reading older mail.
+		if (answer.status === 403) {
+			return null;
+		}
+		if (answer.status === 404) {
 			return [];
 		}
 		if (answer.status !== 200 || answer.body === null || !("items" in answer.body) || answer.body.items === undefined) {
@@ -163,7 +170,7 @@ async function list_folder(client: BonoboClient, path: string) {
 		}
 
 		for (const item of answer.body.items) {
-			children.push({ path: item.path, name: item.name, kind: item.kind });
+			children.push({ path: item.path, name: item.name, kind: item.kind, locked: item.locked });
 		}
 		if (answer.body.isDone) {
 			return children;
@@ -177,13 +184,18 @@ async function list_folder(client: BonoboClient, path: string) {
  *
  * The walk keeps a stack of folders. Folder names are years and months, so a reverse name sort is a
  * newest-first sort. Files sort by `email_sort_key`.
+ *
+ * `lockedFolders` lists the folders the member cannot open, in the order the walk met them. The walk
+ * skips them, so the page can say which mail it could not show.
  */
-export type MailboxWalk = { next(): Promise<EmailRow[] | null> };
+export type MailboxWalk = { next(): Promise<EmailRow[] | null>; lockedFolders: string[] };
 
 export function create_mailbox_walk(client: BonoboClient, accountPath: string): MailboxWalk {
 	const stack: { folders: string[] }[] = [{ folders: [accountPath] }];
+	const lockedFolders: string[] = [];
 
 	return {
+		lockedFolders,
 		async next(): Promise<EmailRow[] | null> {
 			while (stack.length > 0) {
 				const top = stack[stack.length - 1];
@@ -196,23 +208,35 @@ export function create_mailbox_walk(client: BonoboClient, accountPath: string): 
 				// Take the folder off the stack only after it was listed, so a failed list is tried again.
 				const children = await list_folder(client, folderPath);
 				top.folders.shift();
+				if (children === null) {
+					lockedFolders.push(folderPath);
+					continue;
+				}
 				const desc = (a: string, b: string) => (a < b ? 1 : a > b ? -1 : 0);
 				// The Gmail plugin saves attachments in a `<email>-attachments` folder next to the email.
 				const folders = children
 					.filter((child) => child.kind === "folder" && !child.name.endsWith("-attachments"))
 					.sort((a, b) => desc(a.name, b.name));
+				// Listing a locked folder only answers 403, so record it here and do not list it.
+				for (const folder of folders) {
+					if (folder.locked) {
+						lockedFolders.push(folder.path);
+					}
+				}
 				const files = children
 					.filter((child) => child.kind === "file" && child.name.endsWith(".md"))
 					.sort((a, b) => desc(email_sort_key(a.name), email_sort_key(b.name)));
 
-				if (folders.length > 0) {
-					stack.push({ folders: folders.map((folder) => folder.path) });
+				const openFolders = folders.filter((folder) => !folder.locked);
+				if (openFolders.length > 0) {
+					stack.push({ folders: openFolders.map((folder) => folder.path) });
 				}
 				if (files.length > 0) {
 					return files.map((file) => ({
 						path: file.path,
 						subject: subject_from_name(file.path),
 						day: day_from_path(file.path),
+						locked: file.locked,
 						headers: null,
 					}));
 				}

@@ -97,4 +97,44 @@ describe("create_mailbox_walk", () => {
 			"18-zulu-19a0000000000000.md",
 		]);
 	});
+
+	test("marks locked emails, records locked folders, and never lists them", async () => {
+		const tree: Record<string, { name: string; kind: "folder" | "file"; locked: boolean }[]> = {
+			"/emails/me": [{ name: "2026", kind: "folder", locked: false }],
+			"/emails/me/2026": [
+				{ name: "09", kind: "folder", locked: true },
+				{ name: "10", kind: "folder", locked: false },
+			],
+			"/emails/me/2026/10": [
+				{ name: "18-open-2.md", kind: "file", locked: false },
+				{ name: "18-secret-1.md", kind: "file", locked: true },
+			],
+		};
+		// Like Press, listing a locked folder answers 403.
+		const fetchJson = vi.fn(async (_path: string, body: { path: string }) =>
+			tree[body.path]
+				? {
+						status: 200,
+						body: { items: tree[body.path].map((item) => ({ ...item, path: `${body.path}/${item.name}` })), cursor: "", isDone: true },
+					}
+				: { status: 403, body: { message: "Permission denied" } },
+		);
+		const walk = create_mailbox_walk({ fetchJson } as unknown as BonoboClient, "/emails/me");
+
+		expect((await walk.next())?.map((row) => [row.path, row.locked])).toEqual([
+			["/emails/me/2026/10/18-open-2.md", false],
+			["/emails/me/2026/10/18-secret-1.md", true],
+		]);
+		expect(await walk.next()).toBeNull();
+		expect(walk.lockedFolders).toEqual(["/emails/me/2026/09"]);
+		expect(fetchJson.mock.calls.map((call) => call[1].path)).not.toContain("/emails/me/2026/09");
+	});
+
+	test("records the account folder when the member cannot open it", async () => {
+		const fetchJson = vi.fn(async () => ({ status: 403, body: { message: "Permission denied" } }));
+		const walk = create_mailbox_walk({ fetchJson } as unknown as BonoboClient, "/emails/me");
+
+		expect(await walk.next()).toBeNull();
+		expect(walk.lockedFolders).toEqual(["/emails/me"]);
+	});
 });

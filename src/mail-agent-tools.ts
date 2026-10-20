@@ -204,6 +204,8 @@ export function register_mail_tools(client: BonoboClient, controls: MailViewCont
 					subject: cut(row.headers?.subject ?? row.subject, MAX_PREVIEW_BYTES),
 					date: row.headers?.date ?? row.day,
 					direction: row.headers?.direction ?? null,
+					// The member cannot open a locked email in Files, so open_email fails for it.
+					locked: row.locked,
 				})),
 				draftCount: view.drafts.length,
 			};
