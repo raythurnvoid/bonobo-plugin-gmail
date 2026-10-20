@@ -43,9 +43,40 @@ describe("parse_email_markdown", () => {
 	});
 });
 
+type FakeChild = { name: string; kind: "folder" | "file"; locked?: boolean };
+
+/**
+ * A fake `/api/v1/files/list` that reads `tree` like Press: it keeps only `kind`, sorts by name in
+ * `order`, pages by `limit`, and answers 403 for a folder it does not know (a locked one).
+ */
+function fake_files(tree: Record<string, FakeChild[]>) {
+	return vi.fn(async (_path: string, body: { path: string; kind?: string; order?: string; limit: number; cursor: string | null }) => {
+		const children = tree[body.path];
+		if (children === undefined) {
+			return { status: 403, body: { message: "Permission denied" } };
+		}
+		const matching = children
+			.filter((child) => body.kind === undefined || child.kind === body.kind)
+			.sort((a, b) => (a.name < b.name ? -1 : 1) * (body.order === "desc" ? -1 : 1));
+		const start = Number(body.cursor ?? 0);
+		return {
+			status: 200,
+			body: {
+				items: matching
+					.slice(start, start + body.limit)
+					.map((child) => ({ ...child, locked: child.locked ?? false, path: `${body.path}/${child.name}` })),
+				cursor: String(start + body.limit),
+				isDone: start + body.limit >= matching.length,
+			},
+		};
+	});
+}
+
+const names = (rows: { path: string }[] | null) => rows?.map((row) => row.path.slice(row.path.lastIndexOf("/") + 1));
+
 describe("create_mailbox_walk", () => {
-	test("returns month folders newest first and skips empty and attachment folders", async () => {
-		const tree: Record<string, { name: string; kind: "folder" | "file" }[]> = {
+	test("returns days newest first and skips empty and attachment folders", async () => {
+		const fetchJson = fake_files({
 			"/emails/me": [
 				{ name: "2025", kind: "folder" },
 				{ name: "2026", kind: "folder" },
@@ -62,63 +93,78 @@ describe("create_mailbox_walk", () => {
 				{ name: "02-b-2-attachments", kind: "folder" },
 				{ name: "18-a-3.md", kind: "file" },
 			],
-		};
-		const fetchJson = vi.fn(async (_path: string, body: { path: string }) => ({
-			status: 200,
-			body: {
-				items: tree[body.path].map((item) => ({ ...item, path: `${body.path}/${item.name}` })),
-				cursor: "",
-				isDone: true,
-			},
-		}));
+		});
 		const walk = create_mailbox_walk({ fetchJson } as unknown as BonoboClient, "/emails/me");
 
-		expect((await walk.next())?.map((row) => row.path.slice(row.path.lastIndexOf("/") + 1))).toEqual(["18-a-3.md", "02-b-2.md"]);
-		expect((await walk.next())?.map((row) => row.path.slice(row.path.lastIndexOf("/") + 1))).toEqual(["31-old-1.md"]);
+		expect(names(await walk.next())).toEqual(["18-a-3.md"]);
+		expect(names(await walk.next())).toEqual(["02-b-2.md"]);
+		expect(names(await walk.next())).toEqual(["31-old-1.md"]);
 		expect(await walk.next()).toBeNull();
 	});
 
-	test("orders one day's emails by Gmail id, not by subject", async () => {
-		const names = ["19-alpha-19a0000000000002.md", "19-zulu-19a0000000000001.md", "19-mike-19a0000000000003.md", "18-zulu-19a0000000000000.md"];
-		const fetchJson = vi.fn(async (_path: string, body: { path: string }) => ({
-			status: 200,
-			body: {
-				items: names.map((name) => ({ name, kind: "file", path: `${body.path}/${name}` })),
-				cursor: "",
-				isDone: true,
-			},
-		}));
-		const walk = create_mailbox_walk({ fetchJson } as unknown as BonoboClient, "/emails/me/2026/10");
+	test("reads a big month one day at a time and orders each day by Gmail id", async () => {
+		const id = (n: number) => `19a${String(n).padStart(13, "0")}`;
+		// Day 20 has 120 emails and day 19 has 100. Subjects run against time, so a name sort is wrong.
+		const month: FakeChild[] = [];
+		for (let n = 0; n < 120; n++) month.push({ name: `20-s${String(999 - n)}-${id(1000 + n)}.md`, kind: "file" });
+		for (let n = 0; n < 100; n++) month.push({ name: `19-s${String(999 - n)}-${id(n)}.md`, kind: "file" });
+		const fetchJson = fake_files({
+			"/emails/me": [{ name: "2026", kind: "folder" }],
+			"/emails/me/2026": [{ name: "10", kind: "folder" }],
+			"/emails/me/2026/10": month,
+		});
+		const walk = create_mailbox_walk({ fetchJson } as unknown as BonoboClient, "/emails/me");
 
-		expect((await walk.next())?.map((row) => row.path.slice(row.path.lastIndexOf("/") + 1))).toEqual([
-			"19-mike-19a0000000000003.md",
-			"19-alpha-19a0000000000002.md",
-			"19-zulu-19a0000000000001.md",
-			"18-zulu-19a0000000000000.md",
-		]);
+		const day20 = names(await walk.next())!;
+		expect(day20).toHaveLength(120);
+		expect(day20.slice(0, 2)).toEqual([`20-s880-${id(1119)}.md`, `20-s881-${id(1118)}.md`]);
+		// Two pages of 100 hold all of day 20. The third page is read only for day 19.
+		expect(fetchJson.mock.calls.filter((call) => call[1].path === "/emails/me/2026/10")).toHaveLength(2);
+		const day19 = names(await walk.next())!;
+		expect(day19).toHaveLength(100);
+		expect(day19[0]).toBe(`19-s900-${id(99)}.md`);
+		expect(await walk.next()).toBeNull();
+	});
+
+	test("starts a month again after invalid_cursor without returning an email twice", async () => {
+		const files = fake_files({
+			"/emails/me": [{ name: "2026", kind: "folder" }],
+			"/emails/me/2026": [{ name: "10", kind: "folder" }],
+			"/emails/me/2026/10": [
+				{ name: "20-a-3.md", kind: "file" },
+				{ name: "19-b-2.md", kind: "file" },
+				{ name: "18-c-1.md", kind: "file" },
+			],
+		});
+		let refused = false;
+		// A Move somewhere in the workspace ends the cursor of the third page once, after day 20 was returned.
+		const fetchJson = vi.fn(async (path: string, body: Parameters<typeof files>[1]) => {
+			if (body.cursor === "2" && !refused) {
+				refused = true;
+				return { status: 400, body: { message: "This list cursor changed. Start a new page.", errorCode: "invalid_cursor" } };
+			}
+			return files(path, { ...body, limit: 1 });
+		});
+		const walk = create_mailbox_walk({ fetchJson } as unknown as BonoboClient, "/emails/me");
+
+		const seen: string[] = [];
+		for (let rows = await walk.next(); rows !== null; rows = await walk.next()) seen.push(...names(rows)!);
+		expect(refused).toBe(true);
+		expect(seen).toEqual(["20-a-3.md", "19-b-2.md", "18-c-1.md"]);
 	});
 
 	test("marks locked emails, records locked folders, and never lists them", async () => {
-		const tree: Record<string, { name: string; kind: "folder" | "file"; locked: boolean }[]> = {
-			"/emails/me": [{ name: "2026", kind: "folder", locked: false }],
+		const fetchJson = fake_files({
+			"/emails/me": [{ name: "2026", kind: "folder" }],
 			"/emails/me/2026": [
 				{ name: "09", kind: "folder", locked: true },
-				{ name: "10", kind: "folder", locked: false },
+				{ name: "10", kind: "folder" },
 			],
 			"/emails/me/2026/10": [
-				{ name: "18-open-2.md", kind: "file", locked: false },
+				{ name: "18-open-2.md", kind: "file" },
 				{ name: "18-secret-1.md", kind: "file", locked: true },
 			],
-		};
-		// Like Press, listing a locked folder answers 403.
-		const fetchJson = vi.fn(async (_path: string, body: { path: string }) =>
-			tree[body.path]
-				? {
-						status: 200,
-						body: { items: tree[body.path].map((item) => ({ ...item, path: `${body.path}/${item.name}` })), cursor: "", isDone: true },
-					}
-				: { status: 403, body: { message: "Permission denied" } },
-		);
+		});
 		const walk = create_mailbox_walk({ fetchJson } as unknown as BonoboClient, "/emails/me");
 
 		expect((await walk.next())?.map((row) => [row.path, row.locked])).toEqual([

@@ -1,7 +1,7 @@
 {
 	"name": "@bonobo/plugin-gmail",
 	"private": true,
-	"version": "0.3.4",
+	"version": "0.3.5",
 	"type": "module",
 	"packageManager": "pnpm@10.33.0",
 	"scripts": {
@@ -14,7 +14,7 @@
 	},
 	"dependencies": {
 		"@convex-dev/workpool": "0.4.12",
-		"bonobo-plugin-sdk": "github:raythurnvoid/bonobo-plugin-sdk#49c323cf478b1a5cd66f5618cdd7b28e516bdbe4",
+		"bonobo-plugin-sdk": "github:raythurnvoid/bonobo-plugin-sdk#ea875be3eaf4c51df85233a52fad095b8625c1b5",
 		"convex": "1.42.2",
 		"convex-helpers": "0.1.106",
 		"email-addresses": "5.0.0",

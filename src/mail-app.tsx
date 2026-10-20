@@ -200,7 +200,7 @@ export function MailApp(props: { client: BonoboClient }) {
 	);
 	// The walk that owns the list. A result from an older walk is dropped.
 	const walkRef = useRef<MailboxWalk | null>(null);
-	// The walk shares one folder stack, so only one fill may run at a time.
+	// The walk keeps one read position, so only one fill may run at a time.
 	const fillingRef = useRef(false);
 	// Row reads: paths waiting, paths already queued, and how many reads run now.
 	const rowReadQueueRef = useRef<string[]>([]);
@@ -325,8 +325,12 @@ export function MailApp(props: { client: BonoboClient }) {
 					return;
 				}
 				count += next.length;
-				// Append, so row reads that finished meanwhile are kept.
-				setRows((current) => [...current, ...next]);
+				// Append, so row reads that finished meanwhile are kept. Skip rows the list already has: new
+				// mail shown at the top can come again when a month read starts over after a Move or Rename.
+				setRows((current) => {
+					const known = new Set(current.map((row) => row.path));
+					return [...current, ...next.filter((row) => !known.has(row.path))];
+				});
 			}
 		};
 		step()
@@ -356,8 +360,8 @@ export function MailApp(props: { client: BonoboClient }) {
 	};
 
 	/**
-	 * Put new mail at the top. A new walk reads only the newest folder of emails, and its rows replace
-	 * that folder's rows in the list. Rows already in the list keep the headers they read.
+	 * Put new mail at the top. A new walk reads only the newest day of emails, and its rows replace
+	 * that day's rows in the list. Rows already in the list keep the headers they read.
 	 */
 	const show_new_mail = (fromWalk: MailboxWalk, accountPath: string) => {
 		create_mailbox_walk(client, accountPath)
@@ -368,7 +372,7 @@ export function MailApp(props: { client: BonoboClient }) {
 				}
 				const newestPaths = new Set(newest.map((row) => row.path));
 				setRows((current) => {
-					// The first fill has not added the newest folder yet. It will add it with the new mail.
+					// The first fill has not added the newest day yet. It will add it with the new mail.
 					if (current.length === 0) {
 						return current;
 					}

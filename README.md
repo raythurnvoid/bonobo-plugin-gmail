@@ -37,7 +37,7 @@ After each plugin update, open the Gmail or Mail page and keep it open until syn
 
 The Mail page lists the emails the sync saved in Files, newest first, and opens one as text. Anyone who can open the page and read those files can read mail there.
 
-File names keep only the day, so inside one day the page orders emails by their Gmail id. Gmail ids grow with time in practice, but Google does not promise it. If that ever changes, only the order inside one day is off. While the page is open, it checks the sync status every 15 seconds. When the newest saved email is newer than before, it reads the newest folder again and shows the new mail at the top. Backfill saves older emails, so it does not make the page read the list again.
+The page reads each month folder newest day first, a page of 100 files at a time, so a big month does not slow the first rows. File names keep only the day, so the page reads a whole day and then orders its emails by their Gmail id. Gmail ids grow with time in practice, but Google does not promise it. If that ever changes, only the order inside one day is off. While the page is open, it checks the sync status every 15 seconds. When the newest saved email is newer than before, it reads the newest day again and shows the new mail at the top. Backfill saves older emails, so it does not make the page read the list again.
 
 Some emails or folders may be locked in Files for the member. A locked email shows as a row with a Locked badge and cannot be opened. Mail skips a locked folder and names it above the list. When the whole account folder is locked, Mail says so and shows no emails. In each case the message asks the member to get access from someone who can manage the folder in Files.
 

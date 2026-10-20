@@ -95,7 +95,7 @@ describe("MailApp", () => {
 		const client = {
 			getToken: async () => "plu_test",
 			refreshToken: async () => "plu_new",
-			fetchJson: async (path: string, body: { path: string }) => {
+			fetchJson: async (path: string, body: { path: string; order?: string }) => {
 				if (path !== "/api/v1/files/list") {
 					return { status: 404, body: { message: "Not found" } };
 				}
@@ -103,7 +103,10 @@ describe("MailApp", () => {
 				return {
 					status: 200,
 					body: {
-						items: (tree[body.path] ?? []).map((name) => ({ name, kind: name.endsWith(".md") ? "file" : "folder", locked: false, path: `${body.path}/${name}` })),
+						// Like Press with `order: "desc"`: newest name first.
+						items: [...(tree[body.path] ?? [])]
+							.sort((x, y) => (x < y ? 1 : -1) * (body.order === "desc" ? 1 : -1))
+							.map((name) => ({ name, kind: name.endsWith(".md") ? "file" : "folder", locked: false, path: `${body.path}/${name}` })),
 						cursor: "",
 						isDone: true,
 					},

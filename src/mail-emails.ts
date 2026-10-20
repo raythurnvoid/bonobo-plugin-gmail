@@ -133,57 +133,136 @@ function email_sort_key(name: string) {
 }
 
 /**
- * List every child of one folder, following the cursor.
- *
- * This reads the whole folder. That is fine for the Gmail layout: an account folder holds years, a
- * year holds months, and only a month folder holds emails, so one folder is one month of mail.
- *
- * Returns null when the member cannot open the folder.
+ * The day part of an email file name (`DD`). A file with another name is a group of its own.
  */
-async function list_folder(client: BonoboClient, path: string) {
-	const children: ListedChild[] = [];
+function day_key(name: string) {
+	return /^(\d{2})-/u.exec(name)?.[1] ?? name;
+}
+
+/**
+ * Read one page of a folder's children of one kind, in reverse name order.
+ */
+async function list_page(client: BonoboClient, path: string, kind: "folder" | "file", cursor: string | null) {
+	const answer: BonoboHttpResponse<"/api/v1/files/list"> = await fetch_json_with_429_retry(client, "/api/v1/files/list", {
+		path,
+		kind,
+		order: "desc",
+		cursor,
+		limit: 100,
+	});
+	// A Move or Rename anywhere in the workspace ends open cursors.
+	if (answer.status === 400 && answer.body && "errorCode" in answer.body && answer.body.errorCode === "invalid_cursor") {
+		return "invalid_cursor";
+	}
+	// A locked folder answers 403, and a folder moved away after its parent was listed answers 404.
+	// Trying again never helps, so the walk skips it and keeps reading older mail.
+	if (answer.status === 403) {
+		return "locked";
+	}
+	if (answer.status === 404) {
+		return "missing";
+	}
+	if (answer.status !== 200 || answer.body === null || !("items" in answer.body) || answer.body.items === undefined) {
+		const message = answer.body && "message" in answer.body ? answer.body.message : `HTTP ${answer.status}`;
+		throw new Error(`Failed to list ${path}: ${message}`);
+	}
+
+	return {
+		children: answer.body.items.map((item): ListedChild => ({ path: item.path, name: item.name, kind: item.kind, locked: item.locked })),
+		cursor: answer.body.cursor,
+		isDone: answer.body.isDone,
+	};
+}
+
+/**
+ * List every child folder of an account or year folder, newest first. An account folder holds years
+ * and a year holds months, so this is a few rows. Returns null when the member cannot open the folder.
+ */
+async function list_folders(client: BonoboClient, path: string) {
+	const folders: ListedChild[] = [];
 	let cursor: string | null = null;
 
 	for (;;) {
-		const answer: BonoboHttpResponse<"/api/v1/files/list"> = await fetch_json_with_429_retry(client, "/api/v1/files/list", {
-			path,
-			cursor,
-			limit: 100,
-		});
-		if (answer.status === 400 && answer.body && "errorCode" in answer.body && answer.body.errorCode === "invalid_cursor") {
-			// A Move or Rename anywhere in the workspace ends open cursors. Start this folder again.
-			children.length = 0;
+		const page = await list_page(client, path, "folder", cursor);
+		if (page === "invalid_cursor") {
+			folders.length = 0;
 			cursor = null;
 			continue;
 		}
-		// A locked folder answers 403, and a folder moved away after its parent was listed answers 404.
-		// Trying again never helps, so the walk skips it and keeps reading older mail.
-		if (answer.status === 403) {
+		if (page === "locked") {
 			return null;
 		}
-		if (answer.status === 404) {
+		if (page === "missing") {
 			return [];
 		}
-		if (answer.status !== 200 || answer.body === null || !("items" in answer.body) || answer.body.items === undefined) {
-			const message = answer.body && "message" in answer.body ? answer.body.message : `HTTP ${answer.status}`;
-			throw new Error(`Failed to list ${path}: ${message}`);
-		}
 
-		for (const item of answer.body.items) {
-			children.push({ path: item.path, name: item.name, kind: item.kind, locked: item.locked });
+		folders.push(...page.children);
+		if (page.isDone) {
+			return folders;
 		}
-		if (answer.body.isDone) {
-			return children;
-		}
-		cursor = answer.body.cursor;
+		cursor = page.cursor;
 	}
 }
 
 /**
- * Walk one account newest first, one folder of emails per `next()` call.
+ * Read one month folder newest day first, one day per call. Returns "locked" when the member cannot
+ * open the month, and null after the last day.
  *
- * The walk keeps a stack of folders. Folder names are years and months, so a reverse name sort is a
- * newest-first sort. Files sort by `email_sort_key`.
+ * File names keep only the day, so inside one day the list comes in reverse subject order. The reader
+ * keeps reading pages until it sees an older day, then returns the whole day sorted by
+ * `email_sort_key`. So one call reads about one day of mail, never the whole month.
+ */
+function create_month_reader(client: BonoboClient, monthPath: string) {
+	let cursor: string | null = null;
+	let isDone = false;
+	// Files read but not returned yet, newest name first.
+	let buffer: ListedChild[] = [];
+	// After a restart the list starts again from the newest day. Skip the files already returned.
+	const returned = new Set<string>();
+
+	return async function next_day(): Promise<ListedChild[] | "locked" | null> {
+		for (;;) {
+			const day = buffer.length > 0 ? day_key(buffer[0].name) : null;
+			const end = day === null ? -1 : buffer.findIndex((file) => day_key(file.name) !== day);
+			// The first day in the buffer is whole once an older day follows it or the month ended.
+			if (day !== null && (end !== -1 || isDone)) {
+				const files = buffer.splice(0, end === -1 ? buffer.length : end);
+				for (const file of files) {
+					returned.add(file.path);
+				}
+				return files.sort((a, b) => (email_sort_key(a.name) < email_sort_key(b.name) ? 1 : -1));
+			}
+			if (isDone) {
+				return null;
+			}
+
+			const page = await list_page(client, monthPath, "file", cursor);
+			if (page === "invalid_cursor") {
+				buffer = [];
+				cursor = null;
+				continue;
+			}
+			if (page === "locked") {
+				return "locked";
+			}
+			if (page === "missing") {
+				isDone = true;
+				continue;
+			}
+			buffer.push(...page.children.filter((file) => file.name.endsWith(".md") && !returned.has(file.path)));
+			cursor = page.cursor;
+			isDone = page.isDone;
+		}
+	};
+}
+
+/**
+ * Walk one account newest first, one day of emails per `next()` call.
+ *
+ * The sync writes `<account>/<YYYY>/<MM>/<DD>-...md`, so the walk lists years, then months, then
+ * reads each month a day at a time. Year and month names are numbers of the same length, so reverse
+ * name order is newest first. Attachment folders sit next to the emails in a month, and the month
+ * read asks for files only, so it never lists them.
  *
  * `lockedFolders` lists the folders the member cannot open, in the order the walk met them. The walk
  * skips them, so the page can say which mail it could not show.
@@ -191,47 +270,37 @@ async function list_folder(client: BonoboClient, path: string) {
 export type MailboxWalk = { next(): Promise<EmailRow[] | null>; lockedFolders: string[] };
 
 export function create_mailbox_walk(client: BonoboClient, accountPath: string): MailboxWalk {
-	const stack: { folders: string[] }[] = [{ folders: [accountPath] }];
 	const lockedFolders: string[] = [];
+	// Year folders still to list, newest first. Null until the account folder was listed.
+	let years: string[] | null = null;
+	// Month folders of the listed years still to read, newest first.
+	const months: string[] = [];
+	let month: { path: string; next_day: ReturnType<typeof create_month_reader> } | null = null;
+
+	// Listing a locked folder only answers 403, so record a locked child here and do not list it.
+	const open_paths = (folders: ListedChild[]) => {
+		for (const folder of folders) {
+			if (folder.locked) {
+				lockedFolders.push(folder.path);
+			}
+		}
+		return folders.filter((folder) => !folder.locked).map((folder) => folder.path);
+	};
 
 	return {
 		lockedFolders,
 		async next(): Promise<EmailRow[] | null> {
-			while (stack.length > 0) {
-				const top = stack[stack.length - 1];
-				const folderPath = top.folders[0];
-				if (folderPath === undefined) {
-					stack.pop();
-					continue;
-				}
-
-				// Take the folder off the stack only after it was listed, so a failed list is tried again.
-				const children = await list_folder(client, folderPath);
-				top.folders.shift();
-				if (children === null) {
-					lockedFolders.push(folderPath);
-					continue;
-				}
-				const desc = (a: string, b: string) => (a < b ? 1 : a > b ? -1 : 0);
-				// The Gmail plugin saves attachments in a `<email>-attachments` folder next to the email.
-				const folders = children
-					.filter((child) => child.kind === "folder" && !child.name.endsWith("-attachments"))
-					.sort((a, b) => desc(a.name, b.name));
-				// Listing a locked folder only answers 403, so record it here and do not list it.
-				for (const folder of folders) {
-					if (folder.locked) {
-						lockedFolders.push(folder.path);
+			// Change the walk state only after a list succeeded, so a failed list is tried again.
+			for (;;) {
+				if (month !== null) {
+					const files = await month.next_day();
+					if (files === "locked") {
+						lockedFolders.push(month.path);
 					}
-				}
-				const files = children
-					.filter((child) => child.kind === "file" && child.name.endsWith(".md"))
-					.sort((a, b) => desc(email_sort_key(a.name), email_sort_key(b.name)));
-
-				const openFolders = folders.filter((folder) => !folder.locked);
-				if (openFolders.length > 0) {
-					stack.push({ folders: openFolders.map((folder) => folder.path) });
-				}
-				if (files.length > 0) {
+					if (files === "locked" || files === null) {
+						month = null;
+						continue;
+					}
 					return files.map((file) => ({
 						path: file.path,
 						subject: subject_from_name(file.path),
@@ -240,9 +309,32 @@ export function create_mailbox_walk(client: BonoboClient, accountPath: string): 
 						headers: null,
 					}));
 				}
-			}
+				if (months.length > 0) {
+					const path = months.shift()!;
+					month = { path, next_day: create_month_reader(client, path) };
+					continue;
+				}
+				if (years === null) {
+					const listed = await list_folders(client, accountPath);
+					if (listed === null) {
+						lockedFolders.push(accountPath);
+					}
+					years = listed === null ? [] : open_paths(listed);
+					continue;
+				}
 
-			return null;
+				const year = years[0];
+				if (year === undefined) {
+					return null;
+				}
+				const listed = await list_folders(client, year);
+				years.shift();
+				if (listed === null) {
+					lockedFolders.push(year);
+					continue;
+				}
+				months.push(...open_paths(listed));
+			}
 		},
 	};
 }
