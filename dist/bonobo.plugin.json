@@ -2,7 +2,7 @@
 	"schemaVersion": 1,
 	"name": "gmail",
 	"displayName": "Gmail",
-	"version": "0.3.7",
+	"version": "0.3.8",
 	"description": "Save sent and received Gmail emails and attachments in Press Files. Read them in Mail, and write Gmail drafts with the chat agent.",
 	"compatibility": { "bonoboPluginRuntime": "1" },
 	"events": [],
