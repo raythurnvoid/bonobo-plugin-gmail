@@ -59,6 +59,7 @@ async function disconnect_account(ctx: MutationCtx, account: Doc<"gmail_accounts
 	await ctx.db.patch(account._id, {
 		connectionGeneration: account.connectionGeneration + 1,
 		googleRefreshToken: null,
+		googleAccessToken: null,
 		hostGrantId: null,
 		connectRequestId: null,
 		syncStatus: "disconnected",
@@ -333,6 +334,7 @@ export const operator_disconnect = internalMutation({
 				connectionGeneration: after.connectionGeneration,
 				localSecretsCleared:
 					after.googleRefreshToken === null &&
+					after.googleAccessToken === null &&
 					after.hostGrantId === null &&
 					(!grant || (grant.sourceSecret === null && grant.interactiveSecret === null && grant.sealedSecret === null)),
 				pendingWorkStopped:
@@ -472,6 +474,7 @@ export const retry_sync = internalMutation({
 			syncError: ready ? null : account.syncError,
 			syncStatus: ready ? (account.backfillComplete ? "live" : "backfilling") : account.syncStatus,
 			nextSyncAt: ready ? Date.now() : null,
+			idleSlices: 0,
 			updatedAt: Date.now(),
 		});
 		return { _yay: null };
@@ -535,6 +538,7 @@ export const retry_failed = internalMutation({
 				failed: account.ledgerCounts.failed + held,
 			},
 			nextSyncAt: ready && nextDue !== null ? Math.min(account.nextSyncAt ?? nextDue, nextDue) : account.nextSyncAt,
+			idleSlices: 0,
 			updatedAt: Date.now(),
 		});
 		const more = !!(await ctx.db
@@ -950,6 +954,22 @@ export const save_traversal = internalMutation({
 	},
 });
 
+export const save_access_token = internalMutation({
+	args: {
+		work: gmail_worker_context,
+		refreshToken: v.string(),
+		googleAccessToken: schema.tables.gmail_accounts.validator.fields.googleAccessToken,
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const current = await worker_account(ctx, args.work);
+		// A compose swap during the slice saved a new refresh token. Do not save a token made from the old one.
+		if (!current || current.account.googleRefreshToken !== args.refreshToken) return null;
+		await ctx.db.patch(current.account._id, { googleAccessToken: args.googleAccessToken, updatedAt: Date.now() });
+		return null;
+	},
+});
+
 export const ingest_history = internalMutation({
 	args: { work: gmail_worker_context, before: traversal_checkpoint, events: v.array(gmail_history_event) },
 	returns: v.boolean(),
@@ -1018,6 +1038,32 @@ async function next_settlement(ctx: QueryCtx | MutationCtx, account: Doc<"gmail_
 	return due.length ? Math.min(...due) : null;
 }
 
+async function next_retry_at(ctx: QueryCtx | MutationCtx, account: Doc<"gmail_accounts">) {
+	if (account.ledgerCounts.pending + account.ledgerCounts.failed === 0) return null;
+	const rows = await Promise.all(
+		[false, true].flatMap((held) =>
+			(["pending", "failed"] as const).map((status) =>
+				ctx.db
+					.query("messages_ledger")
+					.withIndex("by_account_permissionHeld_status_nextAttemptAt", (q) =>
+						q
+							.eq("accountId", account._id)
+							.eq("permissionHeld", held)
+							.eq("status", status)
+							.gt("nextAttemptAt", null),
+					)
+					.first(),
+			),
+		),
+	);
+	const due = rows.flatMap((row) =>
+		row?.nextAttemptAt !== null && row?.nextAttemptAt !== undefined
+			? [Math.max(row.nextAttemptAt, row.permissionHeld ? (account.permissionProbeNotBefore ?? 0) : 0)]
+			: [],
+	);
+	return due.length ? Math.min(...due) : null;
+}
+
 export const finish_slice = internalMutation({
 	args: {
 		work: gmail_worker_context,
@@ -1032,6 +1078,10 @@ export const finish_slice = internalMutation({
 		),
 		retryAfterMs: v.union(v.number(), v.null()),
 		attachmentNote: v.union(v.literal("plan"), v.literal("storage"), v.literal("clear"), v.null()),
+		// The slice saved history, moved a cursor, or ran a retry.
+		active: v.boolean(),
+		// The slice read the last history page and found nothing to save. Keep the check time even if a later step failed.
+		checkedHistory: v.boolean(),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -1048,17 +1098,27 @@ export const finish_slice = internalMutation({
 			args.error === "credits"
 				? 3600_000
 				: Math.min(3600_000, 60_000 * 2 ** Math.min(failures - 1, 6)) * (1 + Math.random() * 0.1);
+		const succeeded = !deadHost && !temporary && !sourceError;
+		// The first sync rotates backfill, history and retry slices. Keep it at one minute, or it gets more than twice as slow.
+		const active = args.active || !account.backfillComplete;
+		const idleSlices = !succeeded ? account.idleSlices : active ? 0 : Math.min(account.idleSlices + 1, 4);
+		// Idle accounts wait 2, 4, 8, then at most 15 minutes. A due retry still runs on time.
+		const idleAt = Date.now() + Math.min(60_000 * 2 ** idleSlices, 15 * 60_000);
 		const nextSyncAt = deadHost
 			? null
 			: temporary
 				? Date.now() + Math.max(delay, args.retryAfterMs ?? 0)
 				: sourceError
 					? await next_settlement(ctx, account)
-					: Date.now() + 60_000;
+					: active
+						? Date.now() + 60_000
+						: Math.min(idleAt, (await next_retry_at(ctx, account)) ?? idleAt);
 		if (deadHost) await ctx.db.patch(current.grant._id, { phase: "blocked", error: args.error, nextAttemptAt: null });
 		await ctx.db.patch(account._id, {
 			sourceError,
-			...(args.error === "google_revoked" ? { googleRefreshToken: null } : {}),
+			...(args.error === "google_revoked" ? { googleRefreshToken: null, googleAccessToken: null } : {}),
+			...(args.checkedHistory ? { lastSyncedAt: Date.now() } : {}),
+			idleSlices,
 			syncError: args.error ?? sourceError,
 			syncStatus:
 				deadHost || temporary ? "blocked" : sourceError ? "error" : account.backfillComplete ? "live" : "backfilling",

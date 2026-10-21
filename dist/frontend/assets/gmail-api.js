@@ -178,7 +178,7 @@ async function C(e, t, n, r, i = 2e4) {
   throw new y(`press_access_changed`);
 }
 function w(e, t) {
-  return e === null ? `unchecked` : t - e > 10 * 6e4 ? `delayed` : `recent`;
+  return e === null ? `unchecked` : t - e > 20 * 6e4 ? `delayed` : `recent`;
 }
 export {
   x as a,

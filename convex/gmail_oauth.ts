@@ -266,6 +266,7 @@ export const promote = internalMutation({
 				nextSliceKind: "backfill", messagesSynced: 0, messagesSkipped: 0,
 				ledgerCounts: { pending: 0, done: 0, skipped: 0, failed: 0, given_up: 0, emailAssumed: 0, permissionHeld: 0 },
 				attachmentsSkippedReason: null, syncWorkId: null, syncRequestId: null, lastSyncedAt: null, updatedAt: Date.now(), composeGranted: false,
+				idleSlices: 0, googleAccessToken: null,
 			});
 			account = (await ctx.db.get(id))!;
 		}
@@ -276,7 +277,7 @@ export const promote = internalMutation({
 		}
 		const generation = account.connectionGeneration + 1;
 		await ctx.db.patch(account._id, { hostInstallationId: attempt.installationId, hostActorUserId: attempt.actorUserId,
-			googleRefreshToken: args.accountRefreshToken, composeGranted: attempt.stagedComposeGranted === true, connectionGeneration: generation, connectRequestId: null, hostGrantId: grant._id,
+			googleRefreshToken: args.accountRefreshToken, googleAccessToken: null, idleSlices: 0, composeGranted: attempt.stagedComposeGranted === true, connectionGeneration: generation, connectRequestId: null, hostGrantId: grant._id,
 			historyId: null, syncStatus: "backfilling", syncError: null, sourceError: null, backfillPageToken: null, backfillPage: null, backfillComplete: false,
 			historyPageToken: null, historyAnchor: null, historyPageSize: 25, nextSliceKind: "backfill", temporaryFailures: 0,
 			nextSyncAt: null, syncWorkId: null, syncRequestId: null, lastSyncedAt: null, updatedAt: Date.now() });
@@ -309,7 +310,7 @@ export const finish_upgrade = internalMutation({
 		if (!account || account.emailAddress !== attempt.stagedEmailAddress) return refused(409, "gmail_account_changed");
 		if (account.syncStatus === "disconnected" || account.hostActorUserId !== attempt.actorUserId || account.hostInstallationId !== attempt.installationId) return refused(403, "not_composer");
 		// Swap only the Google token. Sync state, the account's own Press grant and the generation stay, so sync does not start over.
-		await ctx.db.patch(account._id, { googleRefreshToken: args.accountRefreshToken, composeGranted: attempt.stagedComposeGranted === true,
+		await ctx.db.patch(account._id, { googleRefreshToken: args.accountRefreshToken, googleAccessToken: null, composeGranted: attempt.stagedComposeGranted === true,
 			connectRequestId: null, updatedAt: Date.now() });
 		// The start made a Press grant for this attempt. An upgrade does not use it, so close it now.
 		await ctx.db.patch(grant._id, { phase: "cancelled", sourceSecret: null, interactiveSecret: null, sealedSecret: null, nextAttemptAt: null, updatedAt: Date.now() });

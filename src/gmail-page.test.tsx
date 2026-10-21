@@ -185,7 +185,7 @@ describe("GmailPage", () => {
       vi.fn(async () =>
         Response.json({
           ...status(),
-          accounts: [{ ...account(), lastSyncedAt: Date.now() - 11 * 60_000 }],
+          accounts: [{ ...account(), lastSyncedAt: Date.now() - 21 * 60_000 }],
         }),
       ),
     );
@@ -197,7 +197,7 @@ describe("GmailPage", () => {
     ).toBeTruthy();
     expect(screen.queryByText(/Checking for new mail/)).toBeNull();
   });
-  test.each([null, 1_800_000_000_000 - 11 * 60_000])(
+  test.each([null, 1_800_000_000_000 - 21 * 60_000])(
     "saved backoff keeps its retry message with check time %s",
     async (lastSyncedAt) => {
       vi.stubGlobal(
@@ -501,8 +501,10 @@ describe("gmail_page_post and gmail_check_status", () => {
   });
   test("freshness comes only from the saved completed-history time", () => {
     expect(gmail_check_status(null, Date.now())).toBe("unchecked");
-    expect(gmail_check_status(Date.now() - 600_000, Date.now())).toBe("recent");
-    expect(gmail_check_status(Date.now() - 600_001, Date.now())).toBe(
+    expect(gmail_check_status(Date.now() - 1_200_000, Date.now())).toBe(
+      "recent",
+    );
+    expect(gmail_check_status(Date.now() - 1_200_001, Date.now())).toBe(
       "delayed",
     );
   });

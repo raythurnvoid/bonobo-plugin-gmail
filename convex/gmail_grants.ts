@@ -58,7 +58,7 @@ export const save_step = internalMutation({
 					? [Math.max(row.nextAttemptAt, index === 1 ? account.permissionProbeNotBefore ?? 0 : 0)] : []);
 				nextSyncAt = times.length ? Math.min(...times) : null;
 			}
-			await ctx.db.patch(account._id, { nextSyncAt, syncError: account.sourceError,
+			await ctx.db.patch(account._id, { nextSyncAt, idleSlices: 0, syncError: account.sourceError,
 				syncStatus: account.sourceError ? "error" : account.backfillComplete ? "live" : "backfilling", updatedAt: Date.now() });
 			await ctx.scheduler.runAfter(12 * 60 * 60_000, internal.gmail_grants.renew, { grantId: grant._id, lifecycleRequestId: grant.lifecycleRequestId });
 		} else {

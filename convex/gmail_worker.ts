@@ -8,7 +8,13 @@ import { internal } from "./_generated/api";
 import { internalAction } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { gmail_worker_context } from "./schema";
-import { gmail_decrypt, gmail_google_token_purpose } from "./gmail_secrets";
+import {
+  gmail_decrypt,
+  gmail_encrypt,
+  gmail_google_access_purpose,
+  gmail_google_token_purpose,
+  gmail_sha256,
+} from "./gmail_secrets";
 import {
   gmail_GoogleError,
   gmail_google_get,
@@ -122,7 +128,15 @@ export const work_account_slice = internalAction({
     let note: "plan" | "storage" | "clear" | null = null;
     let accessToken: string | null = null;
     let accessExpiresAt = 0;
+    // The token is the saved one, not one from a refresh in this slice.
+    let fromSaved = false;
     let steps = 0;
+    let latestAccount!: Doc<"gmail_accounts">;
+    // The slice saved history or moved a cursor. Retry steps count too, through `steps`.
+    let active = false;
+    let ingested = false;
+    let retriesDone = false;
+    let checkedHistory = false;
     const startedAt = Date.now();
     const budget = () => steps < 25 && Date.now() - startedAt < 40_000;
 
@@ -134,30 +148,87 @@ export const work_account_slice = internalAction({
         work,
       });
       if (!value) throw new StaleWork();
+      latestAccount = value.account;
       return value;
+    }
+
+    async function access_purpose(account: Doc<"gmail_accounts">) {
+      return gmail_google_access_purpose(
+        account.hostOrganizationId,
+        account.hostWorkspaceId,
+        account.emailAddress,
+        account.connectionGeneration,
+        await gmail_sha256(account.googleRefreshToken!),
+      );
+    }
+
+    async function refresh(account: Doc<"gmail_accounts">) {
+      if (!account.googleRefreshToken)
+        throw new SourceStopped("google_revoked");
+      const refreshToken = await gmail_decrypt(
+        account.googleRefreshToken,
+        gmail_google_token_purpose(
+          account.hostOrganizationId,
+          account.hostWorkspaceId,
+          account.emailAddress,
+        ),
+      );
+      await current();
+      const result = await gmail_google_token({ refreshToken });
+      accessToken = result.access_token;
+      accessExpiresAt = Date.now() + result.expires_in * 1000;
+      fromSaved = false;
+      // Save the token so the next slices skip the refresh call.
+      // That is one save per refresh, about once an hour.
+      await ctx.runMutation(internal.gmail_accounts.save_access_token, {
+        work,
+        refreshToken: account.googleRefreshToken,
+        googleAccessToken: {
+          encrypted: await gmail_encrypt(
+            accessToken,
+            await access_purpose(account),
+          ),
+          expiresAt: accessExpiresAt,
+        },
+      });
+      await current();
     }
 
     async function google(path: string, maximum: number, timeout = 20_000) {
       const { account } = await current();
       if (account.sourceError) throw new SourceStopped(account.sourceError);
-      if (!accessToken || accessExpiresAt <= Date.now() + 30_000) {
-        if (!account.googleRefreshToken)
-          throw new SourceStopped("google_revoked");
-        const refreshToken = await gmail_decrypt(
-          account.googleRefreshToken,
-          gmail_google_token_purpose(
-            account.hostOrganizationId,
-            account.hostWorkspaceId,
-            account.emailAddress,
-          ),
-        );
-        await current();
-        const result = await gmail_google_token({ refreshToken });
-        accessToken = result.access_token;
-        accessExpiresAt = Date.now() + result.expires_in * 1000;
+      const saved = account.googleAccessToken;
+      if (
+        !accessToken &&
+        account.googleRefreshToken &&
+        saved &&
+        saved.expiresAt > Date.now() + 5 * 60_000
+      ) {
+        // A token that does not decrypt counts as no saved token.
+        // Then the slice refreshes instead of failing.
+        accessToken = await gmail_decrypt(
+          saved.encrypted,
+          await access_purpose(account),
+        ).catch(() => null);
+        accessExpiresAt = saved.expiresAt;
+        fromSaved = accessToken !== null;
       }
-      await current();
-      return gmail_google_get(path, accessToken, maximum, timeout);
+      if (!accessToken || accessExpiresAt <= Date.now() + 30_000)
+        await refresh(account);
+      try {
+        return await gmail_google_get(path, accessToken!, maximum, timeout);
+      } catch (error) {
+        // Google can end a saved token before it expires. Refresh once and repeat the request.
+        // A second 401 keeps the normal error.
+        if (
+          !fromSaved ||
+          !(error instanceof gmail_GoogleError) ||
+          error.status !== 401
+        )
+          throw error;
+        await refresh((await current()).account);
+        return gmail_google_get(path, accessToken!, maximum, timeout);
+      }
     }
 
     async function traversal(
@@ -174,6 +245,8 @@ export const work_account_slice = internalAction({
         }))
       )
         throw new StaleWork();
+      // The last history page only moves the history id. That alone is not work.
+      if (!completedHistory) active = true;
     }
 
     async function unit(
@@ -1092,6 +1165,17 @@ export const work_account_slice = internalAction({
     }
 
     async function retries() {
+      retriesDone = true;
+      // No pending or failed rows means no retry candidates.
+      // Mail ingested in this slice is pending, so check again after ingest.
+      if (
+        !latestAccount.sourceError &&
+        !ingested &&
+        latestAccount.ledgerCounts.pending +
+          latestAccount.ledgerCounts.failed ===
+          0
+      )
+        return;
       async function held() {
         const rows: Doc<"messages_ledger">[] = await ctx.runQuery(
           internal.gmail_accounts.retry_candidates,
@@ -1304,10 +1388,22 @@ export const work_account_slice = internalAction({
           }))
         )
           throw new StaleWork();
+        active = true;
+        ingested = true;
         index += events.length;
         before = { ...before, historyAnchor: events.at(-1)! };
       }
-      if (index === page.events.length)
+      // An empty last page with the same history id changes nothing.
+      // Skip the save, but keep the check time.
+      if (
+        index === page.events.length &&
+        page.nextPageToken === null &&
+        before.historyPageToken === null &&
+        before.historyAnchor === null &&
+        before.historyId === page.historyId
+      )
+        checkedHistory = true;
+      else if (index === page.events.length)
         await traversal(
           before,
           {
@@ -1320,7 +1416,8 @@ export const work_account_slice = internalAction({
           },
           page.nextPageToken === null,
         );
-      if (budget()) await retries();
+      // A retry slice already ran the retries. Run them again only for mail this page ingested.
+      if (budget() && (ingested || !retriesDone)) await retries();
     }
 
     try {
@@ -1365,6 +1462,8 @@ export const work_account_slice = internalAction({
         error: null,
         retryAfterMs: null,
         attachmentNote: note,
+        active: active || steps > 0,
+        checkedHistory,
       });
     } catch (error) {
       if (error instanceof StaleWork) return null;
@@ -1392,6 +1491,8 @@ export const work_account_slice = internalAction({
         retryAfterMs:
           error instanceof gmail_HostError ? error.retryAfterMs : null,
         attachmentNote: note,
+        active: active || steps > 0,
+        checkedHistory,
       });
     } finally {
       // This peak includes earlier work in a reused Node process.

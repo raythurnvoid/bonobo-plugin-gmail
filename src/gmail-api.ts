@@ -172,5 +172,5 @@ export async function gmail_page_post<T>(
 }
 
 export function gmail_check_status(lastSyncedAt: number | null, now: number) {
-	return lastSyncedAt === null ? "unchecked" : now - lastSyncedAt > 10 * 60_000 ? "delayed" : "recent";
+	return lastSyncedAt === null ? "unchecked" : now - lastSyncedAt > 20 * 60_000 ? "delayed" : "recent";
 }

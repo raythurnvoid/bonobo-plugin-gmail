@@ -60,10 +60,10 @@ describe("disconnect", () => {
 		const before = (await t.run(ctx => ctx.db.get(accountId)))!;
 		const ledger = await t.run(ctx => ctx.db.get(ledgerId));
 		const workId = await t.run(ctx => gmail_workpool.enqueueAction(ctx, internal.gmail_grants.connect, { grantId }, { runAt: Date.now() + 3600_000 }));
-		await t.run(ctx => ctx.db.patch(accountId, { syncWorkId: workId, syncRequestId: "old-request" }));
+		await t.run(ctx => ctx.db.patch(accountId, { syncWorkId: workId, syncRequestId: "old-request", googleAccessToken: { encrypted: "saved", expiresAt: Date.now() + 3600_000 } }));
 		expect(await t.mutation(internal.gmail_accounts.disconnect, { ...actor, accountId, expectedGeneration: 1 })).toEqual({ _yay: { accountId, connectionGeneration: 2 } });
 		const after = await t.run(ctx => ctx.db.get(accountId));
-		expect(after).toMatchObject({ syncStatus: "disconnected", googleRefreshToken: null, hostGrantId: null, syncWorkId: null,
+		expect(after).toMatchObject({ syncStatus: "disconnected", googleRefreshToken: null, googleAccessToken: null, hostGrantId: null, syncWorkId: null,
 			syncRequestId: null, nextSyncAt: null, ledgerCounts: before.ledgerCounts, permissionProbeNotBefore: before.permissionProbeNotBefore,
 			destinationPath: before.destinationPath, historyId: before.historyId, messagesSynced: before.messagesSynced });
 		expect(await t.run(ctx => ctx.db.get(ledgerId))).toEqual(ledger);

@@ -28,3 +28,9 @@ export async function gmail_decrypt(value: string, purpose: string) {
 export function gmail_google_token_purpose(organizationId: string, workspaceId: string, email: string) {
 	return JSON.stringify(["google-refresh", organizationId, workspaceId, email]);
 }
+
+// Bind the saved access token to the refresh token and generation that made it. After a Reconnect or a
+// compose swap, the old access token can no longer be decrypted.
+export function gmail_google_access_purpose(organizationId: string, workspaceId: string, email: string, generation: number, refreshTokenHash: string) {
+	return JSON.stringify(["google-access", organizationId, workspaceId, email, generation, refreshTokenHash]);
+}

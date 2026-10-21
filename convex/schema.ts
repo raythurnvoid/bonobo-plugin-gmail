@@ -60,6 +60,10 @@ export default defineSchema({
 		syncWorkId: nullableString, syncRequestId: nullableString, lastSyncedAt: nullableNumber, updatedAt: v.number(),
 		// The Google token has the compose scope, so the connecting member can write drafts and send.
 		composeGranted: v.boolean(),
+		// Successful slices in a row that found no work. The next idle wait doubles with each one.
+		idleSlices: v.number(),
+		// The last Google access token, encrypted, and when Google said it expires. Null when none is saved.
+		googleAccessToken: v.union(v.object({ encrypted: v.string(), expiresAt: v.number() }), v.null()),
 	})
 		.index("by_hostWorkspace_emailAddress", ["hostWorkspaceId", "emailAddress"])
 		.index("by_hostOrganization_hostWorkspace_emailAddress", ["hostOrganizationId", "hostWorkspaceId", "emailAddress"])

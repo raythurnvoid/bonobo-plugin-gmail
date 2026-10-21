@@ -31,6 +31,7 @@ export async function gmail_test_fixture() {
 			nextSliceKind: "retry", messagesSynced: 1, messagesSkipped: 0,
 			ledgerCounts: { pending: 0, done: 0, skipped: 0, failed: 1, given_up: 0, emailAssumed: 0, permissionHeld: 1 },
 			attachmentsSkippedReason: null, syncWorkId: null, syncRequestId: null, lastSyncedAt: Date.now() - 60_000, updatedAt: Date.now(), composeGranted: false,
+			idleSlices: 0, googleAccessToken: null,
 		});
 		const grantId = await ctx.db.insert("host_grants", { ...gmail_test_actor, accountId, attemptId: null,
 			connectionGeneration: 1, repairClientRequestId: null, phase: "ready", sourceSecret: null, interactiveSecret: null,
