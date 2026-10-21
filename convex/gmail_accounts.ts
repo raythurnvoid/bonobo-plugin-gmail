@@ -1145,6 +1145,9 @@ export const finish_slice = internalMutation({
 				: {}),
 			updatedAt: Date.now(),
 		});
+		// Free the slot in the same write. If the action dies after this save, check_slice finds the slot
+		// free and keeps the error and wait saved above.
+		await complete_slice(ctx, (await ctx.db.get(account._id))!, false);
 		return null;
 	},
 });
@@ -1165,7 +1168,14 @@ export const dispatch = internalMutation({
 			.query("gmail_accounts")
 			.withIndex("by_syncWorkId_nextSyncAt", (q) => q.gt("syncWorkId", null))
 			.first();
-		if (busy) return null;
+		if (busy) {
+			const job = await ctx.db.system.get(busy.syncWorkId!);
+			if (job?.state.kind === "pending" || job?.state.kind === "inProgress") return null;
+			// The slice ended before finish_slice. Free the slot as check_slice would. This also covers a lost
+			// check_slice (for example, cancelled in the dashboard), so the 15-minute cron still recovers sync.
+			await complete_slice(ctx, busy, true);
+			return null;
+		}
 		const due = await ctx.db
 			.query("gmail_accounts")
 			.withIndex("by_syncWorkId_nextSyncAt", (q) =>
@@ -1212,8 +1222,8 @@ async function complete_slice(ctx: MutationCtx, account: Doc<"gmail_accounts">, 
 	const settlement = failed && account.sourceError ? await next_settlement(ctx, account) : null;
 	const retryAt =
 		Date.now() + Math.min(3600_000, 60_000 * 2 ** Math.min(account.temporaryFailures, 6)) * (1 + Math.random() * 0.1);
-	// finish_slice always saves a future time. A past time means the slice stopped as stale work.
-	// Save one minute, so this account does not start again at once and stay first in line.
+	// A past time can come from a stale exit or from a settlement or retry that is already due. Save
+	// one minute, so this account does not start again at once and stay first in line.
 	const nextSyncAt = !failed
 		? account.nextSyncAt !== null && account.nextSyncAt <= Date.now()
 			? Date.now() + 60_000
@@ -1249,7 +1259,8 @@ async function complete_slice(ctx: MutationCtx, account: Doc<"gmail_accounts">, 
 		await ctx.scheduler.runAfter(Math.max(0, other.nextSyncAt - Date.now()), internal.gmail_accounts.dispatch, {});
 }
 
-// The slice action calls this as its last step.
+// The slice action calls this as its last step. It frees the slot only after a stale exit, because
+// finish_slice frees it otherwise.
 export const on_complete = internalMutation({
 	args: { context: gmail_worker_context },
 	returns: v.null(),
@@ -1268,7 +1279,7 @@ export const on_complete = internalMutation({
 	},
 });
 
-// Free the slot of a slice whose action ended without on_complete, because it threw or was killed.
+// Free the slot of a slice whose action ended before finish_slice, because it threw or was killed.
 export const check_slice = internalMutation({
 	args: { accountId: v.id("gmail_accounts"), workId: v.id("_scheduled_functions") },
 	returns: v.null(),

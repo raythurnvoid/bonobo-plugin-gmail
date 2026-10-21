@@ -226,8 +226,8 @@ async function hold_slot(f: Awaited<ReturnType<typeof fixture>>) {
 	await f.t.run((ctx) => ctx.db.patch(f.accountId, { syncRequestId: f.work.requestId, syncWorkId: f.workId }));
 }
 
-// A stopped action does not free its slot. End its job and run check_slice, as the scheduled check
-// does one minute after dispatch.
+// An action that stops before finish_slice does not free its slot. End its job and run check_slice, as
+// the scheduled check does one minute after dispatch.
 async function end_stopped_slice(f: Awaited<ReturnType<typeof fixture>>) {
 	const workId = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!.syncWorkId!;
 	await f.t.run(async (ctx) => {
@@ -300,7 +300,6 @@ describe("work_account_slice", () => {
 		});
 		const before = calls.length;
 		await f.t.mutation(internal.gmail_accounts.finish_slice, { work: f.work, error: "google_revoked", retryAfterMs: null, attachmentNote: null, active: false, checkedHistory: false });
-		await end_stopped_slice(f);
 		now += 3600_000;
 		await f.t.mutation(internal.gmail_accounts.dispatch, {});
 		expect(calls).toHaveLength(before);
@@ -948,15 +947,8 @@ describe("work_account_slice", () => {
 		const request = created.attachments[0].request!;
 		await hold_slot(f);
 		await f.t.mutation(internal.gmail_accounts.finish_slice, { work: f.work, error: "google_revoked", retryAfterMs: null, attachmentNote: null, active: false, checkedHistory: false });
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(created);
 		const before = calls.length;
-		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
-		expect(calls).toHaveLength(before);
-		const paused = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
-		expect(paused.nextAttemptAt).toBe(created.attachments[0].nextAttemptAt);
-		expect(paused).toMatchObject({ settlementNeeded: true, attempts: 0,
-			attachments: [{ state: "pending", request, sourceUnavailablePendingChecks: 0 },
-				{ state: "unstarted", request: null, nextAttemptAt: null, deliveries: 0 }],
-		});
 		now = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!.nextSyncAt!;
 		await f.t.mutation(internal.gmail_accounts.dispatch, {});
 		const queued = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
@@ -1354,8 +1346,6 @@ describe("work_account_slice", () => {
 			syncStatus: sourceError ? "error" : "blocked", temporaryFailures: sourceError ? 0 : 1,
 		});
 		expect(stopped.googleRefreshToken === null).toBe(kind === "invalid_grant");
-		// check_slice frees the slot of the stopped slice. The second save_message run already freed it.
-		if (checkpoint === "finish_slice") await end_stopped_slice(f);
 		const completed = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
 		expect(completed.nextSyncAt).toBeGreaterThan(now);
 		const early = calls.length;
@@ -4912,7 +4902,7 @@ describe("worker budget and completion", () => {
 	test.each([
 		["credits", "ready", 402, 3600_000], ["rate limit", "ready", 429, 600_000], ["outage", "ready", 503, 60_000],
 		["credits", "revoked", 402, 3600_000], ["rate limit", "revoked", 429, 600_000], ["outage", "revoked", 503, 60_000],
-	] as const)("a stop after Press %s with %s source keeps its saved wait through failed completion", async (kind, sourceAccess, status, delay) => {
+	] as const)("a stop after Press %s with %s source keeps its saved error and wait", async (kind, sourceAccess, status, delay) => {
 		let now = Date.now();
 		vi.spyOn(Date, "now").mockImplementation(() => now);
 		// Pause scheduled functions so completion and dispatch choose each next request.
@@ -4990,11 +4980,9 @@ describe("worker budget and completion", () => {
 		expect(stopped.nextSyncAt! - now).toBeLessThanOrEqual(status === 503 ? delay * 1.1 : delay);
 		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(original);
 		const early = calls.length;
-		await end_stopped_slice(f);
-		const completed = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
-		expect(completed.nextSyncAt).toBeGreaterThanOrEqual(stopped.nextSyncAt!);
-		expect(completed).toMatchObject({ sourceError: stopped.sourceError, googleRefreshToken: stopped.googleRefreshToken,
-			syncError: "sync_error", temporaryFailures: 2, syncRequestId: null, syncWorkId: null });
+		// finish_slice freed the slot, so the stop after it keeps the saved error and wait.
+		const completed = stopped;
+		expect(completed).toMatchObject({ syncRequestId: null, syncWorkId: null });
 		await f.t.mutation(internal.gmail_accounts.dispatch, {});
 		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toEqual(completed);
 		expect(calls).toHaveLength(early);
@@ -5145,13 +5133,14 @@ describe("worker budget and completion", () => {
 		expect(await drain(workId)).toBe("failed");
 		interrupted.mockRestore();
 		expect(savedWait! - startedAt!).toBeGreaterThanOrEqual(delay);
-		// The throw skipped on_complete. check_slice freed the slot one minute after dispatch.
+		// The throw skipped on_complete, but finish_slice freed the slot. The crash keeps its saved error and wait.
 		expect(callback).not.toHaveBeenCalled();
-		expect(Date.now() - startedAt!).toBeGreaterThanOrEqual(59_000);
+		expect(Date.now() - startedAt!).toBeLessThan(59_000);
 		const completed = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
-		expect(completed).toMatchObject({ syncWorkId: null, syncRequestId: null, syncStatus: "blocked", syncError: "sync_error",
-			temporaryFailures: 2, sourceError: before.sourceError, googleRefreshToken: before.googleRefreshToken });
-		expect(completed.nextSyncAt).toBeGreaterThanOrEqual(savedWait!);
+		expect(completed).toMatchObject({ syncWorkId: null, syncRequestId: null, syncStatus: "blocked",
+			syncError: kind === "credits" ? "credits" : "press_temporary", temporaryFailures: before.temporaryFailures + 1,
+			sourceError: before.sourceError, googleRefreshToken: before.googleRefreshToken });
+		expect(completed.nextSyncAt).toBe(savedWait);
 		expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(original);
 		expect(calls.slice(callCount).map(call => call.path)).toEqual(["/api/v1/files/service-uploads/finalize"]);
 		await f.t.mutation(internal.gmail_accounts.dispatch, {});
@@ -5620,7 +5609,7 @@ describe("source limits", () => {
 			.withIndex("by_account_gmailMessageId", (q) => q.eq("accountId", f.accountId).eq("gmailMessageId", id)).collect())))).toEqual(beforeSize);
 		expect(cancelled).toBe(1);
 		await resume(sizeCrash);
-		const errorCrash = await stop_after_mutation({ ...f, work }, "finish_slice", async () => true);
+		await stop_after_mutation({ ...f, work }, "finish_slice", async () => true);
 		const stopped = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
 		expect(stopped.sourceError).toBe("history_response_too_large");
 		expect(stopped).toMatchObject({ syncError: "history_response_too_large", syncStatus: "error", historyId: "10",
@@ -5633,7 +5622,8 @@ describe("source limits", () => {
 		expect(historyRequests.slice(-2)).toEqual([
 			{ cursor: "10", token: "saved-page", size: "25" }, { cursor: "10", token: null, size: "1" },
 		]);
-		await resume(errorCrash);
+		// finish_slice freed the slot before the stop.
+		await resume();
 		reply = "settle";
 		const beforeSettlement = calls.length;
 		await f.t.action(internal.gmail_worker.work_account_slice, { work });

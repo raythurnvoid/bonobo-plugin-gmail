@@ -1498,7 +1498,8 @@ export const work_account_slice = internalAction({
   returns: v.null(),
   handler: async (ctx, { work }) => {
     await run_slice(ctx, work);
-    // A throw skips this call. check_slice then frees the slot.
+    // finish_slice already freed the slot. This call frees it after a stale exit, which skips
+    // finish_slice. A throw skips this call, and check_slice then frees the slot.
     await ctx.runMutation(internal.gmail_accounts.on_complete, {
       context: work,
     });

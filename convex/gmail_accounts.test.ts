@@ -227,6 +227,24 @@ describe("dispatch", () => {
 		expect((await f.t.run(ctx => ctx.db.get(first._id)))!.syncWorkId).toBeNull();
 		expect((await f.t.run(ctx => ctx.db.get(other._id)))!.syncWorkId).toEqual(expect.any(String));
 	});
+	test("frees the slot of a dead slice whose check was lost", async () => {
+		const f = await gmail_test_fixture();
+		stub_slice(async () => { throw new Error("Slice stopped before completion"); });
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		vi.advanceTimersByTime(0); await f.t.finishInProgressScheduledFunctions();
+		await f.t.run(async ctx => {
+			const checks = (await ctx.db.system.query("_scheduled_functions").collect())
+				.filter(job => job.name.includes("check_slice") && job.state.kind === "pending");
+			expect(checks).toHaveLength(1);
+			await ctx.scheduler.cancel(checks[0]._id);
+		});
+		vi.advanceTimersByTime(60_000); await f.t.finishInProgressScheduledFunctions();
+		expect((await f.t.run(ctx => ctx.db.get(f.accountId)))!.syncWorkId).not.toBeNull();
+		// The 15-minute cron runs this dispatch.
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toMatchObject({ syncWorkId: null, syncRequestId: null,
+			syncStatus: "blocked", syncError: "sync_error", temporaryFailures: 1 });
+	});
 });
 
 describe("on_complete", () => {
