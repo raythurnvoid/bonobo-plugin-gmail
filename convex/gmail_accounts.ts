@@ -1165,7 +1165,7 @@ export const finish_slice = internalMutation({
 			nextSliceKind:
 				account.nextSliceKind === "backfill" ? "history" : account.nextSliceKind === "history" ? "retry" : "backfill",
 			// This slice ended normally after its last message, so that message did not crash it.
-			...(account.messageMark?.requestId === args.work.requestId || account.messageMark === undefined ? { messageMark: null } : {}),
+			...(account.messageMark?.requestId === args.work.requestId ? { messageMark: null } : {}),
 			...(args.attachmentNote !== null
 				? { attachmentsSkippedReason: args.attachmentNote === "clear" ? null : args.attachmentNote }
 				: {}),
