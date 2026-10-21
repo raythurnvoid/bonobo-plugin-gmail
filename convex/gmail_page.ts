@@ -171,7 +171,13 @@ export async function gmail_page_auth(ctx: ActionCtx, token: string, changing: b
 	return { organizationId: cached.organizationId, workspaceId: cached.workspaceId, installationId: cached.installationId, actorUserId: cached.actorUserId, canWrite: permissions.write };
 }
 
+/**
+ * Delete up to 25 expired rows of each table. Return true when a batch was full, so more rows may wait.
+ */
 export async function gmail_cleanup_page_rows(ctx: MutationCtx) {
-	for (const row of await ctx.db.query("page_tokens").withIndex("by_expiresAt", q => q.lte("expiresAt", Date.now())).take(25)) await ctx.db.delete(row._id);
-	for (const row of await ctx.db.query("request_limits").withIndex("by_expiresAt", q => q.lte("expiresAt", Date.now())).take(25)) await ctx.db.delete(row._id);
+	const tokens = await ctx.db.query("page_tokens").withIndex("by_expiresAt", q => q.lte("expiresAt", Date.now())).take(25);
+	for (const row of tokens) await ctx.db.delete(row._id);
+	const limits = await ctx.db.query("request_limits").withIndex("by_expiresAt", q => q.lte("expiresAt", Date.now())).take(25);
+	for (const row of limits) await ctx.db.delete(row._id);
+	return tokens.length === 25 || limits.length === 25;
 }

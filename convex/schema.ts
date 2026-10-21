@@ -64,6 +64,9 @@ export default defineSchema({
 		idleSlices: v.number(),
 		// The last Google access token, encrypted, and when Google said it expires. Null when none is saved.
 		googleAccessToken: v.union(v.object({ encrypted: v.string(), expiresAt: v.number() }), v.null()),
+		// The message that the slice with this request id started and has not saved yet. `crashes` counts the
+		// slices in a row that died there before any save of that message. Null when nothing is open.
+		messageMark: v.optional(v.union(v.object({ rowId: v.id("messages_ledger"), requestId: v.string(), crashes: v.number() }), v.null())),
 	})
 		.index("by_hostWorkspace_emailAddress", ["hostWorkspaceId", "emailAddress"])
 		.index("by_hostOrganization_hostWorkspace_emailAddress", ["hostOrganizationId", "hostWorkspaceId", "emailAddress"])

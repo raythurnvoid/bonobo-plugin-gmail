@@ -49,9 +49,14 @@ export const save_step = internalMutation({
 		if (args.phase === "seal") {
 			if (!grant.accountId) return false;
 			const account = (await ctx.db.get(grant.accountId))!;
+			// Only a renewal seals a grant that already has a sealed secret. It keeps the idle wait, so the
+			// 12-hour renewal does not restart the 1, 2, 4 and 8 minute slices. A due time that passed, or
+			// that a dispatch cleared while the grant was not ready, syncs at once.
+			const renewal = grant.sealedSecret !== null;
+			const keptAt = renewal && account.nextSyncAt !== null && account.nextSyncAt > Date.now() ? account.nextSyncAt : null;
 			await ctx.db.patch(grant._id, { phase: "ready", sealedSecret: args.secret, sealedExpiresAt: args.expiresAt,
 				sourceSecret: null, nextAttemptAt: Date.now() + 12 * 60 * 60_000, temporaryFailures: 0, error: null, updatedAt: Date.now() });
-			let nextSyncAt: number | null = Date.now();
+			let nextSyncAt: number | null = keptAt ?? Date.now();
 			if (account.sourceError) {
 				const rows = await Promise.all([false, true].map(permissionHeld => ctx.db.query("messages_ledger")
 					.withIndex("by_account_permissionHeld_settlementNeeded_nextAttemptAt", q => q.eq("accountId", account._id)
@@ -60,9 +65,10 @@ export const save_step = internalMutation({
 					? [Math.max(row.nextAttemptAt, index === 1 ? account.permissionProbeNotBefore ?? 0 : 0)] : []);
 				nextSyncAt = times.length ? Math.min(...times) : null;
 			}
-			await ctx.db.patch(account._id, { nextSyncAt, idleSlices: 0, syncError: account.sourceError,
+			await ctx.db.patch(account._id, { nextSyncAt, idleSlices: renewal ? account.idleSlices : 0, syncError: account.sourceError,
 				syncStatus: account.sourceError ? "error" : account.backfillComplete ? "live" : "backfilling", updatedAt: Date.now() });
-			if (nextSyncAt !== null) await ctx.scheduler.runAfter(Math.max(0, nextSyncAt - Date.now()), internal.gmail_accounts.dispatch, {});
+			// A kept due time already has its dispatch.
+			if (nextSyncAt !== null && nextSyncAt !== keptAt) await ctx.scheduler.runAfter(Math.max(0, nextSyncAt - Date.now()), internal.gmail_accounts.dispatch, {});
 			await ctx.scheduler.runAfter(12 * 60 * 60_000, internal.gmail_grants.renew, { grantId: grant._id, lifecycleRequestId: grant.lifecycleRequestId });
 		} else {
 			const pending = args.phase === "exchange" && grant.attemptId !== null;
@@ -71,7 +77,11 @@ export const save_step = internalMutation({
 				temporaryFailures: 0, error: null, updatedAt: Date.now() });
 			if (pending) {
 				const attempt = (await ctx.db.get(grant.attemptId!))!;
-				if (attempt.status === "preparing") await ctx.db.patch(attempt._id, { status: "pending", expiresAt: Date.now() + 10 * 60_000, updatedAt: Date.now() });
+				if (attempt.status === "preparing") {
+					await ctx.db.patch(attempt._id, { status: "pending", expiresAt: Date.now() + 10 * 60_000, updatedAt: Date.now() });
+					// This expiry is later than the one the start's cleanup was scheduled for.
+					await ctx.scheduler.runAfter(10 * 60_000, internal.gmail_oauth.cleanup, {});
+				}
 			} else {
 				await ctx.scheduler.runAfter(0, internal.gmail_grants.connect, { grantId: grant._id });
 				await ctx.scheduler.runAfter(gmail_STEP_CHECK_MS, internal.gmail_grants.sweep, {});

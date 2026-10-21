@@ -309,6 +309,17 @@ describe("gmail_grant_step", () => {
 		expect(await t.run(ctx => ctx.db.get(accountId))).toMatchObject({ ledgerCounts: before.ledgerCounts, permissionProbeNotBefore: before.permissionProbeNotBefore, historyId: before.historyId });
 		expect(state.renewCalls).toBe(1); expect(state.sealCalls).toBe(1);
 	});
+	test("renewal keeps the idle wait of a synced account", async () => {
+		const { t, grantId, accountId } = await setup();
+		const waitUntil = Date.now() + 10 * 60_000;
+		await t.run(ctx => ctx.db.patch(accountId, { idleSlices: 4, nextSyncAt: waitUntil }));
+		const grant = (await t.run(ctx => ctx.db.get(grantId)))!;
+		await t.mutation(internal.gmail_grants.renew, { grantId, lifecycleRequestId: grant.lifecycleRequestId });
+		vi.advanceTimersByTime(0); await t.finishInProgressScheduledFunctions();
+		vi.advanceTimersByTime(0); await t.finishInProgressScheduledFunctions();
+		expect((await t.run(ctx => ctx.db.get(grantId)))!.phase).toBe("ready");
+		expect(await t.run(ctx => ctx.db.get(accountId))).toMatchObject({ idleSlices: 4, nextSyncAt: waitUntil });
+	});
 	test("renewing account A leaves account B's independent chain unchanged", async () => {
 		const { t, grantId, accountId } = await setup();
 		const peerGrantId = await t.run(async ctx => {

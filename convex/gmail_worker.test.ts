@@ -2133,13 +2133,14 @@ describe("work_account_slice", () => {
 			expect(calls).toHaveLength(beforeLate);
 			releaseNew();
 			await f.t.finishInProgressScheduledFunctions();
-			for (let tick = 0; tick < 20 && callback.mock.calls.length < 2; tick++) {
+			const state = async () => f.t.run(async ctx => (await ctx.db.system.get(workId))!.state.kind);
+			for (let tick = 0; tick < 20 && await state() !== "success"; tick++) {
 				vi.advanceTimersByTime(1000);
 				await f.t.finishInProgressScheduledFunctions();
 			}
-			expect(await f.t.run(async ctx => (await ctx.db.system.get(workId))!.state.kind)).toBe("success");
-			expect(callback).toHaveBeenCalledTimes(2);
-			expect(callback.mock.calls[1][1]).toEqual({ context: { ...oldWork, generation, requestId: queued.syncRequestId!, grantId: replaced.hostGrantId! } });
+			expect(await state()).toBe("success");
+			// The new slice freed its slot in finish_slice, so on_complete ran only for the stale old slice.
+			expect(callback).toHaveBeenCalledTimes(1);
 			expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toMatchObject({ status: "done", emailWritten: true, settlementNeeded: false, attempts: 0,
 				attachments: [{ state: "saved", request: saved.attachments[0].request, deliveries: 1 }] });
 			expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toMatchObject({ connectionGeneration: generation, hostGrantId: replaced.hostGrantId!,
@@ -5154,7 +5155,7 @@ describe("worker budget and completion", () => {
 		expect(due.syncWorkId).not.toBeNull();
 		expect(due.syncRequestId).not.toBe(queued.syncRequestId);
 		expect(await drain(due.syncWorkId!)).toBe("success");
-		expect(callback).toHaveBeenCalledTimes(1);
+		expect(callback).not.toHaveBeenCalled();
 		expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toMatchObject({ status: "done", settlementNeeded: false, attempts: 0,
 			attachments: [{ state: "saved", request: original.attachments[0].request, deliveries: 1 }] });
 		expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toMatchObject({ syncWorkId: null, syncRequestId: null,
@@ -5190,6 +5191,17 @@ describe("worker budget and completion", () => {
 		expect(queued.syncWorkId).not.toBeNull();
 		await f.t.mutation(internal.gmail_accounts.dispatch, {});
 		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toEqual(queued);
+	});
+	test("a slice whose grant changed before finish_slice still frees its slot", async () => {
+		const f = await idle_fixture();
+		await hold_slot(f);
+		network(async (path) => {
+			// A renewal starts while the slice reads Gmail, so finish_slice no longer matches the grant.
+			if (path.endsWith("/history")) await f.t.run((ctx) => ctx.db.patch(f.work.grantId, { phase: "renew" }));
+			return path.endsWith("/history") ? Response.json(empty_history) : Response.json({}, { status: 500 });
+		});
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ syncRequestId: null, syncWorkId: null });
 	});
 });
 
@@ -6041,6 +6053,15 @@ describe("saved access token", () => {
 		expect(calls.map((call) => call.path)).toEqual(["/token", "/gmail/v1/users/me/history", "/gmail/v1/users/me/history"]);
 		expect((await f.t.run((ctx) => ctx.db.get(f.accountId)))!.googleAccessToken).toMatchObject({ encrypted: expect.any(String) });
 	});
+	test("an idle slice with a saved token reads the account once", async () => {
+		const f = await idle_fixture();
+		network((path) => (path.endsWith("/history") ? Response.json(empty_history) : Response.json({}, { status: 500 })));
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		await hold_slot(f);
+		const functions = record_functions();
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		expect(functions).toEqual(["gmail_accounts:get_worker", "gmail_accounts:finish_slice"]);
+	});
 	test.each([
 		[1, null],
 		[2, "gmail_request"],
@@ -6098,5 +6119,54 @@ describe("saved access token", () => {
 		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
 		expect(calls.map((call) => call.path)).toEqual(["/token", "/gmail/v1/users/me/history"]);
 		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ syncError: null, idleSlices: 1 });
+	});
+});
+
+describe("slice crash limit", () => {
+	async function crash_at_first_save(f: Awaited<ReturnType<typeof fixture>>, phase: "before" | "after") {
+		await hold_slot(f);
+		await stop_after_mutation(f, "save_message", async () => true, phase);
+		await end_stopped_slice(f);
+	}
+	test("a message is given up after three slices die before any save", async () => {
+		const f = await fixture({ fresh: true });
+		network((path) => (path.endsWith("/messages/ab") ? Response.json(source) : Response.json({}, { status: 500 })));
+		for (let crash = 1; crash <= 2; crash++) {
+			await crash_at_first_save(f, "before");
+			expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({ status: "pending" });
+			expect((await f.t.run((ctx) => ctx.db.get(f.accountId)))!.messageMark).toMatchObject({ rowId: f.ledgerId, crashes: crash });
+		}
+		await crash_at_first_save(f, "before");
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({ status: "given_up", error: "slice_crashed", nextAttemptAt: null });
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ messageMark: null, ledgerCounts: { pending: 0, given_up: 1 } });
+	});
+	test("a slice that dies after the message saved progress is not counted", async () => {
+		const f = await fixture({ fresh: true });
+		network((path) =>
+			path.endsWith("/messages/ab")
+				? Response.json(source)
+				: path.endsWith("/files/write")
+					? Response.json({ nodeId: "email-node" })
+					: Response.json({}, { status: 500 }),
+		);
+		for (let crash = 1; crash <= 3; crash++) {
+			await crash_at_first_save(f, "after");
+			expect((await f.t.run((ctx) => ctx.db.get(f.accountId)))!.messageMark).toBeNull();
+		}
+		expect((await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!.status).toBe("pending");
+	});
+	test("a mark left by an earlier slice is not blamed for this crash", async () => {
+		const f = await fixture({ fresh: true });
+		await f.t.run((ctx) => ctx.db.patch(f.accountId, { messageMark: { rowId: f.ledgerId, requestId: "earlier", crashes: 2 } }));
+		await end_stopped_slice(f);
+		expect((await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!.status).toBe("pending");
+		expect((await f.t.run((ctx) => ctx.db.get(f.accountId)))!.messageMark).toBeNull();
+	});
+	test("a slice that ends normally resets the count", async () => {
+		const f = await idle_fixture();
+		await f.t.run((ctx) => ctx.db.patch(f.accountId, { messageMark: { rowId: f.ledgerId, requestId: f.work.requestId, crashes: 2 } }));
+		network((path) => (path.endsWith("/history") ? Response.json(empty_history) : Response.json({}, { status: 500 })));
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		expect((await f.t.run((ctx) => ctx.db.get(f.accountId)))!.messageMark).toBeNull();
 	});
 });

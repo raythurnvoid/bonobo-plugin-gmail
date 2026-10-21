@@ -134,6 +134,8 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
   let ingested = false;
   let retriesDone = false;
   let checkedHistory = false;
+  // finish_slice saved the result and freed the slot.
+  let finished = false;
   const startedAt = Date.now();
   const budget = () => steps < 25 && Date.now() - startedAt < 40_000;
 
@@ -191,8 +193,14 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
     await current();
   }
 
-  async function google(path: string, maximum: number, timeout = 20_000) {
-    const { account } = await current();
+  // A caller that read the account just before, with no write since, passes it to skip one read.
+  async function google(
+    path: string,
+    maximum: number,
+    timeout = 20_000,
+    known: Doc<"gmail_accounts"> | null = null,
+  ) {
+    const account = known ?? (await current()).account;
     if (account.sourceError) throw new SourceStopped(account.sourceError);
     const saved = account.googleAccessToken;
     if (
@@ -259,6 +267,13 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
     )
       return;
     steps++;
+    if (
+      !(await ctx.runMutation(internal.gmail_accounts.mark_message, {
+        work,
+        rowId: row._id,
+      }))
+    )
+      throw new StaleWork();
     async function guard() {
       if (
         !(await ctx.runQuery(internal.gmail_accounts.guard_message, {
@@ -1281,8 +1296,7 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
     }
   }
 
-  async function history() {
-    let { account } = await current();
+  async function history(account: Doc<"gmail_accounts">) {
     let before = checkpoint(account);
     const path = (token: string | null) => {
       const query = new URLSearchParams({
@@ -1299,7 +1313,12 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
     let raw: unknown;
     try {
       try {
-        raw = await google(path(account.historyPageToken), 16 * 1024 * 1024);
+        raw = await google(
+          path(account.historyPageToken),
+          16 * 1024 * 1024,
+          20_000,
+          account,
+        );
       } catch (error) {
         if (
           !(error instanceof gmail_GoogleError) ||
@@ -1418,7 +1437,7 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
   }
 
   try {
-    const { account } = await current();
+    let { account } = await current();
     if (account.sourceError) await retries();
     else {
       if (!account.historyId) {
@@ -1435,8 +1454,9 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
           ...before,
           historyId: profile.data.historyId,
         });
+        account = (await current()).account;
       }
-      if (account.nextSliceKind === "history") await history();
+      if (account.nextSliceKind === "history") await history(account);
       else if (
         account.nextSliceKind === "backfill" &&
         !account.backfillComplete
@@ -1444,10 +1464,11 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
         await backfill();
       else {
         await retries();
-        if (steps === 0) await history();
+        // No step ran, so this slice wrote nothing and the account read above is still current.
+        if (steps === 0) await history(account);
       }
     }
-    await ctx.runMutation(internal.gmail_accounts.finish_slice, {
+    finished = await ctx.runMutation(internal.gmail_accounts.finish_slice, {
       work,
       error: null,
       retryAfterMs: null,
@@ -1456,7 +1477,7 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
       checkedHistory,
     });
   } catch (error) {
-    if (error instanceof StaleWork) return null;
+    if (error instanceof StaleWork) return false;
     const code: SliceError =
       error instanceof SourceStopped
         ? error.code
@@ -1475,7 +1496,7 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
                   ? "credits"
                   : "press_temporary"
             : "sync_error";
-    await ctx.runMutation(internal.gmail_accounts.finish_slice, {
+    finished = await ctx.runMutation(internal.gmail_accounts.finish_slice, {
       work,
       error: code,
       retryAfterMs:
@@ -1490,19 +1511,19 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
       processPeakRssBytes: resourceUsage().maxRSS * 1024,
     });
   }
-  return null;
+  return finished;
 }
 
 export const work_account_slice = internalAction({
   args: { work: gmail_worker_context },
   returns: v.null(),
   handler: async (ctx, { work }) => {
-    await run_slice(ctx, work);
-    // finish_slice already freed the slot. This call frees it after a stale exit, which skips
-    // finish_slice. A throw skips this call, and check_slice then frees the slot.
-    await ctx.runMutation(internal.gmail_accounts.on_complete, {
-      context: work,
-    });
+    // finish_slice normally frees the slot. After a stale exit, or when the grant changed during the
+    // slice, the slot is still held, so free it here. If the slice throws, check_slice frees it.
+    if (!(await run_slice(ctx, work)))
+      await ctx.runMutation(internal.gmail_accounts.on_complete, {
+        context: work,
+      });
     return null;
   },
 });

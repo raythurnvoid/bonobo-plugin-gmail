@@ -16,7 +16,7 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 function setup(t = convexTest(schema, modules)) {
 	const state = { email: "ray@example.com", scope: GMAIL_READONLY_SCOPE, refreshToken: "refresh", googleExchanges: 0, loseGoogle: false, losePress: false, exchanges: 0,
-		grantActor: { ...actor }, deadTokens: new Set<string>(), temporaryTokens: new Set<string>(), verifiedTokens: [] as string[] };
+		exchangeDelay: 0, grantActor: { ...actor }, deadTokens: new Set<string>(), temporaryTokens: new Set<string>(), verifiedTokens: [] as string[] };
 	const receipts = new Map<string, { token: string; expiresAt: number; scopes: string[]; organizationId: string; workspaceId: string; installationId: string; actorUserId: string }>();
 	vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 		const url = new URL(input instanceof Request ? input.url : String(input));
@@ -42,6 +42,7 @@ function setup(t = convexTest(schema, modules)) {
 		if (url.pathname.endsWith("/recover")) return receipts.has(body.requestId) ? Response.json(receipts.get(body.requestId)) : Response.json({ message: "No saved grant" }, { status: 404 });
 		expect(url.pathname).toBe("/api/v1/plugins/service-grants/exchange");
 		state.exchanges++;
+		if (state.exchangeDelay) vi.advanceTimersByTime(state.exchangeDelay);
 		const grant = { ...state.grantActor, token: `psg_${String(state.exchanges + 2).padStart(64, "0")}`,
 			expiresAt: Date.now() + 24 * 60 * 60_000, scopes: [] };
 		receipts.set(body.requestId, grant);
@@ -143,7 +144,8 @@ describe("gmail_callback", () => {
 		const { t, state, start } = setup(); const started = await start();
 		const consentState = new URL(started.consentUrl!).searchParams.get("state")!;
 		await t.mutation(internal.gmail_oauth.claim_callback, { stateHash: await gmail_sha256(consentState), codeHash: await gmail_sha256("google-code"), denied: false });
-		vi.advanceTimersByTime(120_000);
+		// Move the clock only, so the callback runs before the scheduled cleanup closes the attempt.
+		vi.setSystemTime(Date.now() + 120_000);
 		await expect(t.action(ctx => gmail_callback(ctx, consentState, "google-code", false))).rejects.toThrow("start_again");
 		expect(state.googleExchanges).toBe(0);
 	});
@@ -153,6 +155,37 @@ describe("gmail_callback", () => {
 		await t.mutation(internal.gmail_oauth.claim_callback, { stateHash: await gmail_sha256(consentState), codeHash: await gmail_sha256("google-code"), denied: false });
 		vi.advanceTimersByTime(120_000); await t.mutation(internal.gmail_oauth.cleanup, {});
 		expect(await t.query(internal.gmail_oauth.get_attempt, { ...actor, attemptId: started.attemptId })).toMatchObject({ status: "failed", encryptedState: null, processingDeadline: null });
+	});
+	test("a crashed exchange closes at its deadline without the cron", async () => {
+		const { t, start } = setup(); const started = await start();
+		const consentState = new URL(started.consentUrl!).searchParams.get("state")!;
+		await t.mutation(internal.gmail_oauth.claim_callback, { stateHash: await gmail_sha256(consentState), codeHash: await gmail_sha256("google-code"), denied: false });
+		vi.advanceTimersByTime(120_000); await t.finishInProgressScheduledFunctions();
+		expect(await t.query(internal.gmail_oauth.get_attempt, { ...actor, attemptId: started.attemptId })).toMatchObject({ status: "failed", error: "exchange_interrupted" });
+	});
+	test("an unused attempt is deleted when it expires without the cron", async () => {
+		const { t, state, start } = setup(); state.exchangeDelay = 60_000; const started = await start();
+		// The exchange took one minute, so the attempt expires one minute after the start's cleanup runs.
+		vi.advanceTimersByTime(9 * 60_000); await t.finishInProgressScheduledFunctions();
+		expect(await t.query(internal.gmail_oauth.get_attempt, { ...actor, attemptId: started.attemptId })).toMatchObject({ status: "pending" });
+		vi.advanceTimersByTime(60_000); await t.finishInProgressScheduledFunctions();
+		expect(await t.query(internal.gmail_oauth.get_attempt, { ...actor, attemptId: started.attemptId })).toBeNull();
+	});
+	test("an unused finish code is deleted when it expires without the cron", async () => {
+		const { t, start } = setup(); const started = await start();
+		vi.advanceTimersByTime(5 * 60_000); await t.finishInProgressScheduledFunctions();
+		await t.action(ctx => gmail_callback(ctx, new URL(started.consentUrl!).searchParams.get("state")!, "google-code", false));
+		// The start's cleanup runs first and finds the finish code still valid.
+		vi.advanceTimersByTime(5 * 60_000); await t.finishInProgressScheduledFunctions();
+		expect(await t.query(internal.gmail_oauth.get_attempt, { ...actor, attemptId: started.attemptId })).toMatchObject({ status: "awaiting_finish" });
+		vi.advanceTimersByTime(5 * 60_000); await t.finishInProgressScheduledFunctions();
+		expect(await t.query(internal.gmail_oauth.get_attempt, { ...actor, attemptId: started.attemptId })).toBeNull();
+	});
+	test("cleanup runs again while a batch is full", async () => {
+		const { t } = setup();
+		await t.run(async ctx => { for (let i = 0; i < 30; i++) await ctx.db.insert("request_limits", { key: `k${i}`, window: 0, count: 1, expiresAt: Date.now() - 1 }); });
+		await t.mutation(internal.gmail_oauth.cleanup, {}); await t.finishAllScheduledFunctions(vi.runAllTimers);
+		expect(await t.run(ctx => ctx.db.query("request_limits").collect())).toHaveLength(0);
 	});
 	test("closes a denied pending state without calling Google", async () => {
 		const { t, state, start } = setup(); const started = await start();

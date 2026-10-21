@@ -589,6 +589,7 @@ export const failures = internalQuery({
 			"delivery_failed",
 			"gmail_request",
 			"file_conflict",
+			"slice_crashed",
 		];
 		return {
 			_yay: {
@@ -662,6 +663,26 @@ export const get_worker = internalQuery({
 	args: { work: gmail_worker_context },
 	returns: v.union(v.object({ account: doc(schema, "gmail_accounts"), grant: doc(schema, "host_grants") }), v.null()),
 	handler: async (ctx, args) => worker_account(ctx, args.work),
+});
+
+// A slice records the message it starts. If the slice dies before it saves that message, complete_slice
+// blames the message. A crash after a save is progress. The message's own retry limits handle it.
+export const mark_message = internalMutation({
+	args: { work: gmail_worker_context, rowId: v.id("messages_ledger") },
+	returns: v.boolean(),
+	handler: async (ctx, args) => {
+		const current = await worker_account(ctx, args.work);
+		if (!current) return false;
+		const mark = current.account.messageMark;
+		await ctx.db.patch(current.account._id, {
+			messageMark: {
+				rowId: args.rowId,
+				requestId: args.work.requestId,
+				crashes: mark?.rowId === args.rowId ? mark.crashes : 0,
+			},
+		});
+		return true;
+	},
 });
 
 export const guard_message = internalQuery({
@@ -849,6 +870,8 @@ export const save_message = internalMutation({
 				after.nextAttemptAt = Math.max(after.nextAttemptAt ?? 0, args.claim!.deadline);
 			}
 		}
+		// The message saved progress. Clear its mark, so a later crash does not count against it.
+		if (current.account.messageMark?.rowId === row._id) await ctx.db.patch(current.account._id, { messageMark: null });
 		const { _id, _creationTime, ...fields } = after;
 		return save_ledger(ctx, current.account, row, fields, args.attachmentNote);
 	},
@@ -1097,10 +1120,11 @@ export const finish_slice = internalMutation({
 		// The slice read the last history page and found nothing to save. Keep the check time even if a later step failed.
 		checkedHistory: v.boolean(),
 	},
-	returns: v.null(),
+	// True when this call saved the result and freed the slot.
+	returns: v.boolean(),
 	handler: async (ctx, args) => {
 		const current = await worker_account(ctx, args.work);
-		if (!current) return null;
+		if (!current) return false;
 		const account = current.account;
 		const sourceError = ["google_revoked", "gmail_request", "history_response_too_large"].includes(args.error ?? "")
 			? (args.error as NonNullable<Doc<"gmail_accounts">["sourceError"]>)
@@ -1140,6 +1164,8 @@ export const finish_slice = internalMutation({
 			temporaryFailures: failures,
 			nextSliceKind:
 				account.nextSliceKind === "backfill" ? "history" : account.nextSliceKind === "history" ? "retry" : "backfill",
+			// This slice ended normally after its last message, so that message did not crash it.
+			...(account.messageMark?.requestId === args.work.requestId || account.messageMark === undefined ? { messageMark: null } : {}),
 			...(args.attachmentNote !== null
 				? { attachmentsSkippedReason: args.attachmentNote === "clear" ? null : args.attachmentNote }
 				: {}),
@@ -1148,7 +1174,7 @@ export const finish_slice = internalMutation({
 		// Free the slot in the same write. If the action dies after this save, check_slice finds the slot
 		// free and keeps the error and wait saved above.
 		await complete_slice(ctx, (await ctx.db.get(account._id))!, false);
-		return null;
+		return true;
 	},
 });
 
@@ -1213,7 +1239,8 @@ export const dispatch = internalMutation({
 	},
 });
 
-// Free the slot, save a failure wait, and schedule the next dispatch.
+// Free the slot, save a failure wait, give up a message that crashed three slices, and schedule the
+// next dispatch.
 async function complete_slice(ctx: MutationCtx, account: Doc<"gmail_accounts">, crashed: boolean) {
 	// A grant step (renew, a grant error) may block the account while its slice runs. Then the grant
 	// owns the account error, so a crash must not replace it. Repair needs press_reconnect_needed.
@@ -1222,6 +1249,24 @@ async function complete_slice(ctx: MutationCtx, account: Doc<"gmail_accounts">, 
 	const settlement = failed && account.sourceError ? await next_settlement(ctx, account) : null;
 	const retryAt =
 		Date.now() + Math.min(3600_000, 60_000 * 2 ** Math.min(account.temporaryFailures, 6)) * (1 + Math.random() * 0.1);
+	// Blame only the message this slice started. A mark from an earlier slice is not this crash.
+	const mark = failed && account.messageMark?.requestId === account.syncRequestId ? account.messageMark : null;
+	const row = mark ? await ctx.db.get(mark.rowId) : null;
+	const blamed = row && (row.status === "pending" || row.status === "failed") ? row : null;
+	const crashes = blamed ? mark!.crashes + 1 : 0;
+	// A message that killed three slices in a row, each before any save, would stop sync forever. Give
+	// it up, like a message that failed five times, so the next slices move on.
+	if (blamed && crashes >= 3) {
+		const { _id, _creationTime, ...fields } = blamed;
+		await save_ledger(ctx, account, blamed, {
+			...fields,
+			status: "given_up",
+			error: "slice_crashed",
+			nextAttemptAt: null,
+			settlementNeeded: false,
+			updatedAt: Date.now(),
+		});
+	}
 	// A past time can come from a stale exit or from a settlement or retry that is already due. Save
 	// one minute, so this account does not start again at once and stay first in line.
 	const nextSyncAt = !failed
@@ -1241,6 +1286,7 @@ async function complete_slice(ctx: MutationCtx, account: Doc<"gmail_accounts">, 
 					syncStatus: "blocked" as const,
 					syncError: "sync_error",
 					temporaryFailures: account.temporaryFailures + 1,
+					messageMark: blamed && crashes < 3 ? { ...mark!, crashes } : null,
 				}
 			: {}),
 		updatedAt: Date.now(),
@@ -1259,8 +1305,8 @@ async function complete_slice(ctx: MutationCtx, account: Doc<"gmail_accounts">, 
 		await ctx.scheduler.runAfter(Math.max(0, other.nextSyncAt - Date.now()), internal.gmail_accounts.dispatch, {});
 }
 
-// The slice action calls this as its last step. It frees the slot only after a stale exit, because
-// finish_slice frees it otherwise.
+// The slice action calls this when finish_slice did not free the slot: after a stale exit, or when the
+// grant changed during the slice.
 export const on_complete = internalMutation({
 	args: { context: gmail_worker_context },
 	returns: v.null(),

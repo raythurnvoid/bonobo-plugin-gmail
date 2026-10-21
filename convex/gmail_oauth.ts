@@ -93,6 +93,7 @@ export const prepare_start = internalMutation({
 		await ctx.db.patch(grantId, { sourceSecret: await gmail_encrypt(args.pageToken, `grant:${grantId}:source`) });
 		await ctx.db.patch(id, { grantId, stateHash: await gmail_sha256(state), encryptedState: await gmail_encrypt(state, `attempt:${id}:state`) });
 		if (account) await ctx.db.patch(account._id, { connectRequestId: id });
+		await ctx.scheduler.runAfter(10 * 60_000, internal.gmail_oauth.cleanup, {});
 		// The HTTP action runs the first step inline. This sweep retries it if that action dies.
 		await ctx.scheduler.runAfter(gmail_STEP_CHECK_MS, internal.gmail_grants.sweep, {});
 		return { _yay: id };
@@ -155,6 +156,7 @@ export const claim_callback = internalMutation({
 			if (args.denied) { await gmail_close_attempt(ctx, attempt, "failed", "google_denied"); return refused(400, "google_denied"); }
 			if (!args.codeHash) return refused(400, "invalid_callback");
 			await ctx.db.patch(attempt._id, { status: "exchanging", googleCodeHash: args.codeHash, processingDeadline: Date.now() + 2 * 60_000, updatedAt: Date.now() });
+			await ctx.scheduler.runAfter(2 * 60_000, internal.gmail_oauth.cleanup, {});
 			return { _yay: (await ctx.db.get(attempt._id))!, exchange: true };
 		}
 		if (attempt.googleCodeHash !== args.codeHash || args.denied || attempt.status === "preparing") return refused(400, "invalid_callback");
@@ -180,6 +182,7 @@ export const stage_callback = internalMutation({
 			stagedEmailAddress: args.emailAddress, stagedHistoryId: args.historyId, stagedComposeGranted: args.composeGranted, finishCodeHash: await gmail_sha256(finishCode),
 			encryptedFinishCode: await gmail_encrypt(finishCode, `attempt:${attempt._id}:finish`), expiresAt: Date.now() + 10 * 60_000,
 			processingDeadline: null, updatedAt: Date.now() });
+		await ctx.scheduler.runAfter(10 * 60_000, internal.gmail_oauth.cleanup, {});
 		return { _yay: (await ctx.db.get(attempt._id))! };
 	},
 });
@@ -267,7 +270,7 @@ export const promote = internalMutation({
 				nextSliceKind: "backfill", messagesSynced: 0, messagesSkipped: 0,
 				ledgerCounts: { pending: 0, done: 0, skipped: 0, failed: 0, given_up: 0, emailAssumed: 0, permissionHeld: 0 },
 				attachmentsSkippedReason: null, syncWorkId: null, syncRequestId: null, lastSyncedAt: null, updatedAt: Date.now(), composeGranted: false,
-				idleSlices: 0, googleAccessToken: null,
+				idleSlices: 0, googleAccessToken: null, messageMark: null,
 			});
 			account = (await ctx.db.get(id))!;
 		}
@@ -278,7 +281,7 @@ export const promote = internalMutation({
 		}
 		const generation = account.connectionGeneration + 1;
 		await ctx.db.patch(account._id, { hostInstallationId: attempt.installationId, hostActorUserId: attempt.actorUserId,
-			googleRefreshToken: args.accountRefreshToken, googleAccessToken: null, idleSlices: 0, composeGranted: attempt.stagedComposeGranted === true, connectionGeneration: generation, connectRequestId: null, hostGrantId: grant._id,
+			googleRefreshToken: args.accountRefreshToken, googleAccessToken: null, idleSlices: 0, messageMark: null, composeGranted: attempt.stagedComposeGranted === true, connectionGeneration: generation, connectRequestId: null, hostGrantId: grant._id,
 			historyId: null, syncStatus: "backfilling", syncError: null, sourceError: null, backfillPageToken: null, backfillPage: null, backfillComplete: false,
 			historyPageToken: null, historyAnchor: null, historyPageSize: 25, nextSliceKind: "backfill", temporaryFailures: 0,
 			nextSyncAt: null, syncWorkId: null, syncRequestId: null, lastSyncedAt: null, updatedAt: Date.now() });
@@ -365,18 +368,21 @@ export const cancel = internalMutation({
 	},
 });
 
+// Each attempt schedules this run for the time it would close. Expired page tokens, rate limits and finished
+// receipts only take space, so the hourly cron deletes them. A full batch runs again at once.
 export const cleanup = internalMutation({
 	args: {}, returns: v.null(),
 	handler: async ctx => {
-		await gmail_cleanup_page_rows(ctx);
-		for (const attempt of await ctx.db.query("oauth_states").withIndex("by_status_processingDeadline", q =>
-			q.eq("status", "exchanging").gt("processingDeadline", null).lte("processingDeadline", Date.now())).take(25)) {
-			await gmail_close_attempt(ctx, attempt, "failed", "exchange_interrupted");
-		}
-		for (const attempt of await ctx.db.query("oauth_states").withIndex("by_expiresAt", q => q.lte("expiresAt", Date.now())).take(25)) {
+		const pageFull = await gmail_cleanup_page_rows(ctx);
+		const interrupted = await ctx.db.query("oauth_states").withIndex("by_status_processingDeadline", q =>
+			q.eq("status", "exchanging").gt("processingDeadline", null).lte("processingDeadline", Date.now())).take(25);
+		for (const attempt of interrupted) await gmail_close_attempt(ctx, attempt, "failed", "exchange_interrupted");
+		const expired = await ctx.db.query("oauth_states").withIndex("by_expiresAt", q => q.lte("expiresAt", Date.now())).take(25);
+		for (const attempt of expired) {
 			await gmail_close_attempt(ctx, attempt, "failed", "attempt_expired");
 			await ctx.db.delete(attempt._id);
 		}
+		if (pageFull || interrupted.length === 25 || expired.length === 25) await ctx.scheduler.runAfter(0, internal.gmail_oauth.cleanup, {});
 		return null;
 	},
 });
