@@ -11,6 +11,8 @@ import { gmail_verify_live } from "./gmail_page";
 
 const token_response = z.object({ token: z.string().regex(/^psg_[0-9a-f]{64}$/), expiresAt: z.number().positive(), scopes: z.array(z.string()) });
 const active_phase = v.union(v.literal("exchange"), v.literal("renew"), v.literal("seal"));
+// How long a started grant step may run before a sweep claims it again.
+export const gmail_STEP_CHECK_MS = 2 * 60_000;
 
 async function current_grant(ctx: QueryCtx | MutationCtx, grantId: Id<"host_grants">) {
 	const grant = await ctx.db.get(grantId);
@@ -60,6 +62,7 @@ export const save_step = internalMutation({
 			}
 			await ctx.db.patch(account._id, { nextSyncAt, idleSlices: 0, syncError: account.sourceError,
 				syncStatus: account.sourceError ? "error" : account.backfillComplete ? "live" : "backfilling", updatedAt: Date.now() });
+			if (nextSyncAt !== null) await ctx.scheduler.runAfter(Math.max(0, nextSyncAt - Date.now()), internal.gmail_accounts.dispatch, {});
 			await ctx.scheduler.runAfter(12 * 60 * 60_000, internal.gmail_grants.renew, { grantId: grant._id, lifecycleRequestId: grant.lifecycleRequestId });
 		} else {
 			const pending = args.phase === "exchange" && grant.attemptId !== null;
@@ -69,7 +72,10 @@ export const save_step = internalMutation({
 			if (pending) {
 				const attempt = (await ctx.db.get(grant.attemptId!))!;
 				if (attempt.status === "preparing") await ctx.db.patch(attempt._id, { status: "pending", expiresAt: Date.now() + 10 * 60_000, updatedAt: Date.now() });
-			} else await ctx.scheduler.runAfter(0, internal.gmail_grants.connect, { grantId: grant._id });
+			} else {
+				await ctx.scheduler.runAfter(0, internal.gmail_grants.connect, { grantId: grant._id });
+				await ctx.scheduler.runAfter(gmail_STEP_CHECK_MS, internal.gmail_grants.sweep, {});
+			}
 		}
 		return true;
 	},
@@ -84,6 +90,7 @@ export const save_error = internalMutation({
 		const due = args.temporary ? Date.now() + Math.min(20 * 60_000, 60_000 * 2 ** Math.min(failures - 1, 5)) : null;
 		await ctx.db.patch(grant._id, { phase: args.temporary ? grant.phase : "blocked", nextAttemptAt: due,
 			temporaryFailures: failures, error: args.reason, updatedAt: Date.now() });
+		if (due !== null) await ctx.scheduler.runAfter(due - Date.now(), internal.gmail_grants.sweep, {});
 		if (grant.accountId) {
 			await ctx.db.patch(grant.accountId, { nextSyncAt: null, syncStatus: "blocked", syncError: args.temporary ? "press_temporary" : args.reason, updatedAt: Date.now() });
 		}
@@ -104,6 +111,7 @@ export const renew = internalMutation({
 		await ctx.db.patch(grant._id, { phase: "renew", sourceSecret: grant.interactiveSecret,
 			lifecycleRequestId: gmail_random_secret(), nextAttemptAt: Date.now(), updatedAt: Date.now() });
 		await ctx.scheduler.runAfter(0, internal.gmail_grants.connect, { grantId: grant._id });
+		await ctx.scheduler.runAfter(gmail_STEP_CHECK_MS, internal.gmail_grants.sweep, {});
 		return null;
 	},
 });
@@ -149,19 +157,25 @@ export const connect = internalAction({
 	handler: async (ctx, args) => { await gmail_grant_step(ctx, args.grantId); return null; },
 });
 
+// Each writer of a grant due time schedules this. A step action runs at most once, so a writer that
+// starts one also schedules a check after gmail_STEP_CHECK_MS. The 15-minute cron only catches a lost
+// schedule.
 export const sweep = internalMutation({
 	args: {}, returns: v.null(),
 	handler: async ctx => {
+		let claimed = false;
 		for (const phase of ["exchange", "renew", "seal", "ready"] as const) {
 			const grants = await ctx.db.query("host_grants").withIndex("by_phase_nextAttemptAt", q => q.eq("phase", phase).gt("nextAttemptAt", null).lte("nextAttemptAt", Date.now())).take(25);
 			for (const row of grants) {
 				const grant = await current_grant(ctx, row._id);
 				if (!grant) { await ctx.db.patch(row._id, { phase: "cancelled", sourceSecret: null, interactiveSecret: null, sealedSecret: null, nextAttemptAt: null }); continue; }
-				await ctx.db.patch(grant._id, { nextAttemptAt: Date.now() + 2 * 60_000 });
+				await ctx.db.patch(grant._id, { nextAttemptAt: Date.now() + gmail_STEP_CHECK_MS });
+				claimed = true;
 				if (phase === "ready") await ctx.scheduler.runAfter(0, internal.gmail_grants.renew, { grantId: grant._id, lifecycleRequestId: grant.lifecycleRequestId });
 				else await ctx.scheduler.runAfter(0, internal.gmail_grants.connect, { grantId: grant._id });
 			}
 		}
+		if (claimed) await ctx.scheduler.runAfter(gmail_STEP_CHECK_MS, internal.gmail_grants.sweep, {});
 		return null;
 	},
 });

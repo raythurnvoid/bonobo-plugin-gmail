@@ -8,7 +8,7 @@ import schema, { gmail_host_binding } from "./schema";
 import { gmail_decrypt, gmail_encrypt, gmail_google_token_purpose, gmail_random_secret, gmail_sha256 } from "./gmail_secrets";
 import { gmail_cleanup_page_rows, gmail_PageError, gmail_rate_limit, gmail_verify_live } from "./gmail_page";
 import { gmail_HostError } from "./press";
-import { gmail_grant_step } from "./gmail_grants";
+import { gmail_grant_step, gmail_STEP_CHECK_MS } from "./gmail_grants";
 import { gmail_consent_url, gmail_google_get, gmail_google_token, gmail_profile_response } from "./gmail_google";
 import { gmail_slug } from "../shared/gmail-paths";
 import { gmail_workpool } from "./gmail_workpool";
@@ -94,6 +94,8 @@ export const prepare_start = internalMutation({
 		await ctx.db.patch(grantId, { sourceSecret: await gmail_encrypt(args.pageToken, `grant:${grantId}:source`) });
 		await ctx.db.patch(id, { grantId, stateHash: await gmail_sha256(state), encryptedState: await gmail_encrypt(state, `attempt:${id}:state`) });
 		if (account) await ctx.db.patch(account._id, { connectRequestId: id });
+		// The HTTP action runs the first step inline. This sweep retries it if that action dies.
+		await ctx.scheduler.runAfter(gmail_STEP_CHECK_MS, internal.gmail_grants.sweep, {});
 		return { _yay: id };
 	},
 });
@@ -287,6 +289,7 @@ export const promote = internalMutation({
 			encryptedState: null, encryptedFinishCode: null, completedAccountId: account._id, completedGeneration: generation,
 			receiptExpiresAt: Date.now() + 24 * 60 * 60_000, expiresAt: Date.now() + 24 * 60 * 60_000, updatedAt: Date.now() });
 		await ctx.scheduler.runAfter(0, internal.gmail_grants.connect, { grantId: grant._id });
+		await ctx.scheduler.runAfter(gmail_STEP_CHECK_MS, internal.gmail_grants.sweep, {});
 		return { _yay: { accountId: account._id, connectionGeneration: generation } };
 	},
 });

@@ -1,3 +1,4 @@
+import type { WorkId } from "@convex-dev/workpool";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "./_generated/api";
 import { gmail_test_fixture } from "../scripts/gmail-test-fixtures";
@@ -144,6 +145,9 @@ describe("retry_sync", () => {
 		expect(await t.run(ctx => ctx.db.get(accountId))).toMatchObject({ sourceError: null, syncError: null, syncStatus: "live", nextSyncAt: Date.now(),
 			historyId: before.historyId, historyPageToken: before.historyPageToken, backfillPage: before.backfillPage,
 			ledgerCounts: before.ledgerCounts, permissionProbeNotBefore: before.permissionProbeNotBefore });
+		// Retry schedules its own dispatch, so no cron is needed.
+		vi.advanceTimersByTime(0); await t.finishInProgressScheduledFunctions();
+		expect((await t.run(ctx => ctx.db.get(accountId)))?.syncWorkId).toEqual(expect.any(String));
 	});
 	test("keeps a Press pause while clearing the independent source error", async () => {
 		const { t, actor, accountId, grantId } = await gmail_test_fixture();
@@ -159,6 +163,23 @@ describe("retry_sync", () => {
 		expect(await t.mutation(internal.gmail_accounts.retry_sync, input)).toMatchObject({ _nay: { code: "retry_not_available" } });
 		expect(await t.mutation(internal.gmail_accounts.retry_sync, { ...input, organizationId: "other" })).toMatchObject({ _nay: { code: "account_not_found" } });
 		expect(await t.mutation(internal.gmail_accounts.retry_sync, { ...input, expectedGeneration: 0 })).toMatchObject({ _nay: { code: "connection_changed" } });
+	});
+});
+
+describe("on_complete", () => {
+	test.each([
+		["a saved idle wait", 15 * 60_000, 15 * 60_000],
+		// A stale slice ends without finish_slice and leaves a past due time.
+		["a past due time", -5_000, 60_000],
+	] as const)("schedules the next dispatch after %s", async (_name, dueIn, wait) => {
+		const { t, accountId, grantId } = await gmail_test_fixture();
+		await t.run(ctx => ctx.db.patch(accountId, { syncWorkId: "work", syncRequestId: "request", nextSyncAt: Date.now() + dueIn }));
+		await t.mutation(internal.gmail_accounts.on_complete, { workId: "work" as WorkId,
+			context: { accountId, generation: 1, requestId: "request", grantId }, result: { kind: "success", returnValue: null } });
+		vi.advanceTimersByTime(wait - 1); await t.finishInProgressScheduledFunctions();
+		expect((await t.run(ctx => ctx.db.get(accountId)))?.syncWorkId).toBeNull();
+		vi.advanceTimersByTime(1); await t.finishInProgressScheduledFunctions();
+		expect((await t.run(ctx => ctx.db.get(accountId)))?.syncWorkId).toEqual(expect.any(String));
 	});
 });
 

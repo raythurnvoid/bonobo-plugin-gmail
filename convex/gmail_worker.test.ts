@@ -2365,7 +2365,14 @@ describe("work_account_slice", () => {
 			return Response.json({}, { status: 500 });
 		});
 		await f.t.mutation(internal.gmail_accounts.dispatch, {});
-		await f.t.finishAllScheduledFunctions(vi.runAllTimers);
+		// Run only this slice. The dispatch that on_complete schedules waits at least one minute.
+		const first = (await f.t.run(ctx => ctx.db.get(f.accountId)))!.syncWorkId! as typeof f.workId;
+		for (let tick = 0; tick < 30; tick++) {
+			vi.advanceTimersByTime(1000);
+			await f.t.finishInProgressScheduledFunctions();
+			if ((await f.t.run(ctx => gmail_workpool.status(ctx, first))).state === "finished" &&
+				(await f.t.run(ctx => ctx.db.get(f.accountId)))!.syncWorkId === null) break;
+		}
 		const saved = (await f.t.run(ctx => ctx.db.get(f.ledgerId)))!;
 		expect(saved).toMatchObject({ status: "pending", emailWritten: true, settlementNeeded: true,
 			attachments: [{ state: "pending", accepted: true, deliveries: 1, uploadAttemptedAt: expect.any(Number) }] });
@@ -5150,6 +5157,8 @@ describe("worker budget and completion", () => {
 			ledgerCounts: { done: sourceAccess === "ready" ? 1 : 0, pending: sourceAccess === "ready" ? 0 : 1 } });
 	});
 	test("completion clears only its matching work and request markers", async () => {
+		// Keep the dispatch that completion schedules from running after this test.
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture();
 		await f.t.mutation(internal.gmail_accounts.on_complete, {
 			workId: f.workId,

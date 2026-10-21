@@ -2,6 +2,7 @@ import { z } from "zod";
 import { getFunctionName } from "convex/server";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "./_generated/api";
+import type { Doc } from "./_generated/dataModel";
 import type { ActionCtx } from "./_generated/server";
 import { gmail_test_fixture } from "../scripts/gmail-test-fixtures";
 import { connect, gmail_grant_step } from "./gmail_grants";
@@ -56,6 +57,19 @@ async function setup() {
 	return { ...fixture, state, requests };
 }
 
+// Grant recovery must keep sync progress. A seal also schedules the next slice, so leave out the
+// fields that a slice run changes.
+function progress(account: Doc<"gmail_accounts">) {
+	const { nextSliceKind: _kind, nextSyncAt: _at, syncError: _error, syncRequestId: _request, syncStatus: _status,
+		syncWorkId: _work, temporaryFailures: _failures, updatedAt: _updated, ...rest } = account;
+	return rest;
+}
+
+async function dispatch_scheduled(f: Awaited<ReturnType<typeof setup>>) {
+	const jobs = await f.t.run(ctx => ctx.db.system.query("_scheduled_functions").collect());
+	return jobs.some(job => job.name === "gmail_accounts:dispatch");
+}
+
 describe("gmail_grant_step", () => {
 	test("lost first seal becomes ready through the sweep with the same request", async () => {
 		const { t, grantId, accountId, state, requests } = await setup(); state.loseSeal = true;
@@ -101,8 +115,8 @@ describe("gmail_grant_step", () => {
 		await f.t.mutation(internal.gmail_grants.sweep, {});
 		expect(f.requests).toHaveLength(early);
 		expect(await f.t.run(ctx => ctx.db.get(claimed._id))).toEqual(lost);
-		vi.advanceTimersByTime(1);
-		await f.t.mutation(internal.gmail_grants.sweep, {});
+		// The error saved its due time and scheduled the sweep for it, so no cron is needed.
+		vi.advanceTimersByTime(1); await f.t.finishInProgressScheduledFunctions();
 		expect(await f.t.run(ctx => ctx.db.get(claimed._id))).toEqual({ ...lost, nextAttemptAt: Date.now() + 120_000 });
 		for (let turn = 0; turn < 3; turn++) { vi.advanceTimersByTime(0); await f.t.finishInProgressScheduledFunctions(); }
 		const ready = (await f.t.run(ctx => ctx.db.get(claimed._id)))!;
@@ -124,7 +138,8 @@ describe("gmail_grant_step", () => {
 		} else {
 			expect(ready).toMatchObject({ sourceSecret: null, nextAttemptAt: Date.now() + 12 * 3600_000 });
 			expect(f.state.sealCalls).toBe(1);
-			expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toEqual({ ...before, nextSyncAt: Date.now(), updatedAt: Date.now() });
+			expect(progress((await f.t.run(ctx => ctx.db.get(f.accountId)))!)).toEqual(progress(before));
+			expect(await dispatch_scheduled(f)).toBe(true);
 		}
 	});
 	test.each([
@@ -191,9 +206,11 @@ describe("gmail_grant_step", () => {
 			...(operation === "seal" && boundary === "after" ? { nextSyncAt: Date.now(), updatedAt: Date.now() } : {}) };
 		expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toEqual(savedAccount);
 		expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(ledger);
-		// This isolated fixture owns only the few grant jobs created above.
+		// This isolated fixture owns only the few grant jobs created above. Sweep checks and the account
+		// dispatch have their own tests.
 		const pending = (await f.t.run(ctx => ctx.db.system.query("_scheduled_functions").collect()))
-			.filter(job => job.state.kind === "pending").map(job => ({ name: job.name, args: job.args, scheduledTime: job.scheduledTime }));
+			.filter(job => job.state.kind === "pending" && ["gmail_grants:connect", "gmail_grants:renew"].includes(job.name))
+			.map(job => ({ name: job.name, args: job.args, scheduledTime: job.scheduledTime }));
 		expect(pending).toEqual(boundary === "after" && operation !== "exchange" ? [{
 			name: operation === "renew" ? "gmail_grants:connect" : "gmail_grants:renew",
 			args: [operation === "renew" ? { grantId: claimed._id } : { grantId: claimed._id, lifecycleRequestId: checkpoint.lifecycleRequestId }],
@@ -221,7 +238,8 @@ describe("gmail_grant_step", () => {
 			expect(f.state.exchangeCalls).toBe(1); expect(f.state.sealCalls).toBe(0);
 		} else {
 			expect(ready).toMatchObject({ sourceSecret: null, nextAttemptAt: Date.now() + 12 * 3600_000 });
-			expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toEqual({ ...before, nextSyncAt: Date.now(), updatedAt: Date.now() });
+			expect(progress((await f.t.run(ctx => ctx.db.get(f.accountId)))!)).toEqual(progress(before));
+			expect(await dispatch_scheduled(f)).toBe(true);
 			expect(f.state.renewCalls).toBe(1); expect(f.state.sealCalls).toBe(1);
 		}
 	});
@@ -258,6 +276,21 @@ describe("gmail_grant_step", () => {
 		expect(await f.t.run(ctx => ctx.db.get(f.ledgerId))).toEqual(ledger);
 		expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toEqual({ ...before, nextSyncAt: Date.now(), updatedAt: Date.now() });
 		expect(f.state.renewCalls).toBe(2); expect(f.state.sealCalls).toBe(2);
+	});
+	test("a renewal step that never runs is retried by the scheduled check two minutes later", async () => {
+		const f = await setup();
+		const grant = (await f.t.run(ctx => ctx.db.get(f.grantId)))!;
+		await f.t.mutation(internal.gmail_grants.renew, { grantId: f.grantId, lifecycleRequestId: grant.lifecycleRequestId });
+		// Drop the step, like an action that died before it saved anything.
+		const step = (await f.t.run(ctx => ctx.db.system.query("_scheduled_functions").collect()))
+			.find(job => job.name === "gmail_grants:connect" && job.state.kind === "pending")!;
+		await f.t.run(ctx => ctx.scheduler.cancel(step._id));
+		vi.advanceTimersByTime(120_000 - 1); await f.t.finishInProgressScheduledFunctions();
+		expect(f.state.renewCalls).toBe(0);
+		vi.advanceTimersByTime(1); await f.t.finishInProgressScheduledFunctions();
+		for (let turn = 0; turn < 3; turn++) { vi.advanceTimersByTime(0); await f.t.finishInProgressScheduledFunctions(); }
+		expect(await f.t.run(ctx => ctx.db.get(f.grantId))).toMatchObject({ phase: "ready", error: null });
+		expect(f.state.renewCalls).toBe(1);
 	});
 	test("renewal makes a new seal and preserves the permission lane", async () => {
 		const { t, grantId, accountId, state } = await setup();

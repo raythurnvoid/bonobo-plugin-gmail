@@ -18,7 +18,7 @@ import schema, {
 import { gmail_close_attempt } from "./gmail_oauth";
 import { gmail_encrypt, gmail_random_secret } from "./gmail_secrets";
 import { gmail_PageError, gmail_rate_limit } from "./gmail_page";
-import { gmail_grant_step } from "./gmail_grants";
+import { gmail_grant_step, gmail_STEP_CHECK_MS } from "./gmail_grants";
 import { gmail_workpool } from "./gmail_workpool";
 
 const failure = v.object({ _nay: v.object({ status: v.number(), code: v.string() }) });
@@ -427,6 +427,8 @@ export const prepare_repair = internalMutation({
 			syncStatus: "blocked",
 			updatedAt: Date.now(),
 		});
+		// The HTTP action runs the first step inline. This sweep retries it if that action dies.
+		await ctx.scheduler.runAfter(gmail_STEP_CHECK_MS, internal.gmail_grants.sweep, {});
 		return { _yay: { grantId, clientRequestId: args.clientRequestId } };
 	},
 });
@@ -477,6 +479,7 @@ export const retry_sync = internalMutation({
 			idleSlices: 0,
 			updatedAt: Date.now(),
 		});
+		if (ready) await ctx.scheduler.runAfter(0, internal.gmail_accounts.dispatch, {});
 		return { _yay: null };
 	},
 });
@@ -530,6 +533,8 @@ export const retry_failed = internalMutation({
 		}
 		const grant = account.hostGrantId ? await ctx.db.get(account.hostGrantId) : null;
 		const ready = grant?.phase === "ready" && grant.connectionGeneration === account.connectionGeneration;
+		const nextSyncAt =
+			ready && nextDue !== null ? Math.min(account.nextSyncAt ?? nextDue, nextDue) : account.nextSyncAt;
 		await ctx.db.patch(account._id, {
 			ledgerCounts: {
 				...account.ledgerCounts,
@@ -537,10 +542,12 @@ export const retry_failed = internalMutation({
 				pending: account.ledgerCounts.pending + rows.length - held,
 				failed: account.ledgerCounts.failed + held,
 			},
-			nextSyncAt: ready && nextDue !== null ? Math.min(account.nextSyncAt ?? nextDue, nextDue) : account.nextSyncAt,
+			nextSyncAt,
 			idleSlices: 0,
 			updatedAt: Date.now(),
 		});
+		if (ready && nextDue !== null && nextSyncAt !== null)
+			await ctx.scheduler.runAfter(Math.max(0, nextSyncAt - Date.now()), internal.gmail_accounts.dispatch, {});
 		const more = !!(await ctx.db
 			.query("messages_ledger")
 			.withIndex("by_account_status_nextAttemptAt", (q) => q.eq("accountId", account._id).eq("status", "given_up"))
@@ -1135,6 +1142,8 @@ export const finish_slice = internalMutation({
 	},
 });
 
+// Each writer that leaves an account free (no syncWorkId) with a due time schedules this for that
+// time. The 15-minute cron only catches a lost schedule.
 export const dispatch = internalMutation({
 	args: {},
 	returns: v.null(),
@@ -1191,6 +1200,12 @@ export const on_complete = internalMutation({
 		const settlement = failed && account.sourceError ? await next_settlement(ctx, account) : null;
 		const retryAt =
 			Date.now() + Math.min(3600_000, 60_000 * 2 ** Math.min(account.temporaryFailures, 6)) * (1 + Math.random() * 0.1);
+		// A crash after saving a service wait must not shorten it.
+		const nextSyncAt = !failed
+			? account.nextSyncAt
+			: account.sourceError && settlement === null
+				? null
+				: Math.max(settlement ?? 0, account.nextSyncAt ?? 0, retryAt);
 		await ctx.db.patch(account._id, {
 			syncRequestId: null,
 			syncWorkId: null,
@@ -1199,14 +1214,15 @@ export const on_complete = internalMutation({
 						syncStatus: "blocked" as const,
 						syncError: "sync_error",
 						temporaryFailures: account.temporaryFailures + 1,
-						// A crash after saving a service wait must not shorten it.
-						nextSyncAt: account.sourceError && settlement === null
-							? null
-							: Math.max(settlement ?? 0, account.nextSyncAt ?? 0, retryAt),
+						nextSyncAt,
 					}
 				: {}),
 			updatedAt: Date.now(),
 		});
+		// Wait at least one minute. A slice that stops without finish_slice (stale work) leaves a past
+		// due time, and starting it again at once would loop.
+		if (nextSyncAt !== null)
+			await ctx.scheduler.runAfter(Math.max(60_000, nextSyncAt - Date.now()), internal.gmail_accounts.dispatch, {});
 		return null;
 	},
 });
