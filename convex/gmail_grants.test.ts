@@ -245,6 +245,9 @@ describe("gmail_grant_step", () => {
 	});
 	test("ready sweep resumes a missed twelve-hour renewal without losing account progress", async () => {
 		const f = await setup();
+		// Hold the sync slot so no slice runs during the twelve hours below. This test covers the grant only.
+		const slot = await f.t.run(ctx => ctx.scheduler.runAfter(48 * 3600_000, internal.gmail_grants.connect, { grantId: f.grantId }));
+		await f.t.run(ctx => ctx.db.patch(f.accountId, { syncWorkId: slot }));
 		const before = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
 		const ledger = await f.t.run(ctx => ctx.db.get(f.ledgerId));
 		const grant = (await f.t.run(ctx => ctx.db.get(f.grantId)))!;

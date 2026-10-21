@@ -1,6 +1,5 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import workpoolTest from "@convex-dev/workpool/test";
 import schema from "../convex/schema";
 import { gmail_encrypt, gmail_google_token_purpose, gmail_random_secret } from "../convex/gmail_secrets";
 
@@ -18,7 +17,6 @@ export function gmail_test_attachment() {
 
 export async function gmail_test_fixture() {
 	const t = convexTest(schema, modules);
-	workpoolTest.register(t, "gmail_sync_workpool");
 	const seeded = await t.run(async ctx => {
 		const accountId = await ctx.db.insert("gmail_accounts", {
 			hostOrganizationId: "org", hostWorkspaceId: "workspace", hostInstallationId: "installation", hostActorUserId: "actor",

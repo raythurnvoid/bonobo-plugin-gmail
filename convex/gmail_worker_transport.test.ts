@@ -3,7 +3,6 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { internal } from "./_generated/api";
-import { gmail_workpool } from "./gmail_workpool";
 import { gmail_test_fixture } from "../scripts/gmail-test-fixtures";
 
 afterEach(() => {
@@ -22,7 +21,7 @@ describe("work_account_slice", () => {
 		if (!realClock) vi.spyOn(Date, "now").mockImplementation(() => now);
 		const f = await gmail_test_fixture();
 		const work = { accountId: f.accountId, generation: 1, requestId: "worker", grantId: f.grantId };
-		const workId = await f.t.run(ctx => gmail_workpool.enqueueAction(ctx, internal.gmail_worker.work_account_slice, { work }, { runAt: now + 3600_000 }));
+		const workId = await f.t.run(ctx => ctx.scheduler.runAt(now + 3600_000, internal.gmail_worker.work_account_slice, { work }));
 		await f.t.run(async ctx => {
 			// Start empty so normal backfill creates the message and every save.
 			await ctx.db.delete(f.ledgerId);
@@ -125,6 +124,8 @@ describe("work_account_slice", () => {
 			expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toMatchObject({ sourceError: null, syncError: null, backfillComplete: true,
 				messagesSynced: 1, ledgerCounts: { done: 1, pending: 0, given_up: 0 } });
 			const before = calls.length;
+			// The action freed the slot. Hold it again so the next slice runs.
+			await f.t.run(ctx => ctx.db.patch(f.accountId, { syncRequestId: work.requestId, syncWorkId: workId }));
 			await f.t.action(internal.gmail_worker.work_account_slice, { work });
 			expect(calls.slice(before).filter(call => /\/messages\/ab|\/files\/write|service-uploads|\/object$/.test(call.path))).toEqual([]);
 			expect(await f.t.run(ctx => ctx.db.get(saved!._id))).toEqual(saved);
@@ -140,7 +141,7 @@ describe("work_account_slice", () => {
 		const nativeTimeout = AbortSignal.timeout;
 		const f = await gmail_test_fixture();
 		const work = { accountId: f.accountId, generation: 1, requestId: "worker", grantId: f.grantId };
-		const workId = await f.t.run(ctx => gmail_workpool.enqueueAction(ctx, internal.gmail_worker.work_account_slice, { work }, { runAt: Date.now() + 3600_000 }));
+		const workId = await f.t.run(ctx => ctx.scheduler.runAt(Date.now() + 3600_000, internal.gmail_worker.work_account_slice, { work }));
 		await f.t.run(async ctx => {
 			await ctx.db.delete(f.ledgerId);
 			await ctx.db.patch(f.accountId, {
@@ -224,6 +225,7 @@ describe("work_account_slice", () => {
 				attachments: [{ state: "pending", accepted: true, deliveries: 1, nodeId: "attachment-node", nextAttemptAt: saved.nextAttemptAt }] });
 			expect(saved.nextAttemptAt! - Date.now()).toBeGreaterThan(59_000);
 			const before = calls.length;
+			await f.t.run(ctx => ctx.db.patch(f.accountId, { syncRequestId: work.requestId, syncWorkId: workId }));
 			await f.t.action(internal.gmail_worker.work_account_slice, { work });
 			expect(calls.slice(before).filter(call => /service-uploads|\/object$|\/files\/write$|\/messages\/ab/.test(call.path))).toEqual([]);
 			expect(await f.t.run(ctx => ctx.db.get(saved._id))).toEqual(saved);
@@ -231,6 +233,7 @@ describe("work_account_slice", () => {
 			vi.spyOn(Date, "now").mockReturnValue(saved.nextAttemptAt!);
 			commit = true;
 			const beforeRetry = calls.length;
+			await f.t.run(ctx => ctx.db.patch(f.accountId, { syncRequestId: work.requestId, syncWorkId: workId }));
 			await f.t.action(internal.gmail_worker.work_account_slice, { work });
 			expect(calls.slice(beforeRetry).filter(call => /service-uploads|\/object$|\/files\/write$|\/messages\/ab/.test(call.path)).map(call => call.path))
 				.toEqual(["/api/v1/files/service-uploads/finalize"]);

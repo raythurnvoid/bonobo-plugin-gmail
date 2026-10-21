@@ -1,6 +1,5 @@
 import { v } from "convex/values";
 import { doc } from "convex-helpers/validators";
-import type { WorkId } from "@convex-dev/workpool";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { internalMutation, internalQuery, type ActionCtx, type MutationCtx, type QueryCtx } from "./_generated/server";
@@ -11,7 +10,7 @@ import { gmail_HostError } from "./press";
 import { gmail_grant_step, gmail_STEP_CHECK_MS } from "./gmail_grants";
 import { gmail_consent_url, gmail_google_get, gmail_google_token, gmail_profile_response } from "./gmail_google";
 import { gmail_slug } from "../shared/gmail-paths";
-import { gmail_workpool } from "./gmail_workpool";
+import { gmail_stop_slice } from "./gmail_accounts";
 
 const maximumAccounts = Number(process.env.GMAIL_MAX_CONNECTED_ACCOUNTS);
 if (!Number.isSafeInteger(maximumAccounts) || maximumAccounts < 1) throw new Error("GMAIL_MAX_CONNECTED_ACCOUNTS must be a positive integer");
@@ -272,7 +271,7 @@ export const promote = internalMutation({
 			});
 			account = (await ctx.db.get(id))!;
 		}
-		if (account.syncWorkId) await gmail_workpool.cancel(ctx, account.syncWorkId as WorkId);
+		if (account.syncWorkId) await gmail_stop_slice(ctx, account.syncWorkId);
 		if (account.hostGrantId) {
 			const old = await ctx.db.get(account.hostGrantId);
 			if (old) await ctx.db.patch(old._id, { phase: "cancelled", sourceSecret: null, interactiveSecret: null, sealedSecret: null, nextAttemptAt: null });

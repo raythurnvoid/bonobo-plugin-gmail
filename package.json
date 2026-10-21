@@ -13,7 +13,6 @@
 		"test:once": "vitest run --testTimeout 30000 --hookTimeout 30000 --teardownTimeout 30000"
 	},
 	"dependencies": {
-		"@convex-dev/workpool": "0.4.12",
 		"bonobo-plugin-sdk": "github:raythurnvoid/bonobo-plugin-sdk#ea875be3eaf4c51df85233a52fad095b8625c1b5",
 		"convex": "1.42.2",
 		"convex-helpers": "0.1.106",

@@ -8,9 +8,6 @@ importers:
 
   .:
     dependencies:
-      '@convex-dev/workpool':
-        specifier: 0.4.12
-        version: 0.4.12(convex-helpers@0.1.106(@standard-schema/spec@1.1.0)(convex@1.42.2(react@19.2.7))(react@19.2.7)(typescript@7.0.2)(zod@4.3.5))(convex@1.42.2(react@19.2.7))(react@19.2.7)
       bonobo-plugin-sdk:
         specifier: github:raythurnvoid/bonobo-plugin-sdk#ea875be3eaf4c51df85233a52fad095b8625c1b5
         version: https://codeload.github.com/raythurnvoid/bonobo-plugin-sdk/tar.gz/ea875be3eaf4c51df85233a52fad095b8625c1b5(convex@1.42.2(react@19.2.7))(react@19.2.7)
@@ -95,18 +92,6 @@ packages:
 
   '@cloudflare/workers-types@4.20260702.1':
     resolution: {integrity: sha512-mOhf5TUEB1m2vPrxtqoIGfz0fUC9xyxRDx5gWHy5s+OCo6dcV+g7wI1R7gYCMFohhqF/2y2xeKVwMwCJjfn/WA==}
-
-  '@convex-dev/batch-worker@0.2.2':
-    resolution: {integrity: sha512-3knigElzTVhWw1sN28EYkGBTdrJZ03vMj2PJPuFq3V0Tg41i7tcv/EWDBFQWcUaKzBWWVw693hcJtxCF3CRtEw==}
-    peerDependencies:
-      convex: ^1.36.1
-      react: ^18.3.1 || ^19.0.0
-
-  '@convex-dev/workpool@0.4.12':
-    resolution: {integrity: sha512-mJOtVds/vWWVdFUNhveXlQcfPFUmugZbJYjdjblgA2PpfaedtcwqYBVnLXEBI2QlspTR7HfAT3cTxJtdhVPUsg==}
-    peerDependencies:
-      convex: ^1.36.1
-      convex-helpers: ^0.1.94
 
   '@edge-runtime/primitives@6.0.0':
     resolution: {integrity: sha512-FqoxaBT+prPBHBwE1WXS1ocnu/VLTQyZ6NMUBAdbP7N2hsFTTxMC/jMu2D/8GAlMQfxeuppcPuCUk/HO3fpIvA==}
@@ -1174,19 +1159,6 @@ snapshots:
   '@babel/runtime@7.29.7': {}
 
   '@cloudflare/workers-types@4.20260702.1': {}
-
-  '@convex-dev/batch-worker@0.2.2(convex@1.42.2(react@19.2.7))(react@19.2.7)':
-    dependencies:
-      convex: 1.42.2(react@19.2.7)
-      react: 19.2.7
-
-  '@convex-dev/workpool@0.4.12(convex-helpers@0.1.106(@standard-schema/spec@1.1.0)(convex@1.42.2(react@19.2.7))(react@19.2.7)(typescript@7.0.2)(zod@4.3.5))(convex@1.42.2(react@19.2.7))(react@19.2.7)':
-    dependencies:
-      '@convex-dev/batch-worker': 0.2.2(convex@1.42.2(react@19.2.7))(react@19.2.7)
-      convex: 1.42.2(react@19.2.7)
-      convex-helpers: 0.1.106(@standard-schema/spec@1.1.0)(convex@1.42.2(react@19.2.7))(react@19.2.7)(typescript@7.0.2)(zod@4.3.5)
-    transitivePeerDependencies:
-      - react
 
   '@edge-runtime/primitives@6.0.0': {}
 

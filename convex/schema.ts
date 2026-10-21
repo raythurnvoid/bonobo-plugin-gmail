@@ -57,7 +57,7 @@ export default defineSchema({
 		nextSliceKind: v.union(v.literal("backfill"), v.literal("history"), v.literal("retry")),
 		messagesSynced: v.number(), messagesSkipped: v.number(), ledgerCounts: gmail_ledger_counts,
 		attachmentsSkippedReason: v.union(v.literal("plan"), v.literal("storage"), v.null()),
-		syncWorkId: nullableString, syncRequestId: nullableString, lastSyncedAt: nullableNumber, updatedAt: v.number(),
+		syncWorkId: v.union(v.id("_scheduled_functions"), v.null()), syncRequestId: nullableString, lastSyncedAt: nullableNumber, updatedAt: v.number(),
 		// The Google token has the compose scope, so the connecting member can write drafts and send.
 		composeGranted: v.boolean(),
 		// Successful slices in a row that found no work. The next idle wait doubles with each one.

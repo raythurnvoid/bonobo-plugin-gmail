@@ -1,7 +1,6 @@
 import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
 import { doc } from "convex-helpers/validators";
-import { vOnCompleteArgs, type WorkId } from "@convex-dev/workpool";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, type ActionCtx, type MutationCtx, type QueryCtx } from "./_generated/server";
@@ -19,7 +18,6 @@ import { gmail_close_attempt } from "./gmail_oauth";
 import { gmail_encrypt, gmail_random_secret } from "./gmail_secrets";
 import { gmail_PageError, gmail_rate_limit } from "./gmail_page";
 import { gmail_grant_step, gmail_STEP_CHECK_MS } from "./gmail_grants";
-import { gmail_workpool } from "./gmail_workpool";
 
 const failure = v.object({ _nay: v.object({ status: v.number(), code: v.string() }) });
 const change_args = { ...gmail_host_binding, accountId: v.string(), expectedGeneration: v.number() };
@@ -38,12 +36,21 @@ async function workspace_account(
 		: null;
 }
 
+// The caller frees the slot. Cancel only a slice that has not started. A running action keeps going:
+// its late writes fail the request guards, and it stops at its next account read. Then start the
+// next due account, because its own dispatch may have run while the slot was busy.
+export async function gmail_stop_slice(ctx: MutationCtx, workId: Id<"_scheduled_functions">) {
+	const job = await ctx.db.system.get(workId);
+	if (job?.state.kind === "pending") await ctx.scheduler.cancel(workId);
+	await ctx.scheduler.runAfter(0, internal.gmail_accounts.dispatch, {});
+}
+
 async function disconnect_account(ctx: MutationCtx, account: Doc<"gmail_accounts">) {
 	if (account.connectRequestId) {
 		const attempt = await ctx.db.get(account.connectRequestId);
 		if (attempt) await gmail_close_attempt(ctx, attempt, "cancelled", "disconnected");
 	}
-	if (account.syncWorkId) await gmail_workpool.cancel(ctx, account.syncWorkId as WorkId);
+	if (account.syncWorkId) await gmail_stop_slice(ctx, account.syncWorkId);
 	if (account.hostGrantId) {
 		const grant = await ctx.db.get(account.hostGrantId);
 		if (grant)
@@ -386,7 +393,7 @@ export const prepare_repair = internalMutation({
 		if (account.syncError !== "press_reconnect_needed") return refused(409, "repair_not_needed");
 		if (!(await gmail_rate_limit(ctx, `repair:${args.actorUserId}:${args.installationId}`, 60 * 60_000, 10)))
 			return refused(429, "rate_limited");
-		if (account.syncWorkId) await gmail_workpool.cancel(ctx, account.syncWorkId as WorkId);
+		if (account.syncWorkId) await gmail_stop_slice(ctx, account.syncWorkId);
 		if (old)
 			await ctx.db.patch(old._id, {
 				phase: "cancelled",
@@ -1142,12 +1149,23 @@ export const finish_slice = internalMutation({
 	},
 });
 
+// A slice usually ends in under 45 seconds. While it still runs, the check runs again.
+const SLICE_CHECK_MS = 60_000;
+
 // Each writer that leaves an account free (no syncWorkId) with a due time schedules this for that
-// time. The 15-minute cron only catches a lost schedule.
+// time. The 15-minute cron only catches a lost schedule. One slice runs at a time in the whole
+// deployment. A due account that finds the slot busy waits: the busy slice's completion schedules
+// the next dispatch.
 export const dispatch = internalMutation({
 	args: {},
 	returns: v.null(),
 	handler: async (ctx) => {
+		// This read also makes two dispatches that run at once conflict, so only one starts a slice.
+		const busy = await ctx.db
+			.query("gmail_accounts")
+			.withIndex("by_syncWorkId_nextSyncAt", (q) => q.gt("syncWorkId", null))
+			.first();
+		if (busy) return null;
 		const due = await ctx.db
 			.query("gmail_accounts")
 			.withIndex("by_syncWorkId_nextSyncAt", (q) =>
@@ -1171,58 +1189,98 @@ export const dispatch = internalMutation({
 				requestId: gmail_random_secret(),
 				grantId: grant._id,
 			};
-			const workId = await gmail_workpool.enqueueAction(
-				ctx,
-				internal.gmail_worker.work_account_slice,
-				{ work },
-				{ onComplete: internal.gmail_accounts.on_complete, context: work },
-			);
+			const workId = await ctx.scheduler.runAfter(0, internal.gmail_worker.work_account_slice, { work });
+			await ctx.scheduler.runAfter(SLICE_CHECK_MS, internal.gmail_accounts.check_slice, {
+				accountId: account._id,
+				workId,
+			});
 			await ctx.db.patch(account._id, { syncRequestId: work.requestId, syncWorkId: workId });
+			return null;
 		}
+		// Every row read was cleared. Read on, because the next valid account may have no other dispatch.
+		if (due.length === 25) await ctx.scheduler.runAfter(0, internal.gmail_accounts.dispatch, {});
 		return null;
 	},
 });
 
+// Free the slot, save a failure wait, and schedule the next dispatch.
+async function complete_slice(ctx: MutationCtx, account: Doc<"gmail_accounts">, crashed: boolean) {
+	// A grant step (renew, a grant error) may block the account while its slice runs. Then the grant
+	// owns the account error, so a crash must not replace it. Repair needs press_reconnect_needed.
+	const grant = crashed && account.hostGrantId ? await ctx.db.get(account.hostGrantId) : null;
+	const failed = crashed && account.syncStatus !== "disconnected" && grant?.phase === "ready";
+	const settlement = failed && account.sourceError ? await next_settlement(ctx, account) : null;
+	const retryAt =
+		Date.now() + Math.min(3600_000, 60_000 * 2 ** Math.min(account.temporaryFailures, 6)) * (1 + Math.random() * 0.1);
+	// finish_slice always saves a future time. A past time means the slice stopped as stale work.
+	// Save one minute, so this account does not start again at once and stay first in line.
+	const nextSyncAt = !failed
+		? account.nextSyncAt !== null && account.nextSyncAt <= Date.now()
+			? Date.now() + 60_000
+			: account.nextSyncAt
+		: // A crash after saving a service wait must not shorten it.
+			account.sourceError && settlement === null
+			? null
+			: Math.max(settlement ?? 0, account.nextSyncAt ?? 0, retryAt);
+	await ctx.db.patch(account._id, {
+		syncRequestId: null,
+		syncWorkId: null,
+		nextSyncAt,
+		...(failed
+			? {
+					syncStatus: "blocked" as const,
+					syncError: "sync_error",
+					temporaryFailures: account.temporaryFailures + 1,
+				}
+			: {}),
+		updatedAt: Date.now(),
+	});
+	if (nextSyncAt !== null)
+		await ctx.scheduler.runAfter(nextSyncAt - Date.now(), internal.gmail_accounts.dispatch, {});
+	// The earliest other free account may have missed its own dispatch while the slot was busy. Start
+	// it first. Keep this account's dispatch too, in case that account can no longer start.
+	const other = (
+		await ctx.db
+			.query("gmail_accounts")
+			.withIndex("by_syncWorkId_nextSyncAt", (q) => q.eq("syncWorkId", null).gt("nextSyncAt", null))
+			.take(2)
+	).find((row) => row._id !== account._id);
+	if (other?.nextSyncAt && (nextSyncAt === null || other.nextSyncAt < nextSyncAt))
+		await ctx.scheduler.runAfter(Math.max(0, other.nextSyncAt - Date.now()), internal.gmail_accounts.dispatch, {});
+}
+
+// The slice action calls this as its last step.
 export const on_complete = internalMutation({
-	args: vOnCompleteArgs(gmail_worker_context, v.null()),
+	args: { context: gmail_worker_context },
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const account = await ctx.db.get(args.context.accountId);
+		// Each dispatch saves a new request id, so it names this slice.
 		if (
 			!account ||
 			account.connectionGeneration !== args.context.generation ||
 			account.syncRequestId !== args.context.requestId ||
-			account.syncWorkId !== args.workId ||
 			account.hostGrantId !== args.context.grantId
 		)
 			return null;
-		const failed = args.result.kind === "failed" && account.syncStatus !== "disconnected";
-		const settlement = failed && account.sourceError ? await next_settlement(ctx, account) : null;
-		const retryAt =
-			Date.now() + Math.min(3600_000, 60_000 * 2 ** Math.min(account.temporaryFailures, 6)) * (1 + Math.random() * 0.1);
-		// A crash after saving a service wait must not shorten it.
-		const nextSyncAt = !failed
-			? account.nextSyncAt
-			: account.sourceError && settlement === null
-				? null
-				: Math.max(settlement ?? 0, account.nextSyncAt ?? 0, retryAt);
-		await ctx.db.patch(account._id, {
-			syncRequestId: null,
-			syncWorkId: null,
-			...(failed
-				? {
-						syncStatus: "blocked" as const,
-						syncError: "sync_error",
-						temporaryFailures: account.temporaryFailures + 1,
-						nextSyncAt,
-					}
-				: {}),
-			updatedAt: Date.now(),
-		});
-		// Wait at least one minute. A slice that stops without finish_slice (stale work) leaves a past
-		// due time, and starting it again at once would loop.
-		if (nextSyncAt !== null)
-			await ctx.scheduler.runAfter(Math.max(60_000, nextSyncAt - Date.now()), internal.gmail_accounts.dispatch, {});
+		await complete_slice(ctx, account, false);
+		return null;
+	},
+});
+
+// Free the slot of a slice whose action ended without on_complete, because it threw or was killed.
+export const check_slice = internalMutation({
+	args: { accountId: v.id("gmail_accounts"), workId: v.id("_scheduled_functions") },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const account = await ctx.db.get(args.accountId);
+		if (!account || account.syncWorkId !== args.workId) return null;
+		const job = await ctx.db.system.get(args.workId);
+		if (job?.state.kind === "pending" || job?.state.kind === "inProgress") {
+			await ctx.scheduler.runAfter(SLICE_CHECK_MS, internal.gmail_accounts.check_slice, args);
+			return null;
+		}
+		await complete_slice(ctx, account, true);
 		return null;
 	},
 });

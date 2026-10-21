@@ -3,7 +3,6 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { internal } from "./_generated/api";
-import { gmail_workpool } from "./gmail_workpool";
 import { gmail_test_fixture } from "../scripts/gmail-test-fixtures";
 
 afterEach(() => {
@@ -20,7 +19,7 @@ describe("work_account_slice", () => {
 		const nativeFetch = fetch;
 		const f = await gmail_test_fixture();
 		const work = { accountId: f.accountId, generation: 1, requestId: "worker", grantId: f.grantId };
-		const workId = await f.t.run(ctx => gmail_workpool.enqueueAction(ctx, internal.gmail_worker.work_account_slice, { work }, { runAt: Date.now() + 3600_000 }));
+		const workId = await f.t.run(ctx => ctx.scheduler.runAt(Date.now() + 3600_000, internal.gmail_worker.work_account_slice, { work }));
 		await f.t.run(async ctx => {
 			await ctx.db.delete(f.ledgerId);
 			await ctx.db.patch(f.accountId, {

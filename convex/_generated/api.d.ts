@@ -18,7 +18,6 @@ import type * as gmail_oauth from "../gmail_oauth.js";
 import type * as gmail_page from "../gmail_page.js";
 import type * as gmail_secrets from "../gmail_secrets.js";
 import type * as gmail_worker from "../gmail_worker.js";
-import type * as gmail_workpool from "../gmail_workpool.js";
 import type * as http from "../http.js";
 import type * as press from "../press.js";
 
@@ -39,7 +38,6 @@ declare const fullApi: ApiFromModules<{
   gmail_page: typeof gmail_page;
   gmail_secrets: typeof gmail_secrets;
   gmail_worker: typeof gmail_worker;
-  gmail_workpool: typeof gmail_workpool;
   http: typeof http;
   press: typeof press;
 }>;
@@ -70,6 +68,4 @@ export declare const internal: FilterApi<
   FunctionReference<any, "internal">
 >;
 
-export declare const components: {
-  gmail_sync_workpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"gmail_sync_workpool">;
-};
+export declare const components: {};
