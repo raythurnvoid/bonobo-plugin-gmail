@@ -17,7 +17,7 @@ test("a native 25 MB external attachment is delivered whole below 512 MiB", asyn
 	const nativeFetch = fetch;
 	const memory = vi.spyOn(console, "info");
 	const f = await gmail_test_fixture();
-	const work = { accountId: f.accountId, generation: 1, requestId: "worker", grantId: f.grantId };
+	const work = { accountId: f.accountId, generation: 1, requestId: "worker", grantId: f.grantId, checkId: f.checkId };
 	const workId = await f.t.run(ctx => ctx.scheduler.runAt(Date.now() + 3600_000, internal.gmail_worker.work_account_slice, { work }));
 	await f.t.run(async ctx => {
 		await ctx.db.delete(f.ledgerId);

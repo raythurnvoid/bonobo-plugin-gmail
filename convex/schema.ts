@@ -8,10 +8,12 @@ export const gmail_host_binding = {
 };
 export const gmail_worker_context = v.object({
 	accountId: v.id("gmail_accounts"), generation: v.number(), requestId: v.string(), grantId: v.id("host_grants"),
+	// The check_slice job of this slice. finish_slice cancels it after a normal end.
+	checkId: v.id("_scheduled_functions"),
 });
 export const gmail_history_event = v.object({
 	historyId: v.string(), gmailMessageId: v.string(),
-	kind: v.union(v.literal("added"), v.literal("rescue_spam"), v.literal("rescue_trash"), v.literal("deleted")),
+	kind: v.union(v.literal("added"), v.literal("draft"), v.literal("rescue_spam"), v.literal("rescue_trash"), v.literal("deleted")),
 });
 export const gmail_attachment_task = v.object({
 	partId: v.string(), displayName: v.string(), initialPath: v.string(), filename: v.string(), contentType: v.string(),

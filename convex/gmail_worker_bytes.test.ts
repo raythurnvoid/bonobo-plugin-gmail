@@ -18,7 +18,7 @@ describe("work_account_slice", () => {
 	] as const)("%s", async (_title, kind) => {
 		const nativeFetch = fetch;
 		const f = await gmail_test_fixture();
-		const work = { accountId: f.accountId, generation: 1, requestId: "worker", grantId: f.grantId };
+		const work = { accountId: f.accountId, generation: 1, requestId: "worker", grantId: f.grantId, checkId: f.checkId };
 		const workId = await f.t.run(ctx => ctx.scheduler.runAt(Date.now() + 3600_000, internal.gmail_worker.work_account_slice, { work }));
 		await f.t.run(async ctx => {
 			await ctx.db.delete(f.ledgerId);

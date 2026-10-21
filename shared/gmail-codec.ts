@@ -210,7 +210,7 @@ const history_validator = z.object({
 	historyId: z.string().regex(/^\d+$/), nextPageToken: z.string().optional(),
 	history: z.array(z.object({
 		id: z.string().regex(/^\d+$/),
-		messagesAdded: z.array(z.object({ message: history_message })).optional().default([]),
+		messagesAdded: z.array(z.object({ message: history_message.extend({ labelIds: z.array(z.string()).optional() }) })).optional().default([]),
 		messagesDeleted: z.array(z.object({ message: history_message })).optional().default([]),
 		labelsRemoved: z.array(z.object({ message: history_message, labelIds: z.array(z.string()) })).optional().default([]),
 	})).optional().default([]),
@@ -219,10 +219,13 @@ const history_validator = z.object({
 export function gmail_history_events(input: unknown) {
 	const parsed = history_validator.safeParse(input);
 	if (!parsed.success) throw new gmail_ContentError("invalid_source");
-	const kinds = ["added", "rescue_spam", "rescue_trash", "deleted"] as const;
+	const kinds = ["added", "draft", "rescue_spam", "rescue_trash", "deleted"] as const;
 	const events: { historyId: string; gmailMessageId: string; kind: typeof kinds[number] }[] = [];
 	for (const item of parsed.data.history) {
-		for (const added of item.messagesAdded) events.push({ historyId: item.id, gmailMessageId: added.message.id, kind: "added" });
+		// Gmail web saves a draft often, and each save adds a new message id. Mark drafts here, so the
+		// worker skips them without a full fetch. A sent draft gets a new id, so a draft id never becomes mail.
+		for (const added of item.messagesAdded)
+			events.push({ historyId: item.id, gmailMessageId: added.message.id, kind: added.message.labelIds?.includes("DRAFT") ? "draft" : "added" });
 		for (const removed of item.labelsRemoved) {
 			if (removed.labelIds.includes("SPAM")) events.push({ historyId: item.id, gmailMessageId: removed.message.id, kind: "rescue_spam" });
 			if (removed.labelIds.includes("TRASH")) events.push({ historyId: item.id, gmailMessageId: removed.message.id, kind: "rescue_trash" });

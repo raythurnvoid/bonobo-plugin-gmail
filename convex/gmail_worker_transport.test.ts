@@ -20,7 +20,7 @@ describe("work_account_slice", () => {
 		let now = Date.now();
 		if (!realClock) vi.spyOn(Date, "now").mockImplementation(() => now);
 		const f = await gmail_test_fixture();
-		const work = { accountId: f.accountId, generation: 1, requestId: "worker", grantId: f.grantId };
+		const work = { accountId: f.accountId, generation: 1, requestId: "worker", grantId: f.grantId, checkId: f.checkId };
 		const workId = await f.t.run(ctx => ctx.scheduler.runAt(now + 3600_000, internal.gmail_worker.work_account_slice, { work }));
 		await f.t.run(async ctx => {
 			// Start empty so normal backfill creates the message and every save.
@@ -140,7 +140,7 @@ describe("work_account_slice", () => {
 		const nativeFetch = fetch;
 		const nativeTimeout = AbortSignal.timeout;
 		const f = await gmail_test_fixture();
-		const work = { accountId: f.accountId, generation: 1, requestId: "worker", grantId: f.grantId };
+		const work = { accountId: f.accountId, generation: 1, requestId: "worker", grantId: f.grantId, checkId: f.checkId };
 		const workId = await f.t.run(ctx => ctx.scheduler.runAt(Date.now() + 3600_000, internal.gmail_worker.work_account_slice, { work }));
 		await f.t.run(async ctx => {
 			await ctx.db.delete(f.ledgerId);

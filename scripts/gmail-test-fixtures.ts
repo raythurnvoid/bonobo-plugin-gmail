@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
+import { internal } from "../convex/_generated/api";
 import schema from "../convex/schema";
 import { gmail_encrypt, gmail_google_token_purpose, gmail_random_secret } from "../convex/gmail_secrets";
 
@@ -44,7 +45,11 @@ export async function gmail_test_fixture() {
 			attachments: [gmail_test_attachment()], attachmentsNotSaved: 0, attempts: 0, nextAttemptAt: Date.now() + 3600_000,
 			settlementNeeded: true, permissionHeld: true, fileAccessOperation: { kind: "attachment", index: 0, operation: "finalize" },
 			error: "file_access", deletedAt: null, updatedAt: Date.now() });
-		return { accountId, grantId, ledgerId };
+		// A stand-in for a slice's check_slice job, for tests that build worker args by hand. Cancel it at
+		// once, so it never runs and tests that look for pending jobs do not find it.
+		const checkId = await ctx.scheduler.runAfter(60_000, internal.gmail_accounts.check_slice, { accountId, requestId: "fixture" });
+		await ctx.scheduler.cancel(checkId);
+		return { accountId, grantId, ledgerId, checkId };
 	});
 	return { t, ...seeded, actor: gmail_test_actor };
 }

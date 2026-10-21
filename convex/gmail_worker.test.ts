@@ -117,6 +117,7 @@ async function fixture(
 			generation: 1,
 			requestId: "worker",
 			grantId: f.grantId,
+			checkId: f.checkId,
 		},
 	};
 }
@@ -229,11 +230,11 @@ async function hold_slot(f: Awaited<ReturnType<typeof fixture>>) {
 // An action that stops before finish_slice does not free its slot. End its job and run check_slice, as
 // the scheduled check does one minute after dispatch.
 async function end_stopped_slice(f: Awaited<ReturnType<typeof fixture>>) {
-	const workId = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!.syncWorkId!;
+	const { syncWorkId: workId, syncRequestId: requestId } = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
 	await f.t.run(async (ctx) => {
-		if ((await ctx.db.system.get(workId))!.state.kind === "pending") await ctx.scheduler.cancel(workId);
+		if ((await ctx.db.system.get(workId!))!.state.kind === "pending") await ctx.scheduler.cancel(workId!);
 	});
-	await f.t.mutation(internal.gmail_accounts.check_slice, { accountId: f.accountId, workId });
+	await f.t.mutation(internal.gmail_accounts.check_slice, { accountId: f.accountId, requestId: requestId! });
 }
 
 const empty_history = { historyId: "10", history: [] };
@@ -2114,7 +2115,8 @@ describe("work_account_slice", () => {
 			await f.t.mutation(internal.gmail_accounts.dispatch, {});
 			const old = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
 			const oldWorkId = old.syncWorkId!;
-			const oldWork = { ...f.work, requestId: old.syncRequestId! };
+			// Read the slice's own args. Each dispatch gives its slice a new check id.
+			const oldWork = (await f.t.run(async ctx => (await ctx.db.system.get(oldWorkId))!.args[0].work)) as typeof f.work;
 			await vi.waitFor(async () => {
 				expect(pausedAt).not.toBeNull();
 				expect(await f.t.run(async ctx => (await ctx.db.system.get(oldWorkId))!.state.kind)).toBe("inProgress");
@@ -2286,7 +2288,8 @@ describe("work_account_slice", () => {
 			await f.t.mutation(internal.gmail_accounts.dispatch, {});
 			const queued = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
 			const workId = queued.syncWorkId!;
-			const work = { ...f.work, requestId: queued.syncRequestId! };
+			// Read the slice's own args. Each dispatch gives its slice a new check id.
+			const work = (await f.t.run(async ctx => (await ctx.db.system.get(workId))!.args[0].work)) as typeof f.work;
 			await vi.waitFor(async () => {
 				expect(reached).toBe(true);
 				expect(await f.t.run(async ctx => (await ctx.db.system.get(workId))!.state.kind)).toBe("inProgress");
@@ -3570,6 +3573,24 @@ describe("work_account_slice", () => {
 			(q) => q.eq("accountId", f.accountId).eq("gmailMessageId", "ac")).unique())).toMatchObject({
 			status: "done", emailWritten: true, fileNodeId: "sent-node",
 		});
+	});
+	test("a new draft id from history is skipped without a fetch", async () => {
+		const f = await fixture({ fresh: true });
+		await f.t.run(async (ctx) => {
+			await ctx.db.patch(f.ledgerId, { status: "skipped", skipReason: "draft", nextAttemptAt: null });
+			await ctx.db.patch(f.accountId, { nextSliceKind: "history", messagesSkipped: 1,
+				ledgerCounts: { pending: 0, done: 0, skipped: 1, failed: 0, given_up: 0, emailAssumed: 0, permissionHeld: 0 } });
+		});
+		const calls = network((path) => path.endsWith("/history")
+			? Response.json({ historyId: "11", history: [{ id: "11", messagesAdded: [{ message: { id: "ad", labelIds: ["DRAFT"] } }] }] })
+			: Response.json({}, { status: 500 }));
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		expect(calls.some((call) => call.path.includes("/messages/"))).toBe(false);
+		expect(await f.t.run((ctx) => ctx.db.query("messages_ledger").withIndex("by_account_gmailMessageId",
+			(q) => q.eq("accountId", f.accountId).eq("gmailMessageId", "ad")).unique())).toMatchObject({
+			status: "skipped", skipReason: "draft", nextAttemptAt: null,
+		});
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ historyId: "11", messagesSkipped: 2 });
 	});
 	test("a stop after the final message save advances backfill without new calls", async () => {
 		let now = Date.now();
@@ -6065,8 +6086,9 @@ describe("idle wait", () => {
 		const functions = record_functions();
 		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
 		expect(calls.map((call) => call.path)).toEqual(["/token", "/gmail/v1/users/me/history"]);
-		// One retries() pass reads held rows, other rows, then held rows again. History found no mail, so no second pass.
-		expect(functions.filter((name) => name === "gmail_accounts:retry_candidates")).toHaveLength(3);
+		// The account has no held rows and no unit ran, so one retries() pass reads only the other rows.
+		// History found no mail, so no second pass.
+		expect(functions.filter((name) => name === "gmail_accounts:retry_candidates")).toHaveLength(1);
 		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ idleSlices: 4, nextSyncAt: now + 5 * 60_000 });
 	});
 	test("a Press outage after the history check keeps the check time", async () => {

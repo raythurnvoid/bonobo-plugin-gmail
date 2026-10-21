@@ -222,7 +222,7 @@ describe("dispatch", () => {
 		// A slice saves its next wait in finish_slice, before completion.
 		await f.t.run(ctx => ctx.db.patch(first._id, { nextSyncAt: Date.now() + 15 * 60_000 }));
 		await f.t.mutation(internal.gmail_accounts.on_complete, {
-			context: { accountId: first._id, generation: 1, requestId: first.syncRequestId!, grantId: first.hostGrantId! } });
+			context: { accountId: first._id, generation: 1, requestId: first.syncRequestId!, grantId: first.hostGrantId!, checkId: f.checkId } });
 		vi.advanceTimersByTime(0); await f.t.finishInProgressScheduledFunctions();
 		expect((await f.t.run(ctx => ctx.db.get(first._id)))!.syncWorkId).toBeNull();
 		expect((await f.t.run(ctx => ctx.db.get(other._id)))!.syncWorkId).toEqual(expect.any(String));
@@ -253,10 +253,10 @@ describe("on_complete", () => {
 		// A stale slice ends without finish_slice and leaves a past due time.
 		["a past due time", -5_000, 60_000],
 	] as const)("schedules the next dispatch after %s", async (_name, dueIn, wait) => {
-		const { t, accountId, grantId } = await gmail_test_fixture();
+		const { t, accountId, grantId, checkId } = await gmail_test_fixture();
 		await t.run(async ctx => ctx.db.patch(accountId, { syncWorkId: await ctx.scheduler.runAfter(3600_000, internal.gmail_grants.connect, { grantId }),
 			syncRequestId: "request", nextSyncAt: Date.now() + dueIn }));
-		await t.mutation(internal.gmail_accounts.on_complete, { context: { accountId, generation: 1, requestId: "request", grantId } });
+		await t.mutation(internal.gmail_accounts.on_complete, { context: { accountId, generation: 1, requestId: "request", grantId, checkId } });
 		vi.advanceTimersByTime(wait - 1); await t.finishInProgressScheduledFunctions();
 		expect((await t.run(ctx => ctx.db.get(accountId)))?.syncWorkId).toBeNull();
 		vi.advanceTimersByTime(1); await t.finishInProgressScheduledFunctions();
@@ -271,7 +271,7 @@ describe("on_complete", () => {
 				syncRequestId: "request", nextSyncAt: Date.now() + 15 * 60_000 });
 			await ctx.db.patch(secondId, { nextSyncAt: Date.now() + 5 * 60_000 });
 		});
-		await f.t.mutation(internal.gmail_accounts.on_complete, { context: { accountId: f.accountId, generation: 1, requestId: "request", grantId: f.grantId } });
+		await f.t.mutation(internal.gmail_accounts.on_complete, { context: { accountId: f.accountId, generation: 1, requestId: "request", grantId: f.grantId, checkId: f.checkId } });
 		const second = (await f.t.run(ctx => ctx.db.get(secondId)))!;
 		await f.t.run(ctx => ctx.db.patch(second.hostGrantId!, { phase: "renew" }));
 		vi.advanceTimersByTime(5 * 60_000); await f.t.finishInProgressScheduledFunctions();
@@ -287,8 +287,8 @@ describe("check_slice", () => {
 		const f = await gmail_test_fixture();
 		let heldWhileRunning = false;
 		stub_slice(async () => {
-			const workId = (await f.t.run(ctx => ctx.db.get(f.accountId)))!.syncWorkId!;
-			await f.t.mutation(internal.gmail_accounts.check_slice, { accountId: f.accountId, workId });
+			const { syncWorkId: workId, syncRequestId: requestId } = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+			await f.t.mutation(internal.gmail_accounts.check_slice, { accountId: f.accountId, requestId: requestId! });
 			heldWhileRunning = (await f.t.run(ctx => ctx.db.get(f.accountId)))!.syncWorkId === workId;
 			throw new Error("Slice stopped before completion");
 		});
@@ -304,18 +304,28 @@ describe("check_slice", () => {
 		expect(freed).toMatchObject({ syncWorkId: null, syncRequestId: null, syncStatus: "blocked", syncError: "sync_error", temporaryFailures: 1 });
 		expect(freed.nextSyncAt).toBeGreaterThanOrEqual(Date.now() + 60_000);
 	});
+	test("a slice that ends normally cancels its check", async () => {
+		const f = await gmail_test_fixture();
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		const { syncWorkId } = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+		const work: FunctionArgs<typeof internal.gmail_accounts.finish_slice>["work"] =
+			await f.t.run(async ctx => (await ctx.db.system.get(syncWorkId!))!.args[0].work);
+		await f.t.mutation(internal.gmail_accounts.finish_slice, { work, error: null, retryAfterMs: null, attachmentNote: null,
+			active: false, checkedHistory: true });
+		expect(await f.t.run(async ctx => (await ctx.db.system.get(work.checkId))!.state.kind)).toBe("canceled");
+	});
 	test("cancels a slice that never starts and frees the slot", async () => {
 		const f = await gmail_test_fixture();
 		stub_slice();
 		await f.t.mutation(internal.gmail_accounts.dispatch, {});
-		const workId = (await f.t.run(ctx => ctx.db.get(f.accountId)))!.syncWorkId!;
+		const { syncWorkId: workId, syncRequestId: requestId } = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
 		// The timers stay still, so the slice job stays pending while the clock moves on.
 		vi.setSystemTime(Date.now() + 5 * 60_000);
-		await f.t.mutation(internal.gmail_accounts.check_slice, { accountId: f.accountId, workId });
+		await f.t.mutation(internal.gmail_accounts.check_slice, { accountId: f.accountId, requestId: requestId! });
 		expect((await f.t.run(ctx => ctx.db.get(f.accountId)))!.syncWorkId).toBe(workId);
 		vi.setSystemTime(Date.now() + 1);
-		await f.t.mutation(internal.gmail_accounts.check_slice, { accountId: f.accountId, workId });
-		expect(await f.t.run(async ctx => (await ctx.db.system.get(workId))!.state.kind)).toBe("canceled");
+		await f.t.mutation(internal.gmail_accounts.check_slice, { accountId: f.accountId, requestId: requestId! });
+		expect(await f.t.run(async ctx => (await ctx.db.system.get(workId!))!.state.kind)).toBe("canceled");
 		expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toMatchObject({ syncWorkId: null, syncRequestId: null, syncError: "sync_error" });
 	});
 	test("a slice that dies after renew blocked its account keeps the reconnect error", async () => {

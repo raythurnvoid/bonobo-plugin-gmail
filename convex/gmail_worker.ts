@@ -1209,7 +1209,10 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
       await unit(claimed.row, claimed.claim);
       return true;
     }
-    await held();
+    const stepsBefore = steps;
+    // The account counts its held rows, so skip the read when there are none. A row that a unit holds
+    // later in this slice waits at least an hour, so it cannot be due yet.
+    if (latestAccount.ledgerCounts.permissionHeld > 0) await held();
     const rows: Doc<"messages_ledger">[] = await ctx.runQuery(
       internal.gmail_accounts.retry_candidates,
       {
@@ -1221,9 +1224,11 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
       if (!budget()) break;
       await unit(row);
     }
-    while (budget() && (await held())) {
-      /* Each successful proof may free the next held unit. */
-    }
+    // Only a unit that ran in this pass can bring the proof that frees the next held unit.
+    if (steps > stepsBefore)
+      while (budget() && (await held())) {
+        /* Each successful proof may free the next held unit. */
+      }
   }
 
   async function backfill() {
@@ -1307,7 +1312,7 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
         startHistoryId: account.historyId!,
         maxResults: String(account.historyPageSize),
         fields:
-          "history(id,messagesAdded(message(id,threadId)),messagesDeleted(message(id,threadId)),labelsRemoved(message(id,threadId),labelIds)),nextPageToken,historyId",
+          "history(id,messagesAdded(message(id,threadId,labelIds)),messagesDeleted(message(id,threadId)),labelsRemoved(message(id,threadId),labelIds)),nextPageToken,historyId",
         ...(token ? { pageToken: token } : {}),
       });
       for (const kind of ["messageAdded", "messageDeleted", "labelRemoved"])
