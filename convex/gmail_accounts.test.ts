@@ -304,6 +304,20 @@ describe("check_slice", () => {
 		expect(freed).toMatchObject({ syncWorkId: null, syncRequestId: null, syncStatus: "blocked", syncError: "sync_error", temporaryFailures: 1 });
 		expect(freed.nextSyncAt).toBeGreaterThanOrEqual(Date.now() + 60_000);
 	});
+	test("cancels a slice that never starts and frees the slot", async () => {
+		const f = await gmail_test_fixture();
+		stub_slice();
+		await f.t.mutation(internal.gmail_accounts.dispatch, {});
+		const workId = (await f.t.run(ctx => ctx.db.get(f.accountId)))!.syncWorkId!;
+		// The timers stay still, so the slice job stays pending while the clock moves on.
+		vi.setSystemTime(Date.now() + 5 * 60_000);
+		await f.t.mutation(internal.gmail_accounts.check_slice, { accountId: f.accountId, workId });
+		expect((await f.t.run(ctx => ctx.db.get(f.accountId)))!.syncWorkId).toBe(workId);
+		vi.setSystemTime(Date.now() + 1);
+		await f.t.mutation(internal.gmail_accounts.check_slice, { accountId: f.accountId, workId });
+		expect(await f.t.run(async ctx => (await ctx.db.system.get(workId))!.state.kind)).toBe("canceled");
+		expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toMatchObject({ syncWorkId: null, syncRequestId: null, syncError: "sync_error" });
+	});
 	test("a slice that dies after renew blocked its account keeps the reconnect error", async () => {
 		const f = await gmail_test_fixture();
 		stub_slice(async () => {

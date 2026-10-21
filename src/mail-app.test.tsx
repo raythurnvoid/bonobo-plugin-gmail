@@ -1,4 +1,4 @@
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { BonoboClient } from "bonobo-plugin-sdk/frontend";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { MailApp } from "./mail-app";
@@ -132,5 +132,56 @@ describe("MailApp", () => {
 		await vi.waitFor(() =>
 			expect([...document.querySelectorAll(".mail-row-subject")].map((element) => element.textContent)).toEqual(["new mail", "old mail"]),
 		);
+	});
+
+	test("keeps the agent off a draft whose save failed, so the typed text stays", async () => {
+		const draftId = "6f1c2a4e-0b7d-4c3e-9a51-2f8e7d6c5b4a";
+		const row = { clientDraftId: draftId, to: ["ada@example.com"], cc: [], subject: "Lunch", isReply: false, saving: false, agentEditedAt: null, updatedAt: 1 };
+		const requests: string[] = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL) => {
+				const path = new URL(String(input)).pathname;
+				requests.push(path);
+				if (path === "/page/status") {
+					const binding = { organizationId: "org", workspaceId: "workspace", installationId: "installation", actorUserId: "actor" };
+					return Response.json({ binding, canWrite: true, cursor: null, attempt: null, accounts: [{ ...account, canRepair: false }] });
+				}
+				if (path === "/page/drafts/list") return Response.json({ drafts: [row], cursor: null });
+				if (path === "/page/drafts/get") return Response.json({ ...row, body: "Hi" });
+				if (path === "/page/drafts/update") return Response.json({ code: "gmail_busy" }, { status: 503 });
+				return Response.json({});
+			}),
+		);
+		const tools = new Map<string, (input: unknown) => unknown>();
+		const client = {
+			getToken: async () => "plu_test",
+			refreshToken: async () => "plu_new",
+			fetchJson: async () => ({ status: 404, body: { message: "Not found" } }),
+			agent: {
+				registerTool: (name: string, handler: (input: unknown) => unknown) => {
+					tools.set(name, handler);
+					return () => tools.delete(name);
+				},
+			},
+		} as unknown as BonoboClient;
+
+		render(<MailApp client={client} />);
+		await vi.waitFor(() => expect(screen.getByRole("button", { name: "Drafts" })).toBeTruthy());
+		fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+		await vi.waitFor(() => expect(screen.getByText("Lunch")).toBeTruthy());
+		fireEvent.click(screen.getByText("Lunch"));
+		const body = await vi.waitFor(() => {
+			const element = document.querySelector("textarea");
+			expect(element?.value).toBe("Hi");
+			return element!;
+		});
+
+		fireEvent.input(body, { target: { value: "Hi, see you at noon" } });
+		fireEvent.blur(body);
+		await vi.waitFor(() => expect(screen.getByText("Gmail is busy. Try again in a moment.")).toBeTruthy());
+
+		await expect(tools.get("update_draft")!({ draftId, subject: "Lunch on Friday" })).rejects.toThrow("not saved yet");
+		expect(requests.filter((path) => path === "/page/drafts/update")).toHaveLength(1);
 	});
 });

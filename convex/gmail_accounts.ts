@@ -1181,6 +1181,22 @@ export const finish_slice = internalMutation({
 // A slice usually ends in under 45 seconds. While it still runs, the check runs again.
 const SLICE_CHECK_MS = 60_000;
 
+// Convex retries a job that hits a system error before it starts, with no limit, so a slice job can
+// stay pending for hours. With one slot for the whole deployment, that would stop sync for every
+// account. A slice still pending this long after its start time is treated as stuck.
+const SLICE_START_LIMIT_MS = 5 * 60_000;
+
+// Say whether the slice job may still run. Cancel a job that is stuck before its start. It never ran,
+// so it saved nothing and no message is blamed.
+async function cancel_stuck_slice_or_check_alive(ctx: MutationCtx, workId: Id<"_scheduled_functions">) {
+	const job = await ctx.db.system.get(workId);
+	if (job?.state.kind === "pending" && job.scheduledTime < Date.now() - SLICE_START_LIMIT_MS) {
+		await ctx.scheduler.cancel(workId);
+		return false;
+	}
+	return job?.state.kind === "pending" || job?.state.kind === "inProgress";
+}
+
 // Each writer that leaves an account free (no syncWorkId) with a due time schedules this for that
 // time. The 15-minute cron only catches a lost schedule. One slice runs at a time in the whole
 // deployment. A due account that finds the slot busy waits: the busy slice's completion schedules
@@ -1195,10 +1211,10 @@ export const dispatch = internalMutation({
 			.withIndex("by_syncWorkId_nextSyncAt", (q) => q.gt("syncWorkId", null))
 			.first();
 		if (busy) {
-			const job = await ctx.db.system.get(busy.syncWorkId!);
-			if (job?.state.kind === "pending" || job?.state.kind === "inProgress") return null;
-			// The slice ended before finish_slice. Free the slot as check_slice would. This also covers a lost
-			// check_slice (for example, cancelled in the dashboard), so the 15-minute cron still recovers sync.
+			if (await cancel_stuck_slice_or_check_alive(ctx, busy.syncWorkId!)) return null;
+			// The slice ended before finish_slice, or never started. Free the slot as check_slice would. This
+			// also covers a lost check_slice (for example, cancelled in the dashboard), so the 15-minute cron
+			// still recovers sync.
 			await complete_slice(ctx, busy, true);
 			return null;
 		}
@@ -1325,15 +1341,14 @@ export const on_complete = internalMutation({
 	},
 });
 
-// Free the slot of a slice whose action ended before finish_slice, because it threw or was killed.
+// Free the slot of a slice whose action ended before finish_slice (it threw or was killed), or that never started.
 export const check_slice = internalMutation({
 	args: { accountId: v.id("gmail_accounts"), workId: v.id("_scheduled_functions") },
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const account = await ctx.db.get(args.accountId);
 		if (!account || account.syncWorkId !== args.workId) return null;
-		const job = await ctx.db.system.get(args.workId);
-		if (job?.state.kind === "pending" || job?.state.kind === "inProgress") {
+		if (await cancel_stuck_slice_or_check_alive(ctx, args.workId)) {
 			await ctx.scheduler.runAfter(SLICE_CHECK_MS, internal.gmail_accounts.check_slice, args);
 			return null;
 		}

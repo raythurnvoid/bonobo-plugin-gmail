@@ -123,10 +123,12 @@ export function gmail_discover_message(input: unknown) {
 		if (!parsed.success) throw new gmail_ContentError("invalid_source");
 		const part = parsed.data;
 		const partHeaders = new Map(part.headers.map(h => [h.name.toLowerCase(), gmail_cap_text(h.value, 8192)]));
-		const disposition = partHeaders.get("content-disposition") ?? "";
+		const attached = /^attachment(?:\s|;|$)/i.test(partHeaders.get("content-disposition") ?? "");
 		const mimeType = part.mimeType.toLowerCase();
-		if (mimeType.startsWith("image/") && partHeaders.has("content-id")) continue;
-		if (part.filename || /^attachment(?:\s|;|$)/i.test(disposition) || mimeType === "message/rfc822") {
+		// An image with a Content-ID is usually a picture inside the HTML body, like a logo. Some mail apps
+		// also give real attached photos a Content-ID, so keep an image marked as an attachment.
+		if (mimeType.startsWith("image/") && partHeaders.has("content-id") && !attached) continue;
+		if (part.filename || attached || mimeType === "message/rfc822") {
 			attachments.push(part);
 			continue; // An attached container's children cannot become the email body.
 		}

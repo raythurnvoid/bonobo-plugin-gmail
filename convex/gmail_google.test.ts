@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { GMAIL_COMPOSE_SCOPE, GMAIL_READONLY_SCOPE, gmail_consent_url, gmail_google_get, gmail_google_token } from "./gmail_google";
+import { GMAIL_COMPOSE_SCOPE, GMAIL_READONLY_SCOPE, gmail_consent_url, gmail_google_get, gmail_google_token, gmail_google_write } from "./gmail_google";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -40,7 +40,8 @@ describe("gmail_google_token", () => {
 });
 
 describe("gmail_google_get", () => {
-	test.each(["rateLimitExceeded", "userRateLimitExceeded", "dailyLimitExceeded", "domainPolicy", "insufficientPermissions"])("classifies 403 reason %s", async reason => {
+	test.each(["rateLimitExceeded", "userRateLimitExceeded", "dailyLimitExceeded", "quotaExceeded", "limitExceeded", "backendError", "accessNotConfigured", "domainPolicy",
+		"insufficientPermissions"])("classifies 403 reason %s", async reason => {
 		vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: { errors: [{ reason }] } }, { status: 403 })));
 		await expect(gmail_google_get("/profile", "access", 8192)).rejects.toMatchObject({ code:
 			["domainPolicy", "insufficientPermissions"].includes(reason) ? "gmail_request" : "gmail_temporary" });
@@ -53,5 +54,13 @@ describe("gmail_google_get", () => {
 		expect(fetchMock.mock.calls[0]?.[1]?.redirect).toBe("error");
 		await expect(gmail_google_get("//evil.test", "access", 50)).rejects.toThrow("Invalid Gmail path");
 		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("gmail_google_write", () => {
+	test.each(["rateLimitExceeded", "quotaExceeded", "accessNotConfigured"])("classifies 403 reason %s", async reason => {
+		vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: { errors: [{ reason }] } }, { status: 403 })));
+		await expect(gmail_google_write("POST", "/drafts/send", {}, "access", 8192)).rejects.toMatchObject({ code:
+			reason === "rateLimitExceeded" ? "gmail_temporary" : "gmail_request" });
 	});
 });

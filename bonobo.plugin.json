@@ -2,7 +2,7 @@
 	"schemaVersion": 1,
 	"name": "gmail",
 	"displayName": "Gmail",
-	"version": "0.3.6",
+	"version": "0.3.7",
 	"description": "Save sent and received Gmail emails and attachments in Press Files. Read them in Mail, and write Gmail drafts with the chat agent.",
 	"compatibility": { "bonoboPluginRuntime": "1" },
 	"events": [],
@@ -94,7 +94,7 @@
 					},
 					{
 						"name": "update_draft",
-						"description": "Change a Gmail draft and open it in the Mail page. Fields you leave out stay the same. Saved as a Gmail draft. It is not sent; only the member can send it.",
+						"description": "Change a Gmail draft and open it in the Mail page. Fields you leave out stay the same. Saved as a Gmail draft. It is not sent; only the member can send it. Refused while the member is typing in the draft.",
 						"inputSchema": {
 							"type": "object",
 							"properties": {
@@ -129,7 +129,7 @@
 					},
 					{
 						"name": "delete_draft",
-						"description": "Delete one of the member's Gmail drafts.",
+						"description": "Delete a Gmail draft that you changed last. Gmail deletes it for good. A draft the member changed last is refused; ask the member to delete it. Refused while the member is typing in the draft.",
 						"inputSchema": {
 							"type": "object",
 							"properties": {
@@ -158,7 +158,7 @@
 		{ "path": "dist/frontend/assets/mail-app.css", "sha256": "sha256:0d403d64918dbf4b458cf83f68a0efccfb014caf671fda59d6de800e26205a22", "bytes": 6310, "contentType": "text/css" },
 		{ "path": "dist/frontend/assets/gmail-api.js", "sha256": "sha256:1e8f113b4fe8a0e3dd14bfe829fff3fdc2d2471ee38786aaf46ff8643cc15bb3", "bytes": 5950, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/gmail-page.js", "sha256": "sha256:e6045ebd5a1f037ac6184a00bc83dba21232ddc47ec15d24da27d30f14e8518d", "bytes": 28827, "contentType": "application/javascript" },
-		{ "path": "dist/frontend/assets/mail-app.js", "sha256": "sha256:601b51b77bc394494940a9a9c5d54ca4f1f27d5277ab611125251280f9e090fc", "bytes": 43085, "contentType": "application/javascript" },
+		{ "path": "dist/frontend/assets/mail-app.js", "sha256": "sha256:d0892720cbb5b55679ad6f8ddf24ebb34b1d693cfac8ef65880f27229697968c", "bytes": 44390, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/react.js", "sha256": "sha256:174b76e9a14572ed536406ddae59e27ecc91a59c258854e86f64fa10b6bc689e", "bytes": 368202, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/zod.js", "sha256": "sha256:c6fe91e3fd954ba609ed0856f4c7596e55c0e70d13095e16c7d5458cc0335214", "bytes": 92851, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/rolldown-runtime.js", "sha256": "sha256:320ac1c898c1aa30c21383fddb8070e7888b57dca34de38cb915ba06ebf01b97", "bytes": 890, "contentType": "application/javascript" }

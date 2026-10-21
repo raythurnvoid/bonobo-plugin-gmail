@@ -28,6 +28,11 @@ const TEXT_DECODER = new TextDecoder();
 
 const NOT_SENT_NOTE = "Saved as a Gmail draft and open in the Mail page. It was not sent. Only the member can send it.";
 
+// Opening an email or a draft closes the draft editor, and an agent save reloads it. Both would throw away
+// what the member typed since the last save.
+const UNSAVED_DRAFT_ERROR =
+	"The member has typed text in a draft that is not saved yet. Wait about 10 seconds for the autosave, or ask the member to save, then try again.";
+
 export type MailAccount = {
 	accountId: string;
 	emailAddress: string;
@@ -45,6 +50,11 @@ export type MailView = {
 	rows: EmailRow[];
 	openEmail: Email | null;
 	openDraftId: string | null;
+	/**
+	 * The open draft while it has typed text that Gmail does not have yet, because no save ran or the
+	 * save failed. Null otherwise.
+	 */
+	unsavedDraftId: string | null;
 	drafts: DraftRow[];
 };
 
@@ -170,6 +180,12 @@ export function register_mail_tools(client: BonoboClient, controls: MailViewCont
 		return account;
 	};
 
+	const require_no_unsaved_text = () => {
+		if (controls.getView().unsavedDraftId !== null) {
+			throw new Error(UNSAVED_DRAFT_ERROR);
+		}
+	};
+
 	// The agent may call create_draft again after a timeout. Reuse the id for the same input, so the
 	// backend sees a repeated create and makes one draft.
 	const recentCreates = new Map<string, string>();
@@ -218,6 +234,7 @@ export function register_mail_tools(client: BonoboClient, controls: MailViewCont
 			}
 
 			const email = await read_email(client, path);
+			require_no_unsaved_text();
 			controls.showEmail(email);
 			return describe_email(email);
 		}),
@@ -241,6 +258,7 @@ export function register_mail_tools(client: BonoboClient, controls: MailViewCont
 			const replyToPath = read_string(object, "replyToPath");
 			validate_draft_fields(fields);
 			const account = require_account();
+			require_no_unsaved_text();
 
 			// A reply needs the Gmail id of the email it answers. The sync writes it in the file.
 			let replyToGmailMessageId: string | null = null;
@@ -268,7 +286,11 @@ export function register_mail_tools(client: BonoboClient, controls: MailViewCont
 			const object = read_object(input);
 			const draftId = read_draft_id(object);
 			const account = require_account();
+			require_no_unsaved_text();
+
 			const draft = await get_draft(client, account.accountId, draftId);
+			// Check again. The member may have typed while the draft was read.
+			require_no_unsaved_text();
 			const fields: DraftFields = {
 				to: read_strings(object, "to") ?? draft.to,
 				cc: read_strings(object, "cc") ?? draft.cc,
@@ -284,6 +306,18 @@ export function register_mail_tools(client: BonoboClient, controls: MailViewCont
 
 		register("delete_draft", async (input) => {
 			const draftId = read_draft_id(read_object(input));
+			const view = controls.getView();
+			if (view.unsavedDraftId === draftId) {
+				throw new Error(UNSAVED_DRAFT_ERROR);
+			}
+
+			// Gmail deletes a draft for good. Let the agent delete only text it wrote itself: a draft whose
+			// last saved change came from the agent. Its update saves both times with the same value.
+			const row = view.drafts.find((draft) => draft.clientDraftId === draftId);
+			if (row === undefined || row.agentEditedAt !== row.updatedAt) {
+				throw new Error("Only the member can delete this draft, because the member changed it last. Ask them to delete it in the Mail page.");
+			}
+
 			await delete_draft(client, require_account().accountId, draftId);
 			await controls.refreshDrafts().catch(() => {});
 			return { draftId, deleted: true };

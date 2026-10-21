@@ -8,7 +8,7 @@ const draft = { clientDraftId: DRAFT_ID, to: ["ada@example.com"], cc: [], subjec
 
 afterEach(() => vi.unstubAllGlobals());
 
-function make_page() {
+function make_page(viewPatch: Partial<MailView> = {}) {
 	const handlers = new Map<string, (input: unknown) => unknown>();
 	const requests: { path: string; body: unknown }[] = [];
 	vi.stubGlobal(
@@ -44,7 +44,10 @@ function make_page() {
 		rows: [],
 		openEmail: null,
 		openDraftId: DRAFT_ID,
-		drafts: [],
+		unsavedDraftId: null,
+		// The agent saved this draft last, so it may delete it.
+		drafts: [{ clientDraftId: DRAFT_ID, to: ["ada@example.com"], cc: [], subject: "Re: Lunch", isReply: true, saving: false, agentEditedAt: 5, updatedAt: 5 }],
+		...viewPatch,
 	};
 	register_mail_tools(client, { getView: () => view, showEmail: vi.fn(), showDraft: vi.fn(), refreshDrafts: vi.fn(async () => {}) });
 	return { handlers, requests };
@@ -90,6 +93,30 @@ describe("register_mail_tools", () => {
 		await expect(page.handlers.get("create_draft")!({ to: "ada@example.com", subject: "x", body: "y" })).rejects.toThrow("to must be a list of strings");
 		// 20,000 three-byte characters are 60 KB, more than a draft holds.
 		await expect(page.handlers.get("create_draft")!({ to: [], subject: "x", body: "語".repeat(20_000) })).rejects.toThrow("at most 50 KB");
+		expect(page.requests).toEqual([]);
+	});
+
+	test("delete_draft refuses a draft the member changed last", async () => {
+		const page = make_page({
+			drafts: [{ clientDraftId: DRAFT_ID, to: [], cc: [], subject: "Mine", isReply: false, saving: false, agentEditedAt: 5, updatedAt: 9 }],
+		});
+
+		await expect(page.handlers.get("delete_draft")!({ draftId: DRAFT_ID })).rejects.toThrow("Only the member can delete this draft");
+		expect(page.requests).toEqual([]);
+	});
+
+	test("tools that change the view, and delete_draft on that draft, refuse while the member has unsaved text", async () => {
+		const page = make_page({ unsavedDraftId: DRAFT_ID });
+		const refused: [string, unknown][] = [
+			["open_email", { path: "/emails/me/2026/10/18-lunch-18f2a.md" }],
+			["create_draft", { to: ["ada@example.com"], subject: "Hello", body: "Hi" }],
+			["update_draft", { draftId: DRAFT_ID, body: "Yes, at noon" }],
+			["delete_draft", { draftId: DRAFT_ID }],
+		];
+
+		for (const [name, input] of refused) {
+			await expect(page.handlers.get(name)!(input)).rejects.toThrow("not saved yet");
+		}
 		expect(page.requests).toEqual([]);
 	});
 });

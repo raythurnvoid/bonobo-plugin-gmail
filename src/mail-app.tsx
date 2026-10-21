@@ -188,6 +188,8 @@ export function MailApp(props: { client: BonoboClient }) {
 	const [drafts, setDrafts] = useState<DraftRow[] | null>(null);
 	const [moreDrafts, setMoreDrafts] = useState(false);
 	const [draftsError, setDraftsError] = useState<string | null>(null);
+	// The open draft while it has typed text that is not saved yet. The agent tools must not write over it.
+	const [unsavedDraftId, setUnsavedDraftId] = useState<string | null>(null);
 	const [composeError, setComposeError] = useState<string | null>(null);
 	const [notice, setNotice] = useState<string | null>(null);
 
@@ -212,13 +214,14 @@ export function MailApp(props: { client: BonoboClient }) {
 	const repairedRef = useRef(new Set<string>());
 
 	// The agent tools run outside React. Give them the latest view on every call.
-	const viewRef = useRef<MailView>({ account, folder, rows, openEmail, openDraftId: null, drafts: [] });
+	const viewRef = useRef<MailView>({ account, folder, rows, openEmail, openDraftId: null, unsavedDraftId: null, drafts: [] });
 	viewRef.current = {
 		account,
 		folder,
 		rows,
 		openEmail: selection?.kind === "email" ? openEmail : null,
 		openDraftId: selection?.kind === "draft" ? selection.id : null,
+		unsavedDraftId,
 		drafts: drafts ?? [],
 	};
 
@@ -690,6 +693,7 @@ export function MailApp(props: { client: BonoboClient }) {
 							client={client}
 							accountId={account.accountId}
 							draft={selectedDraft}
+							onUnsavedChange={setUnsavedDraftId}
 							onChanged={refresh_drafts}
 							onClosed={(text) => {
 								setSelection(null);
@@ -748,10 +752,11 @@ function DraftEditor(props: {
 	client: BonoboClient;
 	accountId: string;
 	draft: DraftRow;
+	onUnsavedChange: (draftId: string | null) => void;
 	onChanged: () => void;
 	onClosed: (notice: string) => void;
 }) {
-	const { client, accountId, draft, onChanged, onClosed } = props;
+	const { client, accountId, draft, onUnsavedChange, onChanged, onClosed } = props;
 
 	const [loaded, setLoaded] = useState<DraftText | null>(null);
 	const [loadError, setLoadError] = useState<string | null>(null);
@@ -762,8 +767,20 @@ function DraftEditor(props: {
 	const [edited, setEdited] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [status, setStatus] = useState<{ text: string; isError: boolean } | null>(null);
+	// Count typing, so a save that ends after newer typing does not mark that typing as saved.
+	const editCountRef = useRef(0);
+	// A save that ends after this editor closed must not clear the mark of the next editor.
+	const closedRef = useRef(false);
 
 	const target = { accountId, clientDraftId: draft.clientDraftId };
+
+	// Tell the page about typed text that Gmail does not have yet. An agent edit reloads the editor, so
+	// the agent tools refuse to change the view while this mark is set.
+	const mark_edited = () => {
+		editCountRef.current += 1;
+		setEdited(true);
+		onUnsavedChange(draft.clientDraftId);
+	};
 
 	const run = (action: () => Promise<void>, doneText: string) => {
 		setBusy(true);
@@ -787,9 +804,16 @@ function DraftEditor(props: {
 		body,
 	});
 
+	// Only a save that succeeds clears the mark. After a failed save, the text lives only in this editor.
 	const save = () => {
+		const editCount = editCountRef.current;
 		setEdited(false);
-		return update_draft(client, { ...target, fields: fields(), byAgent: false }).then(onChanged);
+		return update_draft(client, { ...target, fields: fields(), byAgent: false }).then(() => {
+			if (!closedRef.current && editCountRef.current === editCount) {
+				onUnsavedChange(null);
+			}
+			onChanged();
+		});
 	};
 
 	const handle_save = () => run(save, "Saved to Gmail");
@@ -889,6 +913,15 @@ function DraftEditor(props: {
 		return () => clearTimeout(timer);
 	}, [edited, to, cc, subject, body]);
 
+	// A closed editor has no unsaved text, so the agent may change the view again.
+	useEffect(() => {
+		closedRef.current = false;
+		return () => {
+			closedRef.current = true;
+			onUnsavedChange(null);
+		};
+	}, [onUnsavedChange]);
+
 	if (loadError !== null) {
 		return (
 			<p className="mail-status is-error" role="alert">
@@ -930,28 +963,28 @@ function DraftEditor(props: {
 				<span>To</span>
 				<input value={to} readOnly={busy} onBlur={save_on_blur} onInput={(event) => {
 						setTo(event.currentTarget.value);
-						setEdited(true);
+						mark_edited();
 					}} autoComplete="off" />
 			</label>
 			<label className="mail-field">
 				<span>Cc</span>
 				<input value={cc} readOnly={busy} onBlur={save_on_blur} onInput={(event) => {
 						setCc(event.currentTarget.value);
-						setEdited(true);
+						mark_edited();
 					}} autoComplete="off" />
 			</label>
 			<label className="mail-field">
 				<span>Subject</span>
 				<input value={subject} readOnly={busy} onBlur={save_on_blur} onInput={(event) => {
 						setSubject(event.currentTarget.value);
-						setEdited(true);
+						mark_edited();
 					}} />
 			</label>
 			<label className="mail-field is-body">
 				<span>Body</span>
 				<textarea value={body} readOnly={busy} onBlur={save_on_blur} onInput={(event) => {
 						setBody(event.currentTarget.value);
-						setEdited(true);
+						mark_edited();
 					}} />
 			</label>
 			<p className="mail-note" data-mail-send-recipients={recipients.join(",")}>

@@ -95,13 +95,15 @@ describe("gmail_discover_message", () => {
 		expect(parsed.bodyParts).toHaveLength(0);
 		expect(parsed.attachments).toHaveLength(2);
 	});
-	test("skips only images with Content-ID", () => {
+	test("skips only inline images with Content-ID", () => {
 		const parsed = gmail_discover_message(message({ parts: [
 			{ mimeType: "image/png", filename: "inline.png", headers: [{ name: "Content-ID", value: "<one>" }] },
 			{ mimeType: "application/pdf", filename: "kept.pdf", headers: [{ name: "Content-ID", value: "<two>" }] },
 			{ mimeType: "image/png", filename: "kept.png" },
+			{ mimeType: "image/jpeg", filename: "photo.jpg", headers: [{ name: "Content-ID", value: "<three>" },
+				{ name: "Content-Disposition", value: "attachment; filename=photo.jpg" }] },
 		] }));
-		expect(parsed.attachments.map(part => part.filename)).toEqual(["kept.pdf", "kept.png"]);
+		expect(parsed.attachments.map(part => part.filename)).toEqual(["kept.pdf", "kept.png", "photo.jpg"]);
 	});
 	test("keeps only 16 attachment sources from 1000 parts", () => {
 		const parsed = gmail_discover_message(message({ parts: Array.from({ length: 1000 }, (_, i) => ({ filename: `file-${i}.pdf`, body: { size: 1, data: "YQ" } })) }));

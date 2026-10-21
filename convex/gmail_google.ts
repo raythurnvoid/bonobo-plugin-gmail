@@ -50,19 +50,28 @@ export async function gmail_google_token(input: { code: string; callback: string
 	return { ...parsed.data, composeGranted: parsed.data.scope.split(/\s+/).includes(GMAIL_COMPOSE_SCOPE) };
 }
 
-async function google_failure(response: Response, mapScope: boolean) {
-	let rateLimited = false;
+async function google_failure(response: Response, write: boolean) {
+	let temporary = false;
 	let scopeMissing = false;
 	if (response.status === 403) {
 		try {
 			const parsed = error_response.safeParse(await gmail_read_json(response.body, 8192));
-			rateLimited = parsed.success && parsed.data.error.errors.length > 0 && parsed.data.error.errors.every(error =>
-				["rateLimitExceeded", "userRateLimitExceeded", "dailyLimitExceeded"].includes(error.reason));
-			scopeMissing = parsed.success && parsed.data.error.errors.some(error => error.reason === "insufficientPermissions");
-		} catch { /* An unreadable refusal is not proof of a rate limit. */ }
+			const reasons = parsed.success ? parsed.data.error.errors.map(error => error.reason) : [];
+			// Quota limits and Google server errors (backendError) clear with time. A Gmail API turned off in
+			// the Google project (accessNotConfigured) clears when the operator turns it on. Sync reads wait and
+			// try again for all of them, so no member has to press Retry sync after the fix. A page write keeps
+			// only rate limits as temporary. The member sees its error at once, and a refused Send must not say
+			// "we could not confirm that it was sent".
+			const temporaryReasons = ["rateLimitExceeded", "userRateLimitExceeded", "dailyLimitExceeded",
+				...(write ? [] : ["quotaExceeded", "limitExceeded", "backendError", "accessNotConfigured"])];
+			temporary = reasons.length > 0 && reasons.every(reason => temporaryReasons.includes(reason));
+			scopeMissing = reasons.includes("insufficientPermissions");
+			// The reasons show the operator why Gmail refused. They hold no mail data.
+			console.warn("Gmail refused a request", { status: 403, reasons });
+		} catch { /* An unreadable refusal is not proof of a temporary error. */ }
 	} else await response.body?.cancel();
-	return new gmail_GoogleError(response.status, response.status === 429 || response.status >= 500 || rateLimited ? "gmail_temporary"
-		: mapScope && scopeMissing ? "compose_not_granted" : "gmail_request");
+	return new gmail_GoogleError(response.status, response.status === 429 || response.status >= 500 || temporary ? "gmail_temporary"
+		: write && scopeMissing ? "compose_not_granted" : "gmail_request");
 }
 
 export async function gmail_google_get(path: string, accessToken: string, maximum: number, timeout = 20_000) {

@@ -692,8 +692,8 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
         );
       // Keep only the source strings this unit will read.
       if (row.emailWritten) message.bodyParts.length = 0;
-      for (const [index, part] of message.attachments.entries()) {
-        if (index !== selected) delete part.data;
+      for (const part of message.attachments) {
+        if (part.partId !== row.attachments[selected]?.partId) delete part.data;
       }
       async function part_bytes(
         part: { size: number; data?: string; attachmentId?: string },
@@ -825,9 +825,13 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
         return;
       }
       let task = row.attachments[selected];
-      const source = message.attachments[selected];
-      if (!source || source.partId !== task.partId)
-        throw new gmail_ContentError("invalid_source");
+      // Find the part by its id, not by its place in the list. A newer parser may keep more parts than
+      // the one that saved the plan.
+      const sourceIndex = message.attachments.findIndex(
+        (part) => part.partId === task.partId,
+      );
+      if (sourceIndex < 0) throw new gmail_ContentError("invalid_source");
+      const source = message.attachments[sourceIndex];
       if (
         !task.request &&
         (source.size === 0 || source.size > GMAIL_ATTACHMENT_BYTES)

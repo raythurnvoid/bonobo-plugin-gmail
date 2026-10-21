@@ -1,12 +1,12 @@
 import { n as e } from "./rolldown-runtime.js";
 import { r as t, t as n } from "./react.js";
 import { a as r, n as i, o as a, r as o, s } from "./zod.js";
-import { a as c, l, o as u, r as d, t as ee } from "./gmail-api.js";
-var f = e(t(), 1),
-  p = 50,
-  m = 998,
-  h = 5e4,
-  g = a({
+import { a as c, l, o as u, r as d, t as f } from "./gmail-api.js";
+var p = e(t(), 1),
+  m = 50,
+  h = 998,
+  g = 5e4,
+  _ = a({
     drafts: i(
       a({
         clientDraftId: s(),
@@ -21,7 +21,7 @@ var f = e(t(), 1),
     ).max(25),
     cursor: s().nullable(),
   }),
-  _ = a({
+  v = a({
     clientDraftId: s(),
     to: i(s()),
     cc: i(s()),
@@ -30,29 +30,29 @@ var f = e(t(), 1),
     isReply: o(),
     agentEditedAt: r().nullable(),
   });
-function te() {
+function y() {
   return crypto.randomUUID();
 }
-function v(e) {
-  if (e.to.length + e.cc.length > p)
-    throw Error(`A draft can have at most ${p} recipients`);
-  if (e.subject.length > m)
-    throw Error(`A subject can have at most ${m} characters`);
-  if (new TextEncoder().encode(e.body).byteLength > h)
+function b(e) {
+  if (e.to.length + e.cc.length > m)
+    throw Error(`A draft can have at most ${m} recipients`);
+  if (e.subject.length > h)
+    throw Error(`A subject can have at most ${h} characters`);
+  if (new TextEncoder().encode(e.body).byteLength > g)
     throw Error(`A draft can have at most 50 KB of text. Shorten the body.`);
 }
-function y(e, t, n) {
-  return u(e, `/page/drafts/list`, { accountId: t, cursor: n }, g);
+function ee(e, t, n) {
+  return u(e, `/page/drafts/list`, { accountId: t, cursor: n }, _);
 }
-function b(e, t, n) {
-  return u(e, `/page/drafts/get`, { accountId: t, clientDraftId: n }, _);
+function te(e, t, n) {
+  return u(e, `/page/drafts/get`, { accountId: t, clientDraftId: n }, v);
 }
 async function x(e, t) {
-  (v(t.fields),
+  (b(t.fields),
     await u(e, `/page/drafts/create`, t, a({ clientDraftId: s() })));
 }
 async function S(e, t) {
-  (v(t.fields), await u(e, `/page/drafts/update`, t, a({ saved: o() })));
+  (b(t.fields), await u(e, `/page/drafts/update`, t, a({ saved: o() })));
 }
 async function C(e, t, n) {
   await u(
@@ -67,7 +67,7 @@ function T(e) {
   return new Promise((t) => setTimeout(t, e));
 }
 function E(e) {
-  return e instanceof ee ? d(e) : e instanceof Error ? e.message : String(e);
+  return e instanceof f ? d(e) : e instanceof Error ? e.message : String(e);
 }
 async function D(e, t, n) {
   for (let r = 0; ; r += 1) {
@@ -104,7 +104,7 @@ function ne(e) {
   let t = /\/(\d{4})\/(\d{2})\/(\d{2})-[^/]*$/u.exec(e);
   return t ? `${t[1]}-${t[2]}-${t[3]}` : ``;
 }
-function re(e, t) {
+function j(e, t) {
   let n = {},
     r = t;
   if (
@@ -146,22 +146,22 @@ function re(e, t) {
     body: r.trimEnd(),
   };
 }
-async function j(e, t) {
+async function M(e, t) {
   let n = await D(e, `/api/v1/files/read`, { path: t });
   if (n.status !== 200 || n.body === null || !(`content` in n.body)) {
     let e = n.body && `message` in n.body ? n.body.message : `HTTP ${n.status}`;
     throw Error(`Failed to read ${t}: ${e}`);
   }
-  return re(t, n.body.content);
+  return j(t, n.body.content);
 }
-function M(e) {
+function N(e) {
   let t = /^(\d{2})-.*-([0-9a-f]{1,16})\.md$/u.exec(e);
   return t ? `${t[1]}-${t[2].padStart(16, `0`)}` : e;
 }
-function N(e) {
+function P(e) {
   return /^(\d{2})-/u.exec(e)?.[1] ?? e;
 }
-async function P(e, t, n, r) {
+async function re(e, t, n, r) {
   let i = await D(e, `/api/v1/files/list`, {
     path: t,
     kind: n,
@@ -202,7 +202,7 @@ async function F(e, t) {
   let n = [],
     r = null;
   for (;;) {
-    let i = await P(e, t, `folder`, r);
+    let i = await re(e, t, `folder`, r);
     if (i === `invalid_cursor`) {
       ((n.length = 0), (r = null));
       continue;
@@ -213,22 +213,22 @@ async function F(e, t) {
     r = i.cursor;
   }
 }
-function I(e, t) {
+function ie(e, t) {
   let n = null,
     r = !1,
     i = [],
     a = new Set();
   return async function () {
     for (;;) {
-      let o = i.length > 0 ? N(i[0].name) : null,
-        s = o === null ? -1 : i.findIndex((e) => N(e.name) !== o);
+      let o = i.length > 0 ? P(i[0].name) : null,
+        s = o === null ? -1 : i.findIndex((e) => P(e.name) !== o);
       if (o !== null && (s !== -1 || r)) {
         let e = i.splice(0, s === -1 ? i.length : s);
         for (let t of e) a.add(t.path);
-        return e.sort((e, t) => (M(e.name) < M(t.name) ? 1 : -1));
+        return e.sort((e, t) => (N(e.name) < N(t.name) ? 1 : -1));
       }
       if (r) return null;
-      let c = await P(e, t, `file`, n);
+      let c = await re(e, t, `file`, n);
       if (c === `invalid_cursor`) {
         ((i = []), (n = null));
         continue;
@@ -246,7 +246,7 @@ function I(e, t) {
     }
   };
 }
-function ie(e, t) {
+function ae(e, t) {
   let n = [],
     r = null,
     i = [],
@@ -277,7 +277,7 @@ function ie(e, t) {
         }
         if (i.length > 0) {
           let t = i.shift();
-          a = { path: t, next_day: I(e, t) };
+          a = { path: t, next_day: ie(e, t) };
           continue;
         }
         if (r === null) {
@@ -297,51 +297,52 @@ function ie(e, t) {
     },
   };
 }
-var ae = 12e3,
+var I = 12e3,
   L = 300,
   R = 10,
   z = 25,
   B = new TextEncoder(),
   V = new TextDecoder(),
-  H = `Saved as a Gmail draft and open in the Mail page. It was not sent. Only the member can send it.`;
-function U(e, t) {
+  H = `Saved as a Gmail draft and open in the Mail page. It was not sent. Only the member can send it.`,
+  U = `The member has typed text in a draft that is not saved yet. Wait about 10 seconds for the autosave, or ask the member to save, then try again.`;
+function W(e, t) {
   let n = B.encode(e);
   return n.byteLength <= t
     ? e
     : `${V.decode(n.slice(0, t))}\n[Shortened. Open the file for the rest.]`;
 }
-function W(e) {
-  return e.slice(0, R).map((e) => U(e, L));
-}
 function G(e) {
-  return {
-    path: e.path,
-    from: U(e.headers.from, L),
-    to: W(e.headers.to),
-    cc: W(e.headers.cc),
-    subject: U(e.headers.subject, L),
-    date: e.headers.date,
-    direction: e.headers.direction,
-    body: U(e.body, ae),
-  };
+  return e.slice(0, R).map((e) => W(e, L));
 }
 function oe(e) {
   return {
-    draftId: e.clientDraftId,
-    to: W(e.to),
-    cc: W(e.cc),
-    subject: U(e.subject, L),
-    isReply: e.isReply,
-    editedByAgent: e.agentEditedAt !== null,
+    path: e.path,
+    from: W(e.headers.from, L),
+    to: G(e.headers.to),
+    cc: G(e.headers.cc),
+    subject: W(e.headers.subject, L),
+    date: e.headers.date,
+    direction: e.headers.direction,
+    body: W(e.body, I),
   };
 }
 function K(e) {
   return {
     draftId: e.clientDraftId,
-    to: W(e.to),
-    cc: W(e.cc),
-    subject: U(e.subject, L),
-    body: U(e.body, ae),
+    to: G(e.to),
+    cc: G(e.cc),
+    subject: W(e.subject, L),
+    isReply: e.isReply,
+    editedByAgent: e.agentEditedAt !== null,
+  };
+}
+function se(e) {
+  return {
+    draftId: e.clientDraftId,
+    to: G(e.to),
+    cc: G(e.cc),
+    subject: W(e.subject, L),
+    body: W(e.body, I),
     isReply: e.isReply,
     editedByAgent: e.agentEditedAt !== null,
   };
@@ -358,7 +359,7 @@ function J(e, t) {
     return n;
   }
 }
-function se(e, t) {
+function Y(e, t) {
   let n = e[t];
   if (n !== void 0) {
     if (!Array.isArray(n) || !n.every((e) => typeof e == `string`))
@@ -366,17 +367,17 @@ function se(e, t) {
     return n;
   }
 }
-function Y(e, t) {
+function X(e, t) {
   if (e === void 0) throw Error(`${t} is required`);
   return e;
 }
 function ce(e) {
-  let t = Y(J(e, `draftId`), `draftId`);
+  let t = X(J(e, `draftId`), `draftId`);
   if (
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(t)
   )
     throw Error(
-      `No draft has the id ${U(t, L)}. Call list_drafts to see the ids.`,
+      `No draft has the id ${W(t, L)}. Call list_drafts to see the ids.`,
     );
   return t;
 }
@@ -389,8 +390,11 @@ function le(e, t) {
         );
       return e;
     },
-    r = new Map(),
-    i = (t, n) =>
+    r = () => {
+      if (t.getView().unsavedDraftId !== null) throw Error(U);
+    },
+    i = new Map(),
+    a = (t, n) =>
       e.agent.registerTool(t, async (e) => {
         try {
           return await n(e);
@@ -398,25 +402,27 @@ function le(e, t) {
           throw Error(E(e));
         }
       }),
-    a = [
-      i(`get_view`, async () => {
+    o = [
+      a(`get_view`, async () => {
         let n = t.getView(),
           r =
             n.account && n.openDraftId
-              ? await b(e, n.account.accountId, n.openDraftId).catch(() => null)
+              ? await te(e, n.account.accountId, n.openDraftId).catch(
+                  () => null,
+                )
               : null;
         return {
           account: n.account?.emailAddress ?? null,
           canWriteDrafts: n.account?.canCompose ?? !1,
           folder: n.folder,
-          openEmail: n.openEmail ? G(n.openEmail) : null,
-          openDraft: r ? K(r) : null,
+          openEmail: n.openEmail ? oe(n.openEmail) : null,
+          openDraft: r ? se(r) : null,
           emails: n.rows
             .slice(0, z)
             .map((e) => ({
               path: e.path,
-              from: e.headers ? U(e.headers.from, L) : null,
-              subject: U(e.headers?.subject ?? e.subject, L),
+              from: e.headers ? W(e.headers.from, L) : null,
+              subject: W(e.headers?.subject ?? e.subject, L),
               date: e.headers?.date ?? e.day,
               direction: e.headers?.direction ?? null,
               locked: e.locked,
@@ -424,78 +430,88 @@ function le(e, t) {
           draftCount: n.drafts.length,
         };
       }),
-      i(`open_email`, async (n) => {
-        let r = Y(J(q(n), `path`), `path`);
-        if (!r.startsWith(`/`) || !r.endsWith(`.md`))
+      a(`open_email`, async (n) => {
+        let i = X(J(q(n), `path`), `path`);
+        if (!i.startsWith(`/`) || !i.endsWith(`.md`))
           throw Error(`path must be a Files path that ends with .md`);
-        let i = await j(e, r);
-        return (t.showEmail(i), G(i));
+        let a = await M(e, i);
+        return (r(), t.showEmail(a), oe(a));
       }),
-      i(`list_drafts`, () => ({
-        drafts: t.getView().drafts.map(oe),
+      a(`list_drafts`, () => ({
+        drafts: t.getView().drafts.map(K),
         note: `These are the newest drafts, without their text. To read one, ask the member to open it, then call get_view.`,
       })),
-      i(`create_draft`, async (i) => {
-        let a = q(i),
-          o = {
-            to: Y(se(a, `to`), `to`),
-            cc: se(a, `cc`) ?? [],
-            subject: Y(J(a, `subject`), `subject`),
-            body: Y(J(a, `body`), `body`),
+      a(`create_draft`, async (a) => {
+        let o = q(a),
+          s = {
+            to: X(Y(o, `to`), `to`),
+            cc: Y(o, `cc`) ?? [],
+            subject: X(J(o, `subject`), `subject`),
+            body: X(J(o, `body`), `body`),
           },
-          s = J(a, `replyToPath`);
-        v(o);
-        let c = n(),
-          l = null;
+          c = J(o, `replyToPath`);
+        b(s);
+        let l = n();
+        r();
+        let u = null;
         if (
-          s !== void 0 &&
-          ((l = (await j(e, s)).headers.gmailMessageId), l === null)
+          c !== void 0 &&
+          ((u = (await M(e, c)).headers.gmailMessageId), u === null)
         )
           throw Error(
-            `${s} has no Gmail id, so a reply cannot be made from it`,
+            `${c} has no Gmail id, so a reply cannot be made from it`,
           );
-        let u = JSON.stringify([c.accountId, o, l]),
-          d = r.get(u) ?? te();
+        let d = JSON.stringify([l.accountId, s, u]),
+          f = i.get(d) ?? y();
         return (
-          r.set(u, d),
-          r.size > 20 && r.delete(r.keys().next().value),
+          i.set(d, f),
+          i.size > 20 && i.delete(i.keys().next().value),
           await x(e, {
-            accountId: c.accountId,
-            clientDraftId: d,
-            fields: o,
-            replyToGmailMessageId: l,
+            accountId: l.accountId,
+            clientDraftId: f,
+            fields: s,
+            replyToGmailMessageId: u,
             byAgent: !0,
           }),
           await t.refreshDrafts().catch(() => {}),
-          t.showDraft(d),
-          { draftId: d, saved: !0, note: H }
+          t.showDraft(f),
+          { draftId: f, saved: !0, note: H }
         );
       }),
-      i(`update_draft`, async (r) => {
-        let i = q(r),
-          a = ce(i),
-          o = n(),
-          s = await b(e, o.accountId, a),
-          c = {
-            to: se(i, `to`) ?? s.to,
-            cc: se(i, `cc`) ?? s.cc,
-            subject: J(i, `subject`) ?? s.subject,
-            body: J(i, `body`) ?? s.body,
-          };
+      a(`update_draft`, async (i) => {
+        let a = q(i),
+          o = ce(a),
+          s = n();
+        r();
+        let c = await te(e, s.accountId, o);
+        r();
+        let l = {
+          to: Y(a, `to`) ?? c.to,
+          cc: Y(a, `cc`) ?? c.cc,
+          subject: J(a, `subject`) ?? c.subject,
+          body: J(a, `body`) ?? c.body,
+        };
         return (
           await S(e, {
-            accountId: o.accountId,
-            clientDraftId: a,
-            fields: c,
+            accountId: s.accountId,
+            clientDraftId: o,
+            fields: l,
             byAgent: !0,
           }),
           await t.refreshDrafts().catch(() => {}),
-          t.showDraft(a),
-          { draftId: a, saved: !0, note: H }
+          t.showDraft(o),
+          { draftId: o, saved: !0, note: H }
         );
       }),
-      i(`delete_draft`, async (r) => {
-        let i = ce(q(r));
+      a(`delete_draft`, async (r) => {
+        let i = ce(q(r)),
+          a = t.getView();
+        if (a.unsavedDraftId === i) throw Error(U);
+        let o = a.drafts.find((e) => e.clientDraftId === i);
+        if (o === void 0 || o.agentEditedAt !== o.updatedAt)
+          throw Error(
+            `Only the member can delete this draft, because the member changed it last. Ask them to delete it in the Mail page.`,
+          );
         return (
           await C(e, n().accountId, i),
           await t.refreshDrafts().catch(() => {}),
@@ -504,14 +520,14 @@ function le(e, t) {
       }),
     ];
   return () => {
-    for (let e of a) e();
+    for (let e of o) e();
   };
 }
 var ue = 45e3;
 async function de(e, t) {
   await u(e, `/page/drafts/send`, t, a({ sent: o() }), ue);
 }
-var X = n(),
+var Z = n(),
   fe = 30,
   pe = 4,
   me = 3e3,
@@ -528,19 +544,19 @@ function ye(e) {
   let t = /^\s*"?([^"<]+?)"?\s*<[^>]+>\s*$/u.exec(e);
   return t ? t[1] : e;
 }
-function Z(e) {
+function Q(e) {
   return e.join(`, `);
 }
-function Q(e) {
+function be(e) {
   return e
     .split(/[,;\n]/u)
     .map((e) => e.trim())
     .filter((e) => e.length > 0);
 }
-function $(e) {
+function xe(e) {
   return /<([^<>]+)>\s*$/u.exec(e)?.[1] ?? e;
 }
-function be(e) {
+function Se(e) {
   let t = /^re:/iu.test(e.headers.subject)
       ? e.headers.subject
       : `Re: ${e.headers.subject}`,
@@ -561,14 +577,14 @@ function be(e) {
     replyToGmailMessageId: e.headers.gmailMessageId,
   };
 }
-function xe(e) {
+function Ce(e) {
   return e.isComposer
     ? e.canCompose
       ? null
       : `Drafts are off for ${e.emailAddress}. Open the Gmail page and press Allow drafts and Send.`
     : `Only the member who connected ${e.emailAddress} can write drafts for it.`;
 }
-async function Se(e, t) {
+async function we(e, t) {
   let n = [],
     r = new Map(),
     i = null;
@@ -608,74 +624,77 @@ async function Se(e, t) {
   } while (i !== null);
   return { accounts: n, newestEmailAt: r };
 }
-function Ce(e) {
+function $(e) {
   let { client: t } = e,
-    [n, r] = (0, f.useState)(null),
-    [i, a] = (0, f.useState)(null),
-    [o, s] = (0, f.useState)(`all`),
-    [c, l] = (0, f.useState)([]),
-    [u, d] = (0, f.useState)(fe),
-    [ee, p] = (0, f.useState)(!1),
-    [m, h] = (0, f.useState)(!1),
-    [g, _] = (0, f.useState)(null),
-    [v, b] = (0, f.useState)([]),
-    [S, C] = (0, f.useState)(null),
-    [w, T] = (0, f.useState)(null),
-    [D, O] = (0, f.useState)(null),
-    [k, A] = (0, f.useState)(null),
-    [ne, re] = (0, f.useState)(!1),
-    [M, N] = (0, f.useState)(null),
-    [P, F] = (0, f.useState)(null),
-    [I, ae] = (0, f.useState)(null),
-    L = n?.find((e) => e.accountId === i) ?? null,
-    R = L ? xe(L) : null,
-    z = (0, f.useMemo)(
-      () => (L === null ? null : ie(t, L.destinationPath)),
-      [t, L?.destinationPath],
+    [n, r] = (0, p.useState)(null),
+    [i, a] = (0, p.useState)(null),
+    [o, s] = (0, p.useState)(`all`),
+    [c, l] = (0, p.useState)([]),
+    [u, d] = (0, p.useState)(fe),
+    [f, m] = (0, p.useState)(!1),
+    [h, g] = (0, p.useState)(!1),
+    [_, v] = (0, p.useState)(null),
+    [b, te] = (0, p.useState)([]),
+    [S, C] = (0, p.useState)(null),
+    [w, T] = (0, p.useState)(null),
+    [D, O] = (0, p.useState)(null),
+    [k, A] = (0, p.useState)(null),
+    [ne, j] = (0, p.useState)(!1),
+    [N, P] = (0, p.useState)(null),
+    [re, F] = (0, p.useState)(null),
+    [ie, I] = (0, p.useState)(null),
+    [L, R] = (0, p.useState)(null),
+    z = n?.find((e) => e.accountId === i) ?? null,
+    B = z ? Ce(z) : null,
+    V = (0, p.useMemo)(
+      () => (z === null ? null : ae(t, z.destinationPath)),
+      [t, z?.destinationPath],
     ),
-    B = (0, f.useRef)(null),
-    V = (0, f.useRef)(!1),
-    H = (0, f.useRef)([]),
-    U = (0, f.useRef)(new Set()),
-    W = (0, f.useRef)(0),
-    G = (0, f.useRef)(null),
-    oe = (0, f.useRef)(new Set()),
-    K = (0, f.useRef)({
-      account: L,
+    H = (0, p.useRef)(null),
+    U = (0, p.useRef)(!1),
+    W = (0, p.useRef)([]),
+    G = (0, p.useRef)(new Set()),
+    oe = (0, p.useRef)(0),
+    K = (0, p.useRef)(null),
+    se = (0, p.useRef)(new Set()),
+    q = (0, p.useRef)({
+      account: z,
       folder: o,
       rows: c,
       openEmail: w,
       openDraftId: null,
+      unsavedDraftId: null,
       drafts: [],
     });
-  K.current = {
-    account: L,
+  q.current = {
+    account: z,
     folder: o,
     rows: c,
     openEmail: S?.kind === `email` ? w : null,
     openDraftId: S?.kind === `draft` ? S.id : null,
+    unsavedDraftId: re,
     drafts: k ?? [],
   };
-  let q = async () => {
-      let e = K.current.account;
-      if (e === null || xe(e) !== null) return;
-      let n = await y(t, e.accountId, null);
-      K.current.account?.accountId === e.accountId &&
-        (N(null), A(n.drafts), re(n.cursor !== null));
+  let J = async () => {
+      let e = q.current.account;
+      if (e === null || Ce(e) !== null) return;
+      let n = await ee(t, e.accountId, null);
+      q.current.account?.accountId === e.accountId &&
+        (P(null), A(n.drafts), j(n.cursor !== null));
     },
-    J = () => {
-      q().catch(() => {});
+    Y = () => {
+      J().catch(() => {});
     },
-    se = (e) => {
-      ((G.current = e.path),
+    X = (e) => {
+      ((K.current = e.path),
         s(`all`),
         C({ kind: `email`, path: e.path }),
         T(e),
         O(null));
     },
-    Y = (e) => {
+    ce = (e) => {
       if (
-        ((G.current = e),
+        ((K.current = e),
         C({ kind: `email`, path: e }),
         T(null),
         O(null),
@@ -686,41 +705,41 @@ function Ce(e) {
         );
         return;
       }
-      j(t, e).then(
+      M(t, e).then(
         (t) => {
-          G.current === e && T(t);
+          K.current === e && T(t);
         },
         (t) => {
-          G.current === e && O(E(t));
+          K.current === e && O(E(t));
         },
       );
     },
-    ce = (e) => {
-      ((G.current = null), s(`drafts`), C({ kind: `draft`, id: e }), ae(null));
-    },
     ue = (e) => {
-      if (L === null) return;
-      let n = te();
-      (F(null),
-        x(t, { accountId: L.accountId, clientDraftId: n, ...e, byAgent: !1 })
-          .then(() => q().catch(() => {}))
+      ((K.current = null), s(`drafts`), C({ kind: `draft`, id: e }), R(null));
+    },
+    de = (e) => {
+      if (z === null) return;
+      let n = y();
+      (I(null),
+        x(t, { accountId: z.accountId, clientDraftId: n, ...e, byAgent: !1 })
+          .then(() => J().catch(() => {}))
           .then(
-            () => ce(n),
-            (e) => F(E(e)),
+            () => ue(n),
+            (e) => I(E(e)),
           ));
     },
-    de = (e, t, n) => {
-      V.current ||
-        ((V.current = !0),
-        h(!0),
-        _(null),
+    me = (e, t, n) => {
+      U.current ||
+        ((U.current = !0),
+        g(!0),
+        v(null),
         (async () => {
           let r = t;
           for (; r < n; ) {
             let t = await e.next();
-            if (B.current !== e) return;
-            if ((b([...e.lockedFolders]), t === null)) {
-              p(!0);
+            if (H.current !== e) return;
+            if ((te([...e.lockedFolders]), t === null)) {
+              m(!0);
               return;
             }
             ((r += t.length),
@@ -731,22 +750,22 @@ function Ce(e) {
           }
         })()
           .catch((t) => {
-            B.current === e && _(E(t));
+            H.current === e && v(E(t));
           })
           .finally(() => {
-            ((V.current = !1), B.current === e && h(!1));
+            ((U.current = !1), H.current === e && g(!1));
           }));
     },
-    me = () => {
-      if (z === null || m) return;
+    he = () => {
+      if (V === null || h) return;
       let e = u + fe;
-      (d(e), c.length < e && !ee && de(z, c.length, e));
+      (d(e), c.length < e && !f && me(V, c.length, e));
     },
-    he = (e, n) => {
-      ie(t, n)
+    be = (e, n) => {
+      ae(t, n)
         .next()
         .then((t) => {
-          if (B.current !== e || t === null) return;
+          if (H.current !== e || t === null) return;
           let n = new Set(t.map((e) => e.path));
           l((e) => {
             if (e.length === 0) return e;
@@ -759,12 +778,12 @@ function Ce(e) {
         })
         .catch(() => {});
     },
-    Q = () => {
-      for (; W.current < pe; ) {
-        let e = H.current.shift();
+    xe = () => {
+      for (; oe.current < pe; ) {
+        let e = W.current.shift();
         if (e === void 0) return;
-        ((W.current += 1),
-          j(t, e)
+        ((oe.current += 1),
+          M(t, e)
             .then(
               (t) =>
                 l((n) =>
@@ -775,63 +794,63 @@ function Ce(e) {
               () => {},
             )
             .finally(() => {
-              (--W.current, Q());
+              (--oe.current, xe());
             }));
       }
     };
-  ((0, f.useEffect)(() => {
-    Se(t, oe.current).then(
+  ((0, p.useEffect)(() => {
+    we(t, se.current).then(
       (e) => {
         (r(e.accounts), a(e.accounts[0]?.accountId ?? null));
       },
       (e) => {
-        (r([]), _(E(e)));
+        (r([]), v(E(e)));
       },
     );
   }, [t]),
-    (0, f.useEffect)(() => {
+    (0, p.useEffect)(() => {
       (l([]),
         A(null),
         C(null),
         T(null),
-        (G.current = null),
+        (K.current = null),
         d(fe),
-        p(!1),
-        b([]),
-        h(!1),
-        (H.current = []),
-        U.current.clear(),
-        (B.current = z),
-        (V.current = !1),
-        z !== null && de(z, 0, fe));
-    }, [z]),
-    (0, f.useEffect)(() => {
+        m(!1),
+        te([]),
+        g(!1),
+        (W.current = []),
+        G.current.clear(),
+        (H.current = V),
+        (U.current = !1),
+        V !== null && me(V, 0, fe));
+    }, [V]),
+    (0, p.useEffect)(() => {
       for (let e of c.slice(0, u))
         !e.locked &&
           e.headers === null &&
-          !U.current.has(e.path) &&
-          (U.current.add(e.path), H.current.push(e.path));
-      Q();
+          !G.current.has(e.path) &&
+          (G.current.add(e.path), W.current.push(e.path));
+      xe();
     }, [t, c, u]),
-    (0, f.useEffect)(() => {
-      if (L === null || R !== null) return;
+    (0, p.useEffect)(() => {
+      if (z === null || B !== null) return;
       let e = () => {
-        document.visibilityState === `visible` && q().catch((e) => N(E(e)));
+        document.visibilityState === `visible` && J().catch((e) => P(E(e)));
       };
       e();
       let t = setInterval(e, ge);
       return () => clearInterval(t);
-    }, [t, L?.accountId, R]),
-    (0, f.useEffect)(() => {
-      if (z === null || L === null) return;
-      let { accountId: e, destinationPath: n } = L,
+    }, [t, z?.accountId, B]),
+    (0, p.useEffect)(() => {
+      if (V === null || z === null) return;
+      let { accountId: e, destinationPath: n } = z,
         r = null,
         i = () => {
           document.visibilityState === `visible` &&
-            Se(t, oe.current).then(
+            we(t, se.current).then(
               (t) => {
                 let i = t.newestEmailAt.get(e);
-                i !== void 0 && (r !== null && i > r && he(z, n), (r = i));
+                i !== void 0 && (r !== null && i > r && be(V, n), (r = i));
               },
               () => {},
             );
@@ -839,14 +858,14 @@ function Ce(e) {
       i();
       let a = setInterval(i, _e);
       return () => clearInterval(a);
-    }, [t, z]),
-    (0, f.useEffect)(
+    }, [t, V]),
+    (0, p.useEffect)(
       () =>
         le(t, {
-          getView: () => K.current,
-          showEmail: se,
-          showDraft: ce,
-          refreshDrafts: q,
+          getView: () => q.current,
+          showEmail: X,
+          showDraft: ue,
+          refreshDrafts: J,
         }),
       [t],
     ));
@@ -854,47 +873,47 @@ function Ce(e) {
     S?.kind === `draft`
       ? ((k ?? []).find((e) => e.clientDraftId === S.id) ?? null)
       : null;
-  return (0, X.jsxs)(`div`, {
+  return (0, Z.jsxs)(`div`, {
     className: `mail`,
     children: [
-      (0, X.jsxs)(`nav`, {
+      (0, Z.jsxs)(`nav`, {
         className: `mail-rail`,
         "aria-label": `Mailboxes`,
         children: [
-          (0, X.jsx)(`button`, {
+          (0, Z.jsx)(`button`, {
             className: `button is-primary`,
-            disabled: L === null || R !== null,
+            disabled: z === null || B !== null,
             onClick: () =>
-              ue({
+              de({
                 fields: { to: [], cc: [], subject: ``, body: `` },
                 replyToGmailMessageId: null,
               }),
             children: `Compose`,
           }),
-          P === null
+          ie === null
             ? null
-            : (0, X.jsx)(`p`, {
+            : (0, Z.jsx)(`p`, {
                 className: `mail-status is-error`,
                 role: `alert`,
-                children: P,
+                children: ie,
               }),
-          R === null
+          B === null
             ? null
-            : (0, X.jsx)(`p`, { className: `mail-status`, children: R }),
-          (0, X.jsx)(`button`, {
+            : (0, Z.jsx)(`p`, { className: `mail-status`, children: B }),
+          (0, Z.jsx)(`button`, {
             className: `mail-rail-item`,
             "aria-current": o === `all` ? `page` : void 0,
             onClick: () => s(`all`),
             children: `All mail`,
           }),
-          (0, X.jsxs)(`button`, {
+          (0, Z.jsxs)(`button`, {
             className: `mail-rail-item`,
             "aria-current": o === `drafts` ? `page` : void 0,
             onClick: () => s(`drafts`),
             children: [
               `Drafts`,
               k !== null && k.length > 0
-                ? (0, X.jsx)(`span`, {
+                ? (0, Z.jsx)(`span`, {
                     className: `mail-rail-count`,
                     children: k.length,
                   })
@@ -902,15 +921,15 @@ function Ce(e) {
             ],
           }),
           n !== null && n.length > 1
-            ? (0, X.jsxs)(`label`, {
+            ? (0, Z.jsxs)(`label`, {
                 className: `mail-rail-account`,
                 children: [
                   `Account`,
-                  (0, X.jsx)(`select`, {
+                  (0, Z.jsx)(`select`, {
                     value: i ?? ``,
                     onChange: (e) => a(e.currentTarget.value),
                     children: n.map((e) =>
-                      (0, X.jsx)(
+                      (0, Z.jsx)(
                         `option`,
                         { value: e.accountId, children: e.emailAddress },
                         e.accountId,
@@ -922,50 +941,50 @@ function Ce(e) {
             : null,
         ],
       }),
-      (0, X.jsx)(`section`, {
+      (0, Z.jsx)(`section`, {
         className: `mail-list`,
         "aria-label": o === `all` ? `All mail` : `Drafts`,
         children:
           o === `all`
-            ? (0, X.jsxs)(X.Fragment, {
+            ? (0, Z.jsxs)(Z.Fragment, {
                 children: [
-                  n !== null && n.length === 0 && g === null
-                    ? (0, X.jsx)(`p`, {
+                  n !== null && n.length === 0 && _ === null
+                    ? (0, Z.jsx)(`p`, {
                         className: `mail-status`,
                         children: `No Gmail account is connected. Connect one on the Gmail page.`,
                       })
                     : null,
-                  L !== null && v.includes(L.destinationPath)
-                    ? (0, X.jsxs)(`p`, {
+                  z !== null && b.includes(z.destinationPath)
+                    ? (0, Z.jsxs)(`p`, {
                         className: `mail-status is-error`,
                         role: `alert`,
-                        "data-mail-locked-folders": v.join(`,`),
+                        "data-mail-locked-folders": b.join(`,`),
                         children: [
                           `You cannot open `,
-                          L.destinationPath,
+                          z.destinationPath,
                           `, so Mail cannot show its emails. Ask a member who can manage this folder in Files to give you access.`,
                         ],
                       })
-                    : v.length > 0
-                      ? (0, X.jsxs)(`p`, {
+                    : b.length > 0
+                      ? (0, Z.jsxs)(`p`, {
                           className: `mail-status`,
-                          "data-mail-locked-folders": v.join(`,`),
+                          "data-mail-locked-folders": b.join(`,`),
                           children: [
                             `Mail skipped emails in folders you cannot open: `,
-                            v.join(`, `),
+                            b.join(`, `),
                             `. Ask a member who can manage them in Files to give you access.`,
                           ],
                         })
                       : null,
-                  (0, X.jsx)(`ul`, {
+                  (0, Z.jsx)(`ul`, {
                     className: `mail-rows`,
                     children: c
                       .slice(0, u)
                       .map((e) =>
-                        (0, X.jsx)(
+                        (0, Z.jsx)(
                           `li`,
                           {
-                            children: (0, X.jsxs)(`button`, {
+                            children: (0, Z.jsxs)(`button`, {
                               className: `mail-row`,
                               "aria-current":
                                 S?.kind === `email` && S.path === e.path
@@ -973,12 +992,12 @@ function Ce(e) {
                                   : void 0,
                               "data-direction": e.headers?.direction ?? void 0,
                               "data-locked": e.locked ? `` : void 0,
-                              onClick: () => Y(e.path),
+                              onClick: () => ce(e.path),
                               children: [
-                                (0, X.jsx)(`span`, {
+                                (0, Z.jsx)(`span`, {
                                   className: `mail-row-from`,
                                   children: e.locked
-                                    ? (0, X.jsx)(`span`, {
+                                    ? (0, Z.jsx)(`span`, {
                                         className: `mail-badge`,
                                         children: `Locked`,
                                       })
@@ -988,13 +1007,13 @@ function Ce(e) {
                                         ? `To: ${ye(e.headers.to[0] ?? ``)}`
                                         : ye(e.headers.from),
                                 }),
-                                (0, X.jsx)(`span`, {
+                                (0, Z.jsx)(`span`, {
                                   className: `mail-row-date`,
                                   children: e.headers
                                     ? ve(e.headers.date)
                                     : e.day,
                                 }),
-                                (0, X.jsx)(`span`, {
+                                (0, Z.jsx)(`span`, {
                                   className: `mail-row-subject`,
                                   children: e.headers?.subject ?? e.subject,
                                 }),
@@ -1005,82 +1024,82 @@ function Ce(e) {
                         ),
                       ),
                   }),
-                  m
-                    ? (0, X.jsx)(`p`, {
+                  h
+                    ? (0, Z.jsx)(`p`, {
                         className: `mail-status`,
                         role: `status`,
                         children: `Loading…`,
                       })
                     : null,
-                  !m && z !== null && (c.length > u || !ee)
-                    ? (0, X.jsx)(`button`, {
+                  !h && V !== null && (c.length > u || !f)
+                    ? (0, Z.jsx)(`button`, {
                         className: `button mail-more`,
-                        onClick: me,
+                        onClick: he,
                         children: `Show more`,
                       })
                     : null,
-                  g === null
+                  _ === null
                     ? null
-                    : (0, X.jsx)(`p`, {
+                    : (0, Z.jsx)(`p`, {
                         className: `mail-status is-error`,
                         role: `alert`,
-                        children: g,
+                        children: _,
                       }),
                 ],
               })
-            : (0, X.jsxs)(X.Fragment, {
+            : (0, Z.jsxs)(Z.Fragment, {
                 children: [
-                  R === null
+                  B === null
                     ? null
-                    : (0, X.jsx)(`p`, {
+                    : (0, Z.jsx)(`p`, {
                         className: `mail-status`,
-                        children: R,
+                        children: B,
                       }),
-                  M === null
+                  N === null
                     ? null
-                    : (0, X.jsx)(`p`, {
+                    : (0, Z.jsx)(`p`, {
                         className: `mail-status is-error`,
                         role: `alert`,
-                        children: M,
+                        children: N,
                       }),
                   k !== null && k.length === 0
-                    ? (0, X.jsx)(`p`, {
+                    ? (0, Z.jsx)(`p`, {
                         className: `mail-status`,
                         children: `No drafts. Ask the agent to write one.`,
                       })
                     : null,
-                  (0, X.jsx)(`ul`, {
+                  (0, Z.jsx)(`ul`, {
                     className: `mail-rows`,
                     children: (k ?? []).map((e) =>
-                      (0, X.jsx)(
+                      (0, Z.jsx)(
                         `li`,
                         {
-                          children: (0, X.jsxs)(`button`, {
+                          children: (0, Z.jsxs)(`button`, {
                             className: `mail-row`,
                             "aria-current":
                               S?.kind === `draft` && S.id === e.clientDraftId
                                 ? `true`
                                 : void 0,
-                            onClick: () => ce(e.clientDraftId),
+                            onClick: () => ue(e.clientDraftId),
                             children: [
-                              (0, X.jsx)(`span`, {
+                              (0, Z.jsx)(`span`, {
                                 className: `mail-row-from`,
                                 children:
                                   e.to.length > 0
-                                    ? `To: ${Z(e.to)}`
+                                    ? `To: ${Q(e.to)}`
                                     : `No recipients`,
                               }),
-                              (0, X.jsx)(`span`, {
+                              (0, Z.jsx)(`span`, {
                                 className: `mail-row-date`,
                                 children:
                                   e.agentEditedAt === null
                                     ? null
-                                    : (0, X.jsx)(`span`, {
+                                    : (0, Z.jsx)(`span`, {
                                         className: `mail-badge`,
                                         children: `Agent`,
                                       }),
                               }),
-                              (0, X.jsx)(`span`, {
+                              (0, Z.jsx)(`span`, {
                                 className: `mail-row-subject`,
                                 children: e.subject || `(no subject)`,
                               }),
@@ -1092,7 +1111,7 @@ function Ce(e) {
                     ),
                   }),
                   ne
-                    ? (0, X.jsx)(`p`, {
+                    ? (0, Z.jsx)(`p`, {
                         className: `mail-status`,
                         children: `Showing the 25 newest drafts.`,
                       })
@@ -1100,18 +1119,18 @@ function Ce(e) {
                 ],
               }),
       }),
-      (0, X.jsxs)(`main`, {
+      (0, Z.jsxs)(`main`, {
         className: `mail-reader`,
         children: [
-          I === null
+          L === null
             ? null
-            : (0, X.jsx)(`p`, {
+            : (0, Z.jsx)(`p`, {
                 className: `mail-status`,
                 role: `status`,
-                children: I,
+                children: L,
               }),
-          S === null && I === null
-            ? (0, X.jsx)(`p`, {
+          S === null && L === null
+            ? (0, Z.jsx)(`p`, {
                 className: `mail-status`,
                 children: `Choose an email or a draft.`,
               })
@@ -1119,38 +1138,39 @@ function Ce(e) {
           S?.kind === `email`
             ? D === null
               ? w === null || w.path !== S.path
-                ? (0, X.jsx)(`p`, {
+                ? (0, Z.jsx)(`p`, {
                     className: `mail-status`,
                     role: `status`,
                     children: `Opening…`,
                   })
-                : (0, X.jsx)(we, {
+                : (0, Z.jsx)(Te, {
                     email: w,
-                    replyBlock: R,
-                    onReply: () => ue(be(w)),
+                    replyBlock: B,
+                    onReply: () => de(Se(w)),
                   })
-              : (0, X.jsx)(`p`, {
+              : (0, Z.jsx)(`p`, {
                   className: `mail-status is-error`,
                   role: `alert`,
                   children: D,
                 })
             : null,
-          S?.kind === `draft` && L !== null
+          S?.kind === `draft` && z !== null
             ? $ !== null && !$.saving
-              ? (0, X.jsx)(
-                  Te,
+              ? (0, Z.jsx)(
+                  Ee,
                   {
                     client: t,
-                    accountId: L.accountId,
+                    accountId: z.accountId,
                     draft: $,
-                    onChanged: J,
+                    onUnsavedChange: F,
+                    onChanged: Y,
                     onClosed: (e) => {
-                      (C(null), ae(e), J());
+                      (C(null), R(e), Y());
                     },
                   },
                   `${$.clientDraftId}:${$.agentEditedAt ?? 0}`,
                 )
-              : (0, X.jsx)(`p`, {
+              : (0, Z.jsx)(`p`, {
                   className: `mail-status`,
                   role: `status`,
                   children:
@@ -1164,38 +1184,38 @@ function Ce(e) {
     ],
   });
 }
-function we(e) {
+function Te(e) {
   let { email: t, replyBlock: n, onReply: r } = e;
-  return (0, X.jsxs)(`article`, {
+  return (0, Z.jsxs)(`article`, {
     className: `mail-email`,
     "aria-label": t.headers.subject,
     children: [
-      (0, X.jsxs)(`header`, {
+      (0, Z.jsxs)(`header`, {
         className: `mail-email-header`,
         children: [
-          (0, X.jsx)(`h1`, { children: t.headers.subject }),
-          (0, X.jsxs)(`dl`, {
+          (0, Z.jsx)(`h1`, { children: t.headers.subject }),
+          (0, Z.jsxs)(`dl`, {
             children: [
-              (0, X.jsx)(`dt`, { children: `From` }),
-              (0, X.jsx)(`dd`, { children: t.headers.from }),
-              (0, X.jsx)(`dt`, { children: `To` }),
-              (0, X.jsx)(`dd`, { children: Z(t.headers.to) }),
+              (0, Z.jsx)(`dt`, { children: `From` }),
+              (0, Z.jsx)(`dd`, { children: t.headers.from }),
+              (0, Z.jsx)(`dt`, { children: `To` }),
+              (0, Z.jsx)(`dd`, { children: Q(t.headers.to) }),
               t.headers.cc.length > 0
-                ? (0, X.jsxs)(X.Fragment, {
+                ? (0, Z.jsxs)(Z.Fragment, {
                     children: [
-                      (0, X.jsx)(`dt`, { children: `Cc` }),
-                      (0, X.jsx)(`dd`, { children: Z(t.headers.cc) }),
+                      (0, Z.jsx)(`dt`, { children: `Cc` }),
+                      (0, Z.jsx)(`dd`, { children: Q(t.headers.cc) }),
                     ],
                   })
                 : null,
-              (0, X.jsx)(`dt`, { children: `Date` }),
-              (0, X.jsx)(`dd`, { children: ve(t.headers.date) }),
+              (0, Z.jsx)(`dt`, { children: `Date` }),
+              (0, Z.jsx)(`dd`, { children: ve(t.headers.date) }),
             ],
           }),
-          (0, X.jsxs)(`div`, {
+          (0, Z.jsxs)(`div`, {
             className: `mail-actions`,
             children: [
-              (0, X.jsx)(`button`, {
+              (0, Z.jsx)(`button`, {
                 className: `button`,
                 disabled: n !== null || t.headers.gmailMessageId === null,
                 onClick: r,
@@ -1203,7 +1223,7 @@ function we(e) {
               }),
               n === null
                 ? null
-                : (0, X.jsx)(`span`, {
+                : (0, Z.jsx)(`span`, {
                     className: `mail-draft-status`,
                     children: n,
                   }),
@@ -1211,48 +1231,68 @@ function we(e) {
           }),
         ],
       }),
-      (0, X.jsx)(`div`, { className: `mail-email-body`, children: t.body }),
+      (0, Z.jsx)(`div`, { className: `mail-email-body`, children: t.body }),
     ],
   });
 }
-function Te(e) {
-  let { client: t, accountId: n, draft: r, onChanged: i, onClosed: a } = e,
-    [o, s] = (0, f.useState)(null),
-    [c, l] = (0, f.useState)(null),
-    [u, d] = (0, f.useState)(``),
-    [p, m] = (0, f.useState)(``),
-    [h, g] = (0, f.useState)(``),
-    [_, te] = (0, f.useState)(``),
-    [v, y] = (0, f.useState)(!1),
-    [x, w] = (0, f.useState)(!1),
-    [T, D] = (0, f.useState)(null),
-    O = { accountId: n, clientDraftId: r.clientDraftId },
-    k = (e, t) => {
-      (w(!0),
-        D(null),
+function Ee(e) {
+  let {
+      client: t,
+      accountId: n,
+      draft: r,
+      onUnsavedChange: i,
+      onChanged: a,
+      onClosed: o,
+    } = e,
+    [s, c] = (0, p.useState)(null),
+    [l, u] = (0, p.useState)(null),
+    [d, m] = (0, p.useState)(``),
+    [h, g] = (0, p.useState)(``),
+    [_, v] = (0, p.useState)(``),
+    [y, b] = (0, p.useState)(``),
+    [ee, x] = (0, p.useState)(!1),
+    [w, T] = (0, p.useState)(!1),
+    [D, O] = (0, p.useState)(null),
+    k = (0, p.useRef)(0),
+    A = (0, p.useRef)(!1),
+    ne = { accountId: n, clientDraftId: r.clientDraftId },
+    j = () => {
+      ((k.current += 1), x(!0), i(r.clientDraftId));
+    },
+    M = (e, t) => {
+      (T(!0),
+        O(null),
         e().then(
           () => {
-            (w(!1), D({ text: t, isError: !1 }));
+            (T(!1), O({ text: t, isError: !1 }));
           },
           (e) => {
-            (w(!1), D({ text: E(e), isError: !0 }));
+            (T(!1), O({ text: E(e), isError: !0 }));
           },
         ));
     },
-    A = () => ({ to: Q(u), cc: Q(p), subject: h, body: _ }),
-    ne = () => (y(!1), S(t, { ...O, fields: A(), byAgent: !1 }).then(i)),
-    re = () => k(ne, `Saved to Gmail`),
-    j = () =>
-      ne().then(
-        () => D({ text: `Saved to Gmail`, isError: !1 }),
-        (e) => D({ text: E(e), isError: !0 }),
+    N = () => ({ to: be(d), cc: be(h), subject: _, body: y }),
+    P = () => {
+      let e = k.current;
+      return (
+        x(!1),
+        S(t, { ...ne, fields: N(), byAgent: !1 }).then(() => {
+          (!A.current && k.current === e && i(null), a());
+        })
+      );
+    },
+    re = () => M(P, `Saved to Gmail`),
+    F = () =>
+      P().then(
+        () => O({ text: `Saved to Gmail`, isError: !1 }),
+        (e) => O({ text: E(e), isError: !0 }),
       ),
-    M = () =>
-      k(async () => {
-        let e = A(),
+    ie = () =>
+      M(async () => {
+        let e = N(),
           t = [
-            `To: ${Z(e.to)}`,
-            ...(e.cc.length > 0 ? [`Cc: ${Z(e.cc)}`] : []),
+            `To: ${Q(e.to)}`,
+            ...(e.cc.length > 0 ? [`Cc: ${Q(e.cc)}`] : []),
             `Subject: ${e.subject}`,
             ``,
             e.body,
@@ -1260,25 +1300,25 @@ function Te(e) {
 `);
         await navigator.clipboard.writeText(t);
       }, `Copied`),
-    N = () => {
-      (y(!1),
-        k(async () => {
-          (await C(t, n, r.clientDraftId), a(`Draft deleted.`));
+    ae = () => {
+      (x(!1),
+        M(async () => {
+          (await C(t, n, r.clientDraftId), o(`Draft deleted.`));
         }, `Deleted`));
     },
-    P = () => {
-      let e = A();
-      (y(!1),
-        w(!0),
-        D({ text: `Sending…`, isError: !1 }),
-        de(t, { ...O, fields: e }).then(
-          () => a(`Sent: ${e.subject || `(no subject)`}`),
+    I = () => {
+      let e = N();
+      (x(!1),
+        T(!0),
+        O({ text: `Sending…`, isError: !1 }),
+        de(t, { ...ne, fields: e }).then(
+          () => o(`Sent: ${e.subject || `(no subject)`}`),
           (t) => {
-            w(!1);
+            T(!1);
             let n =
-              !(t instanceof ee) ||
+              !(t instanceof f) ||
               [`send_unknown`, `service_unavailable`].includes(t.code);
-            D({
+            O({
               text: n
                 ? `We could not confirm that “${e.subject || `(no subject)`}” was sent. Check Sent in Gmail before you press Send again.`
                 : E(t),
@@ -1288,20 +1328,20 @@ function Te(e) {
         ));
     };
   if (
-    ((0, f.useEffect)(() => {
+    ((0, p.useEffect)(() => {
       let e = !1;
       return (
-        b(t, n, r.clientDraftId).then(
+        te(t, n, r.clientDraftId).then(
           (t) => {
-            e || (s(t), d(Z(t.to)), m(Z(t.cc)), g(t.subject), te(t.body));
+            e || (c(t), m(Q(t.to)), g(Q(t.cc)), v(t.subject), b(t.body));
           },
           (t) => {
             if (!e) {
-              if (t instanceof ee && t.code === `draft_gone`) {
-                a(E(t));
+              if (t instanceof f && t.code === `draft_gone`) {
+                o(E(t));
                 return;
               }
-              l(E(t));
+              u(E(t));
             }
           },
         ),
@@ -1310,159 +1350,168 @@ function Te(e) {
         }
       );
     }, [t, n, r.clientDraftId]),
-    (0, f.useEffect)(() => {
-      if (!v) return;
-      let e = setTimeout(j, he);
+    (0, p.useEffect)(() => {
+      if (!ee) return;
+      let e = setTimeout(F, he);
       return () => clearTimeout(e);
-    }, [v, u, p, h, _]),
-    c !== null)
+    }, [ee, d, h, _, y]),
+    (0, p.useEffect)(
+      () => (
+        (A.current = !1),
+        () => {
+          ((A.current = !0), i(null));
+        }
+      ),
+      [i],
+    ),
+    l !== null)
   )
-    return (0, X.jsx)(`p`, {
+    return (0, Z.jsx)(`p`, {
       className: `mail-status is-error`,
       role: `alert`,
-      children: c,
+      children: l,
     });
-  if (o === null)
-    return (0, X.jsx)(`p`, {
+  if (s === null)
+    return (0, Z.jsx)(`p`, {
       className: `mail-status`,
       role: `status`,
       children: `Opening the draft…`,
     });
-  let F = [...Q(u), ...Q(p)].map($),
-    I = () => {
-      v && j();
+  let L = [...be(d), ...be(h)].map(xe),
+    R = () => {
+      ee && F();
     };
-  return (0, X.jsxs)(`form`, {
+  return (0, Z.jsxs)(`form`, {
     className: `mail-draft`,
     "aria-label": `Draft`,
     onSubmit: (e) => {
       (e.preventDefault(), re());
     },
     children: [
-      (0, X.jsxs)(`header`, {
+      (0, Z.jsxs)(`header`, {
         className: `mail-draft-header`,
         children: [
-          (0, X.jsx)(`h1`, { children: `Draft` }),
+          (0, Z.jsx)(`h1`, { children: `Draft` }),
           r.agentEditedAt === null
             ? null
-            : (0, X.jsx)(`span`, {
+            : (0, Z.jsx)(`span`, {
                 className: `mail-badge`,
                 children: `Edited by the agent`,
               }),
         ],
       }),
-      (0, X.jsxs)(`label`, {
+      (0, Z.jsxs)(`label`, {
         className: `mail-field`,
         children: [
-          (0, X.jsx)(`span`, { children: `To` }),
-          (0, X.jsx)(`input`, {
-            value: u,
-            readOnly: x,
-            onBlur: I,
+          (0, Z.jsx)(`span`, { children: `To` }),
+          (0, Z.jsx)(`input`, {
+            value: d,
+            readOnly: w,
+            onBlur: R,
             onInput: (e) => {
-              (d(e.currentTarget.value), y(!0));
+              (m(e.currentTarget.value), j());
             },
             autoComplete: `off`,
           }),
         ],
       }),
-      (0, X.jsxs)(`label`, {
+      (0, Z.jsxs)(`label`, {
         className: `mail-field`,
         children: [
-          (0, X.jsx)(`span`, { children: `Cc` }),
-          (0, X.jsx)(`input`, {
-            value: p,
-            readOnly: x,
-            onBlur: I,
-            onInput: (e) => {
-              (m(e.currentTarget.value), y(!0));
-            },
-            autoComplete: `off`,
-          }),
-        ],
-      }),
-      (0, X.jsxs)(`label`, {
-        className: `mail-field`,
-        children: [
-          (0, X.jsx)(`span`, { children: `Subject` }),
-          (0, X.jsx)(`input`, {
+          (0, Z.jsx)(`span`, { children: `Cc` }),
+          (0, Z.jsx)(`input`, {
             value: h,
-            readOnly: x,
-            onBlur: I,
+            readOnly: w,
+            onBlur: R,
             onInput: (e) => {
-              (g(e.currentTarget.value), y(!0));
+              (g(e.currentTarget.value), j());
+            },
+            autoComplete: `off`,
+          }),
+        ],
+      }),
+      (0, Z.jsxs)(`label`, {
+        className: `mail-field`,
+        children: [
+          (0, Z.jsx)(`span`, { children: `Subject` }),
+          (0, Z.jsx)(`input`, {
+            value: _,
+            readOnly: w,
+            onBlur: R,
+            onInput: (e) => {
+              (v(e.currentTarget.value), j());
             },
           }),
         ],
       }),
-      (0, X.jsxs)(`label`, {
+      (0, Z.jsxs)(`label`, {
         className: `mail-field is-body`,
         children: [
-          (0, X.jsx)(`span`, { children: `Body` }),
-          (0, X.jsx)(`textarea`, {
-            value: _,
-            readOnly: x,
-            onBlur: I,
+          (0, Z.jsx)(`span`, { children: `Body` }),
+          (0, Z.jsx)(`textarea`, {
+            value: y,
+            readOnly: w,
+            onBlur: R,
             onInput: (e) => {
-              (te(e.currentTarget.value), y(!0));
+              (b(e.currentTarget.value), j());
             },
           }),
         ],
       }),
-      (0, X.jsx)(`p`, {
+      (0, Z.jsx)(`p`, {
         className: `mail-note`,
-        "data-mail-send-recipients": F.join(`,`),
+        "data-mail-send-recipients": L.join(`,`),
         children:
-          F.length > 0
-            ? `Send goes to: ${F.join(`, `)}`
+          L.length > 0
+            ? `Send goes to: ${L.join(`, `)}`
             : `Add a recipient to send.`,
       }),
-      (0, X.jsxs)(`div`, {
+      (0, Z.jsxs)(`div`, {
         className: `mail-actions`,
         children: [
-          (0, X.jsx)(`button`, {
+          (0, Z.jsx)(`button`, {
             className: `button is-primary`,
             type: `button`,
-            disabled: x || F.length === 0,
-            onClick: P,
+            disabled: w || L.length === 0,
+            onClick: I,
             children: `Send`,
           }),
-          (0, X.jsx)(`button`, {
+          (0, Z.jsx)(`button`, {
             className: `button`,
             type: `submit`,
-            disabled: x,
+            disabled: w,
             children: `Save`,
           }),
-          (0, X.jsx)(`button`, {
+          (0, Z.jsx)(`button`, {
             className: `button`,
             type: `button`,
-            disabled: x,
-            onClick: M,
+            disabled: w,
+            onClick: ie,
             children: `Copy`,
           }),
-          (0, X.jsx)(`button`, {
+          (0, Z.jsx)(`button`, {
             className: `button`,
             type: `button`,
-            disabled: x,
-            onClick: N,
+            disabled: w,
+            onClick: ae,
             children: `Delete`,
           }),
-          T === null
+          D === null
             ? null
-            : (0, X.jsx)(`span`, {
-                className: T.isError
+            : (0, Z.jsx)(`span`, {
+                className: D.isError
                   ? `mail-draft-status is-error`
                   : `mail-draft-status`,
-                role: T.isError ? `alert` : `status`,
-                children: T.text,
+                role: D.isError ? `alert` : `status`,
+                children: D.text,
               }),
         ],
       }),
-      (0, X.jsx)(`p`, {
+      (0, Z.jsx)(`p`, {
         className: `mail-note`,
         children: `This is a Gmail draft. It also shows in Gmail, where Gmail's own Send works. When the agent changes this draft, its version replaces text you did not save.`,
       }),
     ],
   });
 }
-export { Ce as MailApp };
+export { $ as MailApp };

@@ -570,6 +570,44 @@ describe("work_account_slice", () => {
 			attachments: [{ deliveries: 1 }],
 		});
 	});
+	test("a part kept by a newer parser before a planned attachment does not stop that attachment", async () => {
+		const f = await fixture();
+		await f.t.run(async (ctx) => {
+			const row = (await ctx.db.get(f.ledgerId))!;
+			await ctx.db.patch(row._id, {
+				attachments: row.attachments.map((task) => ({ ...task, uploadAttemptedAt: null, deliveries: 0 })),
+			});
+		});
+		// The saved plan came from an older parser that skipped this photo, so it holds only invoice.pdf.
+		const photo = {
+			partId: "2",
+			filename: "photo.jpg",
+			mimeType: "image/jpeg",
+			headers: [
+				{ name: "Content-ID", value: "<photo>" },
+				{ name: "Content-Disposition", value: "attachment; filename=photo.jpg" },
+			],
+			body: { size: 4, data: "ZmlsZQ" },
+		};
+		const message = { ...source, payload: { ...source.payload, parts: [source.payload.parts[0], photo, source.payload.parts[1]] } };
+		let finalizes = 0;
+		network((path) =>
+			path.endsWith("/finalize")
+				? Response.json(++finalizes === 1 ? pending : committed)
+				: path.endsWith("/messages/ab")
+					? Response.json(message)
+					: path.endsWith("/create-target")
+						? Response.json(transport)
+						: new Response(null),
+		);
+		await f.t.action(internal.gmail_worker.work_account_slice, {
+			work: f.work,
+		});
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({
+			status: "done",
+			attachments: [{ partId: "1", deliveries: 1 }],
+		});
+	});
 	test.each(["frozen", "accepted"] as const)("a stop after the %s target save resumes with one first PUT", async (step) => {
 		let now = Date.now();
 		vi.spyOn(Date, "now").mockImplementation(() => now);

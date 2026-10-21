@@ -88,8 +88,10 @@ export const save_row = internalMutation({
 	handler: async (ctx, args) => {
 		const draft = await ctx.db.get(args.draftId);
 		if (!draft) return null;
+		// An agent save sets both times to the same value. The page reads that as "the agent changed it last".
+		const now = Date.now();
 		await ctx.db.patch(draft._id, { gmailDraftId: args.gmailDraftId, to: args.to, cc: args.cc, subject: args.subject,
-			...(args.byAgent ? { agentEditedAt: Date.now() } : {}), updatedAt: Date.now() });
+			...(args.byAgent ? { agentEditedAt: now } : {}), updatedAt: now });
 		return null;
 	},
 });
