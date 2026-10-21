@@ -1225,10 +1225,11 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
       await unit(row);
     }
     // Only a unit that ran in this pass can bring the proof that frees the next held unit.
-    if (steps > stepsBefore)
+    if (steps > stepsBefore) {
       while (budget() && (await held())) {
         /* Each successful proof may free the next held unit. */
       }
+    }
   }
 
   async function backfill() {

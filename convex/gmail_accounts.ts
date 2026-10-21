@@ -1175,8 +1175,8 @@ export const finish_slice = internalMutation({
 		// The slice ended normally, so its crash check has nothing to do. Cancel it if it has not run yet.
 		// A slice longer than the check delay already ran its first check, and the check it scheduled
 		// again finds the slot free.
-		const check = await ctx.db.system.get(args.work.checkId);
-		if (check?.state.kind === "pending") await ctx.scheduler.cancel(args.work.checkId);
+		const job = await ctx.db.system.get(args.work.checkId);
+		if (job?.state.kind === "pending") await ctx.scheduler.cancel(args.work.checkId);
 		// Free the slot in the same write. If the action dies after this save, check_slice finds the slot
 		// free and keeps the error and wait saved above.
 		await complete_slice(ctx, (await ctx.db.get(account._id))!, false);
@@ -1357,8 +1357,8 @@ export const check_slice = internalMutation({
 	handler: async (ctx, args) => {
 		const account = await ctx.db.get(args.accountId);
 		// A later slice has a new request id, and a freed slot has none. Both mean this slice already ended.
-		if (!account || account.syncRequestId !== args.requestId || !account.syncWorkId) return null;
-		if (await cancel_stuck_slice_or_check_alive(ctx, account.syncWorkId)) {
+		if (!account || account.syncRequestId !== args.requestId) return null;
+		if (await cancel_stuck_slice_or_check_alive(ctx, account.syncWorkId!)) {
 			await ctx.scheduler.runAfter(SLICE_CHECK_MS, internal.gmail_accounts.check_slice, args);
 			return null;
 		}
