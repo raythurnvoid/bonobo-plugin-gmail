@@ -91,7 +91,7 @@ describe("GmailPage", () => {
     const view = render(<GmailPage client={client} />);
     await settle();
     expect(fetch).toHaveBeenCalledTimes(1);
-    await act(() => vi.advanceTimersByTimeAsync(5000));
+    await act(() => vi.advanceTimersByTimeAsync(60_000));
     expect(fetch).toHaveBeenCalledTimes(2);
     visible("hidden");
     await act(() => vi.advanceTimersByTimeAsync(30_000));
@@ -102,6 +102,24 @@ describe("GmailPage", () => {
     view.unmount();
     await act(() => vi.advanceTimersByTimeAsync(30_000));
     expect(fetch).toHaveBeenCalledTimes(3);
+  });
+  test("polls every 5 seconds while an account backfills, and every minute after", async () => {
+    let syncStatus = "backfilling";
+    const fetch = vi.fn(async () =>
+      Response.json({ ...status(), accounts: [{ ...account(), syncStatus, backfillComplete: syncStatus === "live" }] }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    render(<GmailPage client={client} />);
+    await settle();
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(fetch).toHaveBeenCalledTimes(2);
+    syncStatus = "live";
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(fetch).toHaveBeenCalledTimes(3);
+    await act(() => vi.advanceTimersByTimeAsync(55_000));
+    expect(fetch).toHaveBeenCalledTimes(3);
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(fetch).toHaveBeenCalledTimes(4);
   });
   test("a hidden mount starts no backend request", async () => {
     visible("hidden");
@@ -129,7 +147,7 @@ describe("GmailPage", () => {
     await settle();
     expect(screen.getByText(/Checking for new mail/)).toBeTruthy();
     unavailable = true;
-    await act(() => vi.advanceTimersByTimeAsync(5000));
+    await act(() => vi.advanceTimersByTimeAsync(60_000));
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
     expect(screen.queryByText(/Checking for new mail/)).toBeNull();
     expect(
@@ -413,7 +431,7 @@ describe("GmailPage", () => {
     await settle();
     expect(requests).toHaveLength(2);
     expect(requests[1]).toBe(requests[0]);
-    await act(() => vi.advanceTimersByTimeAsync(5000));
+    await act(() => vi.advanceTimersByTimeAsync(60_000));
     expect(
       screen.getByText(
         "https://accounts.google.com/o/oauth2/v2/auth?state=recovered",

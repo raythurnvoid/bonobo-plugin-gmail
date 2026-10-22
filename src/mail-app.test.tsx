@@ -62,13 +62,46 @@ describe("MailApp", () => {
 		await vi.waitFor(() => expect(requests.filter((request) => request.path === "/page/status").length).toBeGreaterThanOrEqual(2));
 
 		canRepair = true;
-		await vi.advanceTimersByTimeAsync(15_000);
+		await vi.advanceTimersByTimeAsync(60_000);
 		await vi.waitFor(() => expect(requests.map((request) => request.path)).toContain("/page/press-repair"));
-		await vi.advanceTimersByTimeAsync(30_000);
+		await vi.advanceTimersByTimeAsync(120_000);
 
 		const repairs = requests.filter((request) => request.path === "/page/press-repair");
 		expect(repairs).toHaveLength(1);
 		expect(repairs[0].body).toMatchObject({ accountId: "account", expectedGeneration: 1 });
+	});
+
+	test("reads drafts again when the page becomes visible, not on a timer", async () => {
+		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+		const paths: string[] = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL) => {
+				const path = new URL(String(input)).pathname;
+				paths.push(path);
+				if (path === "/page/status") {
+					const binding = { organizationId: "org", workspaceId: "workspace", installationId: "installation", actorUserId: "actor" };
+					return Response.json({ binding, canWrite: true, cursor: null, attempt: null, accounts: [{ ...account, canRepair: false }] });
+				}
+				return Response.json(path === "/page/drafts/list" ? { drafts: [], cursor: null } : {});
+			}),
+		);
+		const client = {
+			getToken: async () => "plu_test",
+			refreshToken: async () => "plu_new",
+			fetchJson: async () => ({ status: 404, body: { message: "Not found" } }),
+			agent: { registerTool: () => () => {} },
+		} as unknown as BonoboClient;
+		const draftReads = () => paths.filter((path) => path === "/page/drafts/list").length;
+
+		render(<MailApp client={client} />);
+		await vi.waitFor(() => expect(draftReads()).toBe(1));
+
+		await vi.advanceTimersByTimeAsync(5 * 60_000);
+		expect(draftReads()).toBe(1);
+
+		fireEvent(document, new Event("visibilitychange"));
+		await vi.waitFor(() => expect(draftReads()).toBe(2));
 	});
 
 	test("reads the list again only when the sync saved a newer email", async () => {
@@ -121,13 +154,13 @@ describe("MailApp", () => {
 		// Backfill saved an older email. The newest email did not change, so the list is not read again.
 		const listCallsAfterLoad = listCalls;
 		messagesSynced = 5;
-		await vi.advanceTimersByTimeAsync(15_000);
+		await vi.advanceTimersByTimeAsync(60_000);
 		expect(listCalls).toBe(listCallsAfterLoad);
 
 		tree["/emails/ray-example.com/2026/10"].push("20-new-mail-19a0000000000002.md");
 		messagesSynced = 6;
 		newestEmailAt += 60_000;
-		await vi.advanceTimersByTimeAsync(15_000);
+		await vi.advanceTimersByTimeAsync(60_000);
 
 		await vi.waitFor(() =>
 			expect([...document.querySelectorAll(".mail-row-subject")].map((element) => element.textContent)).toEqual(["new mail", "old mail"]),

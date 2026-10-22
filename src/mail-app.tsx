@@ -42,16 +42,10 @@ const MAX_QUOTED_CHARS = 3000;
 const AUTOSAVE_DELAY_MS = 10_000;
 
 /**
- * Read the draft list again this often while the page is visible, as the Gmail page reads its
- * status. A draft made or sent elsewhere in Press then shows up.
+ * Read the sync status this often while the page is visible. A sync runs at most once a minute.
+ * The email list is read again only when the sync saved a newer email.
  */
-const DRAFTS_POLL_MS = 5000;
-
-/**
- * Read the sync status this often while the page is visible. The email list is read again only
- * when the sync saved a newer email.
- */
-const NEW_MAIL_POLL_MS = 15_000;
+const NEW_MAIL_POLL_MS = 60_000;
 
 type Selection = { kind: "email"; path: string } | { kind: "draft"; id: string } | null;
 
@@ -459,7 +453,9 @@ export function MailApp(props: { client: BonoboClient }) {
 		pump_row_reads();
 	}, [client, rows, visibleCount]);
 
-	// Read this member's drafts now, then every few seconds while the page is visible.
+	// Read this member's drafts now and each time the page becomes visible again. Drafts change only
+	// through this page, and its own saves and agent tools read the list again, so no timer is needed.
+	// A draft changed in another tab shows up when the member comes back to this one.
 	useEffect(() => {
 		if (account === null || composeBlock !== null) {
 			return;
@@ -472,12 +468,13 @@ export function MailApp(props: { client: BonoboClient }) {
 			reload_drafts().catch((listError: unknown) => setDraftsError(get_error_message(listError)));
 		};
 		read();
-		const timer = setInterval(read, DRAFTS_POLL_MS);
-		return () => clearInterval(timer);
+		document.addEventListener("visibilitychange", read);
+		return () => document.removeEventListener("visibilitychange", read);
 	}, [client, account?.accountId, composeBlock]);
 
-	// Check for new mail every 15 seconds while the page is visible. The same status read renews a
-	// refused Press grant. The first check only records the time, because the list was just read.
+	// Check for new mail every minute while the page is visible, and at once when it becomes visible
+	// again. The same status read renews a refused Press grant. The first check only records the
+	// time, because the list was just read.
 	useEffect(() => {
 		if (walk === null || account === null) {
 			return;
@@ -506,7 +503,11 @@ export function MailApp(props: { client: BonoboClient }) {
 		};
 		check();
 		const timer = setInterval(check, NEW_MAIL_POLL_MS);
-		return () => clearInterval(timer);
+		document.addEventListener("visibilitychange", check);
+		return () => {
+			clearInterval(timer);
+			document.removeEventListener("visibilitychange", check);
+		};
 	}, [client, walk]);
 
 	// Register the agent tools for as long as the page is open.

@@ -150,7 +150,10 @@ export async function gmail_page_post<T>(
 		const response = await fetch(`${backend}${path}`, {
 			method: "POST",
 			redirect: "error",
-			cache: "no-store",
+			// Leave the default cache mode. With `cache: "no-store"`, live counts showed one OPTIONS
+			// preflight before every POST: Chromium skips its preflight cache for a request that
+			// bypasses the HTTP cache. Browsers never cache a POST answer, and the backend sends
+			// Cache-Control: no-store.
 			headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
 			body: JSON.stringify(body),
 			signal: AbortSignal.timeout(timeout),
