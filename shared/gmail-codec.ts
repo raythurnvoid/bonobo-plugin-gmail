@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import emailAddresses from "email-addresses";
-import he from "he";
+import * as he from "he";
 import { z } from "zod";
 import { gmail_slug } from "./gmail-paths";
 

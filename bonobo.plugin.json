@@ -2,7 +2,7 @@
 	"schemaVersion": 1,
 	"name": "gmail",
 	"displayName": "Gmail",
-	"version": "0.3.8",
+	"version": "0.3.9",
 	"description": "Save sent and received Gmail emails and attachments in Press Files. Read them in Mail, and write Gmail drafts with the chat agent.",
 	"compatibility": { "bonoboPluginRuntime": "1" },
 	"events": [],
@@ -153,14 +153,14 @@
 	"uiOutboundOrigins": ["https://kindhearted-mallard-511.convex.site"],
 	"files": [
 		{ "path": "dist/frontend/index.html", "sha256": "sha256:0f1543e7d0ad370fe64039ff2d49ff01174d9239e7257de765e0eb775aa3a96a", "bytes": 437, "contentType": "text/html" },
-		{ "path": "dist/frontend/assets/index.js", "sha256": "sha256:09247cf301ce433f3d2962b477c3d1dad5a2022ed2864e22bd3f4bc46b58f3f4", "bytes": 109638, "contentType": "application/javascript" },
+		{ "path": "dist/frontend/assets/index.js", "sha256": "sha256:c7ae00073a3172ec28eeb4c41557c6f2ebf3cc11d3bab849454047b4f21b4b5c", "bytes": 111076, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/gmail-page.css", "sha256": "sha256:0080682c7f1a01d174fa68c5c7d93a9480e6f8ca30a9e0b9ec1aa7b5947c5de5", "bytes": 1517, "contentType": "text/css" },
 		{ "path": "dist/frontend/assets/mail-app.css", "sha256": "sha256:0d403d64918dbf4b458cf83f68a0efccfb014caf671fda59d6de800e26205a22", "bytes": 6310, "contentType": "text/css" },
-		{ "path": "dist/frontend/assets/gmail-api.js", "sha256": "sha256:1e8f113b4fe8a0e3dd14bfe829fff3fdc2d2471ee38786aaf46ff8643cc15bb3", "bytes": 5950, "contentType": "application/javascript" },
-		{ "path": "dist/frontend/assets/gmail-page.js", "sha256": "sha256:e6045ebd5a1f037ac6184a00bc83dba21232ddc47ec15d24da27d30f14e8518d", "bytes": 28827, "contentType": "application/javascript" },
-		{ "path": "dist/frontend/assets/mail-app.js", "sha256": "sha256:d0892720cbb5b55679ad6f8ddf24ebb34b1d693cfac8ef65880f27229697968c", "bytes": 44390, "contentType": "application/javascript" },
-		{ "path": "dist/frontend/assets/react.js", "sha256": "sha256:174b76e9a14572ed536406ddae59e27ecc91a59c258854e86f64fa10b6bc689e", "bytes": 368202, "contentType": "application/javascript" },
-		{ "path": "dist/frontend/assets/zod.js", "sha256": "sha256:c6fe91e3fd954ba609ed0856f4c7596e55c0e70d13095e16c7d5458cc0335214", "bytes": 92851, "contentType": "application/javascript" },
-		{ "path": "dist/frontend/assets/rolldown-runtime.js", "sha256": "sha256:320ac1c898c1aa30c21383fddb8070e7888b57dca34de38cb915ba06ebf01b97", "bytes": 890, "contentType": "application/javascript" }
+		{ "path": "dist/frontend/assets/gmail-api.js", "sha256": "sha256:7b1215130d2d4e05fb8671f5fe682baa17f40f45dd45f51b05e0f8737d2e19e3", "bytes": 5946, "contentType": "application/javascript" },
+		{ "path": "dist/frontend/assets/gmail-page.js", "sha256": "sha256:d2251eed6191443dd3f0ee3629d360e23e0d1d250271028d6dd854e5c88952a3", "bytes": 28798, "contentType": "application/javascript" },
+		{ "path": "dist/frontend/assets/mail-app.js", "sha256": "sha256:8671883133d9926f5f2ad20c11a445bb1b6e5813c1bebd357c2602e923ca98d7", "bytes": 44166, "contentType": "application/javascript" },
+		{ "path": "dist/frontend/assets/react.js", "sha256": "sha256:8a04d33413e1af23d3da12f720c870e7841a63671a5657a60c063c5b522ae79f", "bytes": 421948, "contentType": "application/javascript" },
+		{ "path": "dist/frontend/assets/zod.js", "sha256": "sha256:75f6638f0fc7e668b6016702c3993585846020ae9da2100ce7dccb255da9ebd8", "bytes": 126770, "contentType": "application/javascript" },
+		{ "path": "dist/frontend/assets/rolldown-runtime.js", "sha256": "sha256:5388ca8b7a40c7dc758236649b52600b193fa7b2cfaac61c9030bdf3ac2523df", "bytes": 926, "contentType": "application/javascript" }
 	]
 }

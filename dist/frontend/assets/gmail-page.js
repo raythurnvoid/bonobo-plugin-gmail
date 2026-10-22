@@ -315,23 +315,20 @@ function v({ client: e }) {
                     (0, m.jsxs)(`form`, {
                       noValidate: !0,
                       onSubmit: (t) => {
-                        if (
-                          (t.preventDefault(), !t.currentTarget.checkValidity())
-                        ) {
-                          I(
-                            `Enter the 64-character finish code from the callback page.`,
-                          );
-                          return;
-                        }
-                        K(async () => {
-                          (await l(
-                            e,
-                            `/page/connect/finish`,
-                            { attemptId: Y.attemptId, finishCode: T },
-                            g,
-                          ),
-                            W(null));
-                        });
+                        (t.preventDefault(),
+                          t.currentTarget.checkValidity()
+                            ? K(async () => {
+                                (await l(
+                                  e,
+                                  `/page/connect/finish`,
+                                  { attemptId: Y.attemptId, finishCode: T },
+                                  g,
+                                ),
+                                  W(null));
+                              })
+                            : I(
+                                `Enter the 64-character finish code from the callback page.`,
+                              ));
                       },
                       children: [
                         (0, m.jsx)(`label`, {

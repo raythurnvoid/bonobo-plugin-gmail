@@ -284,7 +284,10 @@ describe("work_account_slice", () => {
 	});
 	test.each(["create", "finalize", "source-free finalize"] as const)("a stop after committed %s keeps the message complete after revocation", async (step) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		// Return whole milliseconds like the real clock. The retry jitter makes nextSyncAt a fraction,
+		// and convex-test passes Date.now() to BigInt on every commit. Round `now` itself too, so the
+		// expected times in the test match what the code read. The other clocks in this file do the same.
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture(step === "source-free finalize" ? { sourceError: "google_revoked" } : { fresh: true });
 		const calls = network((path) => {
@@ -365,7 +368,7 @@ describe("work_account_slice", () => {
 	});
 	test.each(["planned", "written"] as const)("a stop after the %s email save keeps its path and writes once", async (step) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		// Pause scheduled slices while running their saved work requests.
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
@@ -482,7 +485,7 @@ describe("work_account_slice", () => {
 	});
 	test("body and attachment reads release used and unselected source strings", async () => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		const discover = gmail_codec.gmail_discover_message;
@@ -611,7 +614,7 @@ describe("work_account_slice", () => {
 	});
 	test.each(["frozen", "accepted"] as const)("a stop after the %s target save resumes with one first PUT", async (step) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		// Pause scheduled slices while running their saved work requests.
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
@@ -680,7 +683,7 @@ describe("work_account_slice", () => {
 	});
 	test("a stop after the PUT marker waits before one remint delivery", async () => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		// Keep the queue paused so each retry uses its saved due time.
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
@@ -750,7 +753,7 @@ describe("work_account_slice", () => {
 	});
 	test.each(["available", "revoked"] as const)("a stop after pending replies with %s source resumes one receipt", async (sourceAccess) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		let finalizes = 0;
@@ -849,7 +852,7 @@ describe("work_account_slice", () => {
 	});
 	test.each(["available", "revoked"] as const)("a stop at each recovery pending reply with %s source keeps its clock and count", async (sourceAccess) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		let finalizes = 0;
@@ -963,7 +966,7 @@ describe("work_account_slice", () => {
 	});
 	test("revocation pauses an unstarted part without hiding a pending receipt", async () => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		let finalizes = 0;
@@ -1016,7 +1019,7 @@ describe("work_account_slice", () => {
 	});
 	test.each(["body", "attachment"] as const)("missing %s bytes keep the Gmail account usable", async (kind) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		const calls = network((path) => {
@@ -1040,7 +1043,7 @@ describe("work_account_slice", () => {
 	});
 	test.each([403, 503])("a %s byte reply keeps the Gmail error handling", async (status) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		const calls = network((path) => {
@@ -1061,7 +1064,7 @@ describe("work_account_slice", () => {
 	});
 	test.each(["body", "new attachment", "remint attachment", "other attachment"] as const)("a stop after missing %s bytes keeps only this message's source loss", async (kind) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		const hasReceipt = kind === "remint attachment" || kind === "other attachment";
@@ -1181,7 +1184,7 @@ describe("work_account_slice", () => {
 	});
 	test.each(["deleted", "spam", "trash", "draft", "source_too_large", "mime_too_large", "invalid_source"] as const)("a stop after new %s source loss saves the pending check and skips new parts", async (kind) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		const skipReason = kind === "deleted" ? "deleted_before_fetch" : ["spam", "trash", "draft"].includes(kind) ? kind : null;
@@ -1272,7 +1275,7 @@ describe("work_account_slice", () => {
 	});
 	test.each(["deleted", "spam", "invalid_source"] as const)("a stop after new %s source loss without receipts keeps the final status", async (kind) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		let sourceReads = 0;
@@ -1317,7 +1320,7 @@ describe("work_account_slice", () => {
 		["invalid_grant", "save_message"], ["invalid_request", "save_message"],
 	] as const)("a stop after token %s at %s keeps pending settlement and its check count", async (kind, checkpoint) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		const sourceError = kind === "invalid_grant" ? "google_revoked" : kind === "invalid_request" ? "gmail_request" : null;
@@ -1423,7 +1426,7 @@ describe("work_account_slice", () => {
 		["target create", "/create-target"],
 	] as const)("a lost %s reply resumes through completion and the minute dispatcher", async (kind, lostRoute) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		// Pause the scheduled slice so this test runs only its saved context.
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
@@ -1523,7 +1526,7 @@ describe("work_account_slice", () => {
 	});
 	test("a stop after five actual deliveries keeps the receipt until explicit Retry", async () => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		let sourceReads = 0;
@@ -1644,7 +1647,7 @@ describe("work_account_slice", () => {
 	});
 	test("a stop after the fifth source-free pending check waits for explicit Retry", async () => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		// Keep queued actions paused while running each saved work request.
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ sourceError: "google_revoked" });
@@ -1804,7 +1807,7 @@ describe("work_account_slice", () => {
 		["cancelled", "revoked", 409, "This target was already released"], ["expired", "revoked", 409, "This target's upload expired"],
 	] as const)("a stop after an accepted %s result with %s source keeps its final skip", async (_kind, sourceAccess, status, message) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		let release = false;
@@ -1919,7 +1922,7 @@ describe("work_account_slice", () => {
 		["finalize", "released", null],
 	] as const)("a stop after %s returns %s keeps the accepted upload final", async (route, _kind, message) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		let release = route === "finalize";
@@ -2422,7 +2425,7 @@ describe("work_account_slice", () => {
 		["storage", "clear", "This workspace has reached its storage limit"],
 	] as const)("a stop at the %s %s note keeps its message result", async (reason, step, message) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		const second = { partId: "2", filename: "second.pdf", mimeType: "application/pdf", body: { size: 4, attachmentId: "second" } };
@@ -2562,7 +2565,7 @@ describe("work_account_slice", () => {
 		["storage", "This workspace has reached its storage limit"],
 	] as const)("a %s refusal skips a new part and keeps two accepted receipts through stops", async (reason, message) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		const receipts = new Map<string, { path: string; size: number; uploads: number }>();
@@ -2700,7 +2703,7 @@ describe("work_account_slice", () => {
 		["after", "storage", "remint", "This workspace has reached its storage limit"],
 	] as const)("a stop %s accepted %s %s refusal keeps its receipt through five checks", async (phase, reason, route, message) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		let creates = 0;
@@ -2877,7 +2880,7 @@ describe("work_account_slice", () => {
 		["storage", "This workspace has reached its storage limit"],
 	] as const)("an accepted %s refusal stays finalize-only through repeated pending replies", async (reason, message) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		const f = await fixture({ fresh: true });
 		let refused = false;
 		let complete = false;
@@ -2945,7 +2948,7 @@ describe("work_account_slice", () => {
 	test("five definite file conflicts stop at given_up while outages spend no attempts", async () => {
 		const f = await fixture({ fresh: true });
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		let outage = true;
 		const calls = network((path) => {
 			now += 1000;
@@ -2974,7 +2977,7 @@ describe("work_account_slice", () => {
 		await f.t.run((ctx) => ctx.db.patch(f.accountId, { nextSliceKind: "backfill", backfillComplete: false,
 			backfillPage: { ids: ["ab", "ac"], nextPageToken: null, index: 0 } }));
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		const calls = network((path, body) => {
 			now += 1000;
 			if (/\/messages\/(ab|ac)$/.test(path)) return Response.json({ ...source, id: path.split("/").at(-1),
@@ -2997,7 +3000,7 @@ describe("work_account_slice", () => {
 		await f.t.run((ctx) => ctx.db.patch(f.accountId, { nextSliceKind: "backfill", backfillComplete: false,
 			backfillPage: { ids, nextPageToken: null, index: 0 } }));
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		const runs = new Map<string, Set<string>>();
 		network((path, body) => {
 			now += 1000;
@@ -3363,7 +3366,7 @@ describe("work_account_slice", () => {
 	});
 	test.each(["missing anchor", "page 400", "page 404", "expired cursor"] as const)("a stop after %s recovery keeps the pending upload and traversal", async (kind) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		await f.t.run((ctx) => ctx.db.patch(f.accountId, { nextSliceKind: "backfill", historyId: null,
@@ -3510,7 +3513,7 @@ describe("work_account_slice", () => {
 					given_up: 0, emailAssumed: 0, permissionHeld: 0 } });
 		});
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		const calls = network((path) => {
 			now += 1000;
 			if (path.endsWith("/history")) return Response.json({}, { status: 404 });
@@ -3594,7 +3597,7 @@ describe("work_account_slice", () => {
 	});
 	test("a stop after the final message save advances backfill without new calls", async () => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		// Pause scheduled functions while replaying the saved backfill page.
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
@@ -3638,7 +3641,7 @@ describe("work_account_slice", () => {
 	});
 	test("a stop after a content failure advances backfill without new calls", async () => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		await f.t.run((ctx) => ctx.db.patch(f.accountId, {
@@ -3689,7 +3692,7 @@ describe("work_account_slice", () => {
 	});
 	test("a stop after a future failure keeps its due time through backfill and history", async () => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		await f.t.run((ctx) => ctx.db.patch(f.accountId, {
@@ -3798,7 +3801,7 @@ describe("work_account_slice", () => {
 	test("parallel history finishes a backfill longer than the history window", async () => {
 		const f = await fixture({ fresh: true });
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		await f.t.run((ctx) =>
 			ctx.db.patch(f.accountId, {
 				nextSliceKind: "backfill",
@@ -3872,7 +3875,7 @@ describe("work_account_slice", () => {
 	});
 	test.each(["baseline", "page", "discovery"] as const)("a stop after the %s checkpoint resumes saved backfill", async (step) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		// Pause scheduled functions so completion and dispatch choose each next request.
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
@@ -4093,7 +4096,7 @@ describe("permission guards", () => {
 		["before", "ready"], ["after", "ready"], ["before", "revoked"], ["after", "revoked"],
 	] as const)("a stop %s reinstall recovery keeps the claimed receipt with %s source", async (phase, sourceAccess) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		const actor = { ...f.actor, installationId: "new-installation" };
@@ -4308,7 +4311,7 @@ describe("permission guards", () => {
 		["before", "email"], ["after", "email"], ["before", "settlement"], ["after", "settlement"],
 	] as const)("a stop %s the worker's %s permission claim keeps the hold and resumes saved work", async (phase, kind) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		// Pause scheduled functions so completion and dispatch choose each next request.
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
@@ -4427,7 +4430,7 @@ describe("permission guards", () => {
 		["before", "source-free pending finalize"], ["after", "source-free pending finalize"],
 	] as const)("a stop %s %s write proof keeps the saved hold and completes once", async (phase, kind) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		const sourceFree = kind.startsWith("source-free");
@@ -4566,7 +4569,7 @@ describe("permission guards", () => {
 		["before", "needs Retry"], ["after", "needs Retry"], ["before", "skipped"], ["after", "skipped"],
 	] as const)("a stop %s %s proof saves final held work before completion", async (phase, outcome) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		const needsRetry = outcome === "needs Retry";
@@ -4835,7 +4838,7 @@ describe("permission guards", () => {
 describe("worker budget and completion", () => {
 	test.each(["email", "settlement"] as const)("a stop after %s pacing keeps its reservation and resumes without duplicate effects", async (kind) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		// Pause scheduled functions so completion and dispatch choose each next request.
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture(kind === "email" ? { fresh: true } : { sourceError: "google_revoked" });
@@ -4909,7 +4912,7 @@ describe("worker budget and completion", () => {
 	test("slow preparation crosses forty seconds and still finishes one PUT", async () => {
 		const f = await fixture({ fresh: true });
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		const calls = network((path) => {
 			if (path.endsWith("/messages/ab")) {
 				now += 45_000;
@@ -4931,7 +4934,7 @@ describe("worker budget and completion", () => {
 	test("slow history setup gets a fresh metadata timer for more than twenty-five events", async () => {
 		const f = await fixture();
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		await f.t.run((ctx) =>
 			ctx.db.patch(f.accountId, {
 				nextSliceKind: "history",
@@ -4964,7 +4967,7 @@ describe("worker budget and completion", () => {
 		["credits", "revoked", 402, 3600_000], ["rate limit", "revoked", 429, 600_000], ["outage", "revoked", 503, 60_000],
 	] as const)("a stop after Press %s with %s source keeps its saved error and wait", async (kind, sourceAccess, status, delay) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		// Pause scheduled functions so completion and dispatch choose each next request.
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
@@ -5303,7 +5306,7 @@ describe("source limits", () => {
 	});
 	test.each(["parts", "declared", "actual", "deadline", "streamed"] as const)("a stop after the %s body-limit marker keeps the email and attachment", async kind => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		const bodies = Array.from({ length: kind === "parts" ? 9 : kind === "deadline" ? 8 : kind === "streamed" ? 1 : 2 }, (_, index) => ({
@@ -5401,7 +5404,7 @@ describe("source limits", () => {
 	});
 	test.each([["empty", 0], ["too_large", 33 * 1024 * 1024]] as const)("a stop after a new %s attachment keeps its final skip", async (reason, size) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		const calls = network(path => {
@@ -5449,7 +5452,7 @@ describe("source limits", () => {
 	});
 	test.each([["new", "streamed"], ["accepted", "streamed"], ["new", "decoded"], ["accepted", "decoded"]] as const)("stops after oversized %s attachment replies at the %s limit keep the saved outcome", async (kind, limit) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		let large = kind === "new";
@@ -5590,7 +5593,7 @@ describe("source limits", () => {
 	});
 	test("stops after history size and error saves keep the pending receipt until Retry sync", async () => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		await f.t.run((ctx) => ctx.db.patch(f.accountId, { nextSliceKind: "backfill", historyId: null,
@@ -5784,7 +5787,7 @@ describe("source limits", () => {
 describe("ingest_history", () => {
 	test.each(["batch", "page", "cursor"] as const)("a stop after the history %s save keeps queued mail and deletions", async (step) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture({ fresh: true });
 		await f.t.run(async (ctx) => {
@@ -6022,7 +6025,7 @@ describe("ingest_history", () => {
 describe("idle wait", () => {
 	test("an idle account waits 2, 4, 8, then 15 minutes, and saved history resets the wait", async () => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		const f = await idle_fixture();
 		let mail = false;
 		network((path) =>
@@ -6065,7 +6068,7 @@ describe("idle wait", () => {
 		["an unfinished backfill", { backfillComplete: false }, empty_history],
 	] as const)("%s keeps the one-minute wait", async (_name, patch, page) => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		const f = await idle_fixture({ ...patch, idleSlices: 3 });
 		network((path) => (path.endsWith("/history") ? Response.json(page) : Response.json({}, { status: 500 })));
 		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
@@ -6074,7 +6077,7 @@ describe("idle wait", () => {
 	});
 	test("a retry due before the idle wait sets the next sync, and a retry slice asks for retries once", async () => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		// The row is pending and due in five minutes, so this slice has nothing to retry yet.
 		const f = await idle_fixture({ idleSlices: 3, nextSliceKind: "retry" });
 		await f.t.run(async (ctx) => {
@@ -6093,7 +6096,7 @@ describe("idle wait", () => {
 	});
 	test("a Press outage after the history check keeps the check time", async () => {
 		let now = Date.now();
-		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		const f = await fixture();
 		await f.t.run((ctx) => ctx.db.patch(f.accountId, { nextSliceKind: "history" }));
 		network((path) => (path.endsWith("/history") ? Response.json(empty_history) : Response.json({ message: "Unavailable" }, { status: 503 })));

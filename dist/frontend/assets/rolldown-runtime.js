@@ -5,7 +5,7 @@ var e = Object.create,
   i = Object.getPrototypeOf,
   a = Object.prototype.hasOwnProperty,
   o = (e, t) => () => (
-    t || (e((t = { exports: {} }).exports, t), (e = null)),
+    t || (e((t = { exports: {} }).exports, t, t.exports), (e = null)),
     t.exports
   ),
   s = (e, i, o, s) => {
@@ -20,12 +20,12 @@ var e = Object.create,
             }));
     return e;
   },
-  c = (n, r, a) => (
-    (a = n == null ? {} : e(i(n))),
+  c = (n, r, o) => (
+    (o = n == null ? {} : e(i(n))),
     s(
-      r || !n || !n.__esModule
-        ? t(a, `default`, { value: n, enumerable: !0 })
-        : a,
+      r || !n || !n.__esModule || !a.call(n, `default`)
+        ? t(o, `default`, { value: n, enumerable: !0 })
+        : o,
       n,
     )
   );
