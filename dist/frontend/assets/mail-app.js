@@ -135,6 +135,8 @@ function M(e, t) {
       date: k(n.date),
       direction: i === `sent` || i === `received` ? i : null,
       gmailMessageId: k(n[`gmail-message-id`]) || null,
+      gmailThreadId: k(n[`gmail-thread-id`]) || null,
+      senderUnconfirmed: n.dmarc === `fail`,
     },
     body: r.trimEnd(),
   };
@@ -310,6 +312,10 @@ function G(e) {
     subject: U(e.headers.subject, L),
     date: e.headers.date,
     direction: e.headers.direction,
+    threadId: e.headers.gmailThreadId,
+    senderWarning: e.headers.senderUnconfirmed
+      ? `Gmail could not confirm this sender. The From address may be fake.`
+      : null,
     body: U(e.body, I),
   };
 }
@@ -424,8 +430,17 @@ function ue(e, t) {
       }),
       a(`list_drafts`, () => ({
         drafts: t.getView().drafts.map(K),
-        note: `These are the newest drafts, without their text. To read one, ask the member to open it, then call get_view.`,
+        note: `These are the newest drafts, without their text. Call read_draft to read one.`,
       })),
+      a(`read_draft`, async (r) => {
+        let i = le(q(r)),
+          a = () => {
+            if (t.getView().unsavedDraftId === i) throw Error(H);
+          };
+        a();
+        let o = await x(e, n().accountId, i);
+        return (a(), ce(o));
+      }),
       a(`create_draft`, async (a) => {
         let o = q(a),
           s = {
@@ -1191,6 +1206,12 @@ function Ee(e) {
         className: `mail-email-header`,
         children: [
           (0, Z.jsx)(`h1`, { children: t.headers.subject }),
+          t.headers.senderUnconfirmed
+            ? (0, Z.jsx)(`p`, {
+                className: `mail-sender-warning`,
+                children: `Gmail could not confirm this sender. The From address may be fake.`,
+              })
+            : null,
           (0, Z.jsxs)(`dl`, {
             children: [
               (0, Z.jsx)(`dt`, { children: `From` }),

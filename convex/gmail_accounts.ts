@@ -770,6 +770,8 @@ async function discover_id(
 			deletedAt: kind === "deleted" ? Date.now() : null,
 			updatedAt: Date.now(),
 		});
+	// Gmail web deletes the old draft id on each draft save. A skipped draft row has nothing to change.
+	if (old.skipReason === "draft") return old;
 	if (kind === "deleted") {
 		const { _id, _creationTime, ...fields } = old;
 		const pending = old.settlementNeeded;
@@ -1010,7 +1012,8 @@ export const save_access_token = internalMutation({
 
 export const ingest_history = internalMutation({
 	args: { work: gmail_worker_context, before: traversal_checkpoint, events: v.array(gmail_history_event) },
-	returns: v.boolean(),
+	// Null when the work is stale. `work` is false when every event only added or deleted a draft id.
+	returns: v.union(v.object({ work: v.boolean() }), v.null()),
 	handler: async (ctx, args) => {
 		const current = await worker_account(ctx, args.work);
 		if (
@@ -1019,13 +1022,15 @@ export const ingest_history = internalMutation({
 			args.events.length > 25 ||
 			!same(traversal(current.account), args.before)
 		)
-			return false;
+			return null;
+		let work = false;
 		for (const event of args.events) {
 			const account = (await ctx.db.get(current.account._id))!;
-			await discover_id(ctx, account, event.gmailMessageId, event.kind);
+			const row = await discover_id(ctx, account, event.gmailMessageId, event.kind);
+			if (row.skipReason !== "draft") work = true;
 		}
 		await ctx.db.patch(current.account._id, { historyAnchor: args.events.at(-1)!, updatedAt: Date.now() });
-		return true;
+		return { work };
 	},
 });
 

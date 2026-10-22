@@ -432,12 +432,12 @@ function b({ client: e }) {
                           n.syncStatus === `disconnected`
                             ? `Disconnected`
                             : u && !n.pressReady
-                              ? `Press connection needs attention`
+                              ? `Bonobo Senate connection needs attention`
                               : n.pressReady
                                 ? n.backfillComplete
                                   ? `${n.messagesSynced} emails saved`
                                   : `Backfilling… ${n.messagesSynced} emails saved`
-                                : `Finishing Press connection`,
+                                : `Finishing Bonobo Senate connection`,
                       }),
                       (0, p.jsxs)(`p`, {
                         children: [
@@ -535,7 +535,7 @@ function b({ client: e }) {
                         }),
                       n.canRepair &&
                         (0, p.jsx)(`p`, {
-                          children: `Press access needs repair.`,
+                          children: `Bonobo Senate access needs repair.`,
                         }),
                       n.syncError === `actor_lost` &&
                         (0, p.jsx)(`p`, {
@@ -584,7 +584,7 @@ function b({ client: e }) {
                                     h,
                                   );
                                 }),
-                              children: `Repair Press access`,
+                              children: `Repair Bonobo Senate access`,
                             }),
                           n.sourceError !== `google_revoked` &&
                             n.sourceError !== null &&

@@ -113,8 +113,10 @@ export function gmail_discover_message(input: unknown) {
 	// Gmail adds its own Authentication-Results header at the top when it receives a message. A sender can
 	// add fake ones, but only below it, so read the first one from mx.google.com. Inside it, text the sender
 	// controls (an SPF comment, the envelope address) comes before the dmarc= result, so read the last one.
+	// Do not cut the header first: a sender can make it long with many DKIM signatures, and a cut would
+	// drop the real result at the end. The whole message JSON is already size-limited.
 	const authentication = root.data.headers.find(h => h.name.toLowerCase() === "authentication-results" && /^\s*mx\.google\.com\s*;/i.test(h.value));
-	const dmarc = [...gmail_cap_text(authentication?.value ?? "", 8192).matchAll(/;\s*dmarc=([a-z]+)/gi)].at(-1)?.[1].toLowerCase() ?? null;
+	const dmarc = [...(authentication?.value ?? "").matchAll(/;\s*dmarc=([a-z]+)/gi)].at(-1)?.[1].toLowerCase() ?? null;
 	const internalDate = Number(message.data.internalDate);
 	if (!Number.isSafeInteger(internalDate) || !Number.isFinite(new Date(internalDate).getTime())) throw new gmail_ContentError("invalid_source");
 	const textParts: z.infer<typeof part_validator>[] = [];

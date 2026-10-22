@@ -2,7 +2,7 @@
 	"schemaVersion": 1,
 	"name": "gmail",
 	"displayName": "Gmail",
-	"version": "0.3.10",
+	"version": "0.3.11",
 	"description": "Save sent and received Gmail emails and attachments in Bonobo Senate Files. Read them in Mail, and write Gmail drafts with the chat agent.",
 	"compatibility": { "bonoboPluginRuntime": "1" },
 	"events": [],
@@ -29,7 +29,7 @@
 					},
 					{
 						"name": "open_email",
-						"description": "Open one email in the Mail page and return its headers and text. Use a path from get_view or from the Files tools, for example /emails/me-example-com/2026/10/18-hello-18f2a.md. The answer has a threadId. To read the whole conversation, search Files for frontmatter.gmail-thread-id:<threadId>, then read each file it finds. senderWarning is set when Gmail could not confirm the sender; tell the member before you trust the email.",
+						"description": "Open one email in the Mail page and return its headers and text. Use a path from get_view or from the Files tools, for example /emails/me-example-com/2026/10/18-hello-18f2a.md. The answer has a threadId. To read the whole conversation, search Files for frontmatter.gmail-thread-id:<threadId>, then read each file it finds. senderWarning is set when Gmail's DMARC check of the sender failed; tell the member before you trust the email. A null senderWarning does not prove the sender is real.",
 						"inputSchema": {
 							"type": "object",
 							"properties": {
@@ -170,12 +170,12 @@
 	"uiOutboundOrigins": ["https://kindhearted-mallard-511.convex.site"],
 	"files": [
 		{ "path": "dist/frontend/index.html", "sha256": "sha256:0f1543e7d0ad370fe64039ff2d49ff01174d9239e7257de765e0eb775aa3a96a", "bytes": 437, "contentType": "text/html" },
-		{ "path": "dist/frontend/assets/index.js", "sha256": "sha256:c7ae00073a3172ec28eeb4c41557c6f2ebf3cc11d3bab849454047b4f21b4b5c", "bytes": 111076, "contentType": "application/javascript" },
+		{ "path": "dist/frontend/assets/index.js", "sha256": "sha256:62344a078d0a34c458e6b492e2169b7c742047b094cff68abd07c80f348c43b8", "bytes": 111103, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/gmail-page.css", "sha256": "sha256:0080682c7f1a01d174fa68c5c7d93a9480e6f8ca30a9e0b9ec1aa7b5947c5de5", "bytes": 1517, "contentType": "text/css" },
-		{ "path": "dist/frontend/assets/mail-app.css", "sha256": "sha256:0d403d64918dbf4b458cf83f68a0efccfb014caf671fda59d6de800e26205a22", "bytes": 6310, "contentType": "text/css" },
-		{ "path": "dist/frontend/assets/gmail-api.js", "sha256": "sha256:13f4b684719529b7c4e37de61bcb4fa42ccd59656fae23a20edba06454e040bc", "bytes": 5921, "contentType": "application/javascript" },
-		{ "path": "dist/frontend/assets/gmail-page.js", "sha256": "sha256:b5e9b1bfee78c38dcaf936ffa1f1dd9d8157808d43d5231a4502cdddc575348e", "bytes": 29285, "contentType": "application/javascript" },
-		{ "path": "dist/frontend/assets/mail-app.js", "sha256": "sha256:265c39a935e21716f4236668b563fe995f52295b0511966db1f3c2272e8a345f", "bytes": 44698, "contentType": "application/javascript" },
+		{ "path": "dist/frontend/assets/mail-app.css", "sha256": "sha256:f7b52cbcb504bdab1e177300611f45cc087bcb94bee84b824e6812761cab0ff2", "bytes": 6396, "contentType": "text/css" },
+		{ "path": "dist/frontend/assets/gmail-api.js", "sha256": "sha256:a435be696c8eeda1fc257d2a41947e84d5c5055df7f7dcef8bdd562b64fc87ce", "bytes": 5929, "contentType": "application/javascript" },
+		{ "path": "dist/frontend/assets/gmail-page.js", "sha256": "sha256:6759461dbb35387f2e15d5f7877c16f8d1ac19957149bdaeec20ea79202e4da8", "bytes": 29317, "contentType": "application/javascript" },
+		{ "path": "dist/frontend/assets/mail-app.js", "sha256": "sha256:7288b0489c874e39a15e88842e20fc947b4186a72936c42786596247a4afdcec", "bytes": 45458, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/react.js", "sha256": "sha256:8a04d33413e1af23d3da12f720c870e7841a63671a5657a60c063c5b522ae79f", "bytes": 421948, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/zod.js", "sha256": "sha256:75f6638f0fc7e668b6016702c3993585846020ae9da2100ce7dccb255da9ebd8", "bytes": 126770, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/rolldown-runtime.js", "sha256": "sha256:5388ca8b7a40c7dc758236649b52600b193fa7b2cfaac61c9030bdf3ac2523df", "bytes": 926, "contentType": "application/javascript" }

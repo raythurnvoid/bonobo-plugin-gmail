@@ -1406,17 +1406,14 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
       Date.now() - ingestionStartedAt < 40_000
     ) {
       const events = page.events.slice(index, index + 25);
-      if (
-        !(await ctx.runMutation(internal.gmail_accounts.ingest_history, {
-          work,
-          before,
-          events,
-        }))
-      )
-        throw new StaleWork();
-      // Drafts are saved as skipped rows with nothing to fetch, so they are not work. Gmail web saves a
-      // draft every few seconds, and each save would otherwise keep the next sync at one minute.
-      if (events.some((event) => event.kind !== "draft")) {
+      const ingest = await ctx.runMutation(
+        internal.gmail_accounts.ingest_history,
+        { work, before, events },
+      );
+      if (!ingest) throw new StaleWork();
+      // Gmail web saves a draft every few seconds: it adds a new draft id and deletes the old one. Those
+      // rows have nothing to fetch, so they are not work, or each save would keep the next sync at one minute.
+      if (ingest.work) {
         active = true;
         ingested = true;
       }

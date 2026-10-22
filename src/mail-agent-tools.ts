@@ -252,11 +252,17 @@ export function register_mail_tools(client: BonoboClient, controls: MailViewCont
 		register("read_draft", async (input) => {
 			const draftId = read_draft_id(read_object(input));
 			// Gmail does not have the member's unsaved typing yet, so its copy of this draft is old.
-			if (controls.getView().unsavedDraftId === draftId) {
-				throw new Error(UNSAVED_DRAFT_ERROR);
-			}
+			const require_saved = () => {
+				if (controls.getView().unsavedDraftId === draftId) {
+					throw new Error(UNSAVED_DRAFT_ERROR);
+				}
+			};
+			require_saved();
 
-			return describe_draft(await get_draft(client, require_account().accountId, draftId));
+			const draft = await get_draft(client, require_account().accountId, draftId);
+			// Check again. The member may have typed while the draft was read.
+			require_saved();
+			return describe_draft(draft);
 		}),
 
 		register("create_draft", async (input) => {

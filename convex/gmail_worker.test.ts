@@ -3569,8 +3569,9 @@ describe("work_account_slice", () => {
 		expect(writes).toHaveLength(1);
 		expect(writes[0].body).toMatchObject({ content: expect.stringContaining('direction: "sent"') });
 		expect(writes[0].body).toMatchObject({ content: expect.stringContaining('gmail-message-id: "ac"') });
+		// The old draft row stays as it was. A skipped draft has nothing to fetch or delete.
 		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({
-			status: "skipped", skipReason: "deleted_before_fetch", emailWritten: false, deletedAt: expect.any(Number),
+			status: "skipped", skipReason: "draft", emailWritten: false, deletedAt: null,
 		});
 		expect(await f.t.run((ctx) => ctx.db.query("messages_ledger").withIndex("by_account_gmailMessageId",
 			(q) => q.eq("accountId", f.accountId).eq("gmailMessageId", "ac")).unique())).toMatchObject({
@@ -5947,7 +5948,7 @@ describe("ingest_history", () => {
 					kind: "rescue_spam" as const,
 				})),
 			}),
-		).toBe(true);
+		).toEqual({ work: true });
 		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toEqual(original);
 		expect(await f.t.run((ctx) => ctx.db.get(skipped[0]))).toMatchObject({
 			status: "pending",
@@ -5967,7 +5968,7 @@ describe("ingest_history", () => {
 				before,
 				events: [{ historyId: "12", gmailMessageId: "ef", kind: "added" }],
 			}),
-		).toBe(false);
+		).toBeNull();
 	});
 	test("an unknown deletion is durable and a saved deletion keeps Files", async () => {
 		const f = await fixture();
@@ -6000,7 +6001,7 @@ describe("ingest_history", () => {
 					{ historyId: "12", gmailMessageId: "ab", kind: "deleted" },
 				],
 			}),
-		).toBe(true);
+		).toEqual({ work: true });
 		expect(
 			await f.t.run((ctx) =>
 				ctx.db
@@ -6075,17 +6076,21 @@ describe("idle wait", () => {
 		const finished = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
 		expect(finished).toMatchObject({ idleSlices: 0, nextSyncAt: now + 60_000, syncError: null });
 	});
-	test("a history page with only drafts keeps the idle wait", async () => {
+	test("a draft save in Gmail keeps the idle wait", async () => {
 		let now = Date.now();
 		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		const f = await idle_fixture({ idleSlices: 3 });
+		// "ab" is the draft id from the previous save. Gmail web adds a new draft id and deletes the old one.
+		await f.t.run((ctx) => ctx.db.patch(f.ledgerId, { status: "skipped", skipReason: "draft", emailWritten: false }));
 		network((path) =>
 			path.endsWith("/history")
-				? Response.json({ historyId: "11", history: [{ id: "11", messagesAdded: [{ message: { id: "ad", labelIds: ["DRAFT"] } }] }] })
+				? Response.json({ historyId: "11", history: [{ id: "11",
+					messagesAdded: [{ message: { id: "ad", labelIds: ["DRAFT"] } }], messagesDeleted: [{ message: { id: "ab" } }] }] })
 				: Response.json({}, { status: 500 }),
 		);
 		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
 		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ historyId: "11", idleSlices: 4, nextSyncAt: now + 15 * 60_000 });
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({ skipReason: "draft", deletedAt: null });
 	});
 	test("a retry due before the idle wait sets the next sync, and a retry slice asks for retries once", async () => {
 		let now = Date.now();

@@ -220,6 +220,10 @@ describe("gmail_format_markdown", () => {
 		] };
 		expect(gmail_format_markdown(gmail_discover_message(message(payload)), "Body")).toContain('dmarc: "fail"');
 		expect(gmail_format_markdown(gmail_discover_message(message(payload, ["SENT"])), "Body")).not.toContain("dmarc:");
+		// Many DKIM signatures make Gmail's header long. The result at its end must still be read.
+		const dkim = Array.from({ length: 40 }, (_, i) => `dkim=neutral header.i=@${"d".repeat(200)}${i}.example header.s=s${i}`).join(";\n       ");
+		const long = { headers: [{ name: "Authentication-Results", value: `mx.google.com;\n       ${dkim};\n       dmarc=fail (p=NONE sp=NONE dis=NONE) header.from=bank.example` }] };
+		expect(gmail_format_markdown(gmail_discover_message(message(long)), "Body")).toContain('dmarc: "fail"');
 	});
 	test("caps the complete file on UTF-8 boundaries", () => {
 		const parsed = gmail_discover_message(message({ headers: [{ name: "Subject", value: "Subject" }] }));

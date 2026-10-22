@@ -3547,7 +3547,10 @@ var tn = t(),
 if (!ln) throw Error(`index.html is missing the #root element`);
 var $ = (0, tn.createRoot)(ln);
 ($.render(
-  (0, Q.jsx)(`main`, { role: `status`, children: `Connecting to Press…` }),
+  (0, Q.jsx)(`main`, {
+    role: `status`,
+    children: `Connecting to Bonobo Senate…`,
+  }),
 ),
   en()
     .then(
@@ -3581,7 +3584,7 @@ var $ = (0, tn.createRoot)(ln);
         $.render(
           (0, Q.jsx)(`main`, {
             role: `alert`,
-            children: `Press access changed. Reopen the page.`,
+            children: `Bonobo Senate access changed. Reopen the page.`,
           }),
         ),
     )
