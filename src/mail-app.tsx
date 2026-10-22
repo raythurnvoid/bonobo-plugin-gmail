@@ -150,7 +150,7 @@ async function list_accounts(client: Pick<BonoboClient, "getToken" | "refreshTok
 					{ accountId: account.accountId, expectedGeneration: account.connectionGeneration, clientRequestId: gmail_new_request_id() },
 					z.object({}),
 				).catch((error: unknown) => {
-					console.error("[MailApp.list_accounts] Failed to renew the Press grant", { error, accountId: account.accountId });
+					console.error("[MailApp.list_accounts] Failed to renew the Bonobo Senate grant", { error, accountId: account.accountId });
 				});
 			}
 			if (account.syncStatus !== "disconnected") {

@@ -606,7 +606,7 @@ async function Te(e, t) {
           a({}),
         ).catch((e) => {
           console.error(
-            `[MailApp.list_accounts] Failed to renew the Press grant`,
+            `[MailApp.list_accounts] Failed to renew the Bonobo Senate grant`,
             { error: e, accountId: i.accountId },
           );
         })),

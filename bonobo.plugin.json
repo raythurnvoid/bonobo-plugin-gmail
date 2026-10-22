@@ -2,7 +2,7 @@
 	"schemaVersion": 1,
 	"name": "gmail",
 	"displayName": "Gmail",
-	"version": "0.3.11",
+	"version": "0.3.12",
 	"description": "Save sent and received Gmail emails and attachments in Bonobo Senate Files. Read them in Mail, and write Gmail drafts with the chat agent.",
 	"compatibility": { "bonoboPluginRuntime": "1" },
 	"events": [],
@@ -175,7 +175,7 @@
 		{ "path": "dist/frontend/assets/mail-app.css", "sha256": "sha256:f7b52cbcb504bdab1e177300611f45cc087bcb94bee84b824e6812761cab0ff2", "bytes": 6396, "contentType": "text/css" },
 		{ "path": "dist/frontend/assets/gmail-api.js", "sha256": "sha256:a435be696c8eeda1fc257d2a41947e84d5c5055df7f7dcef8bdd562b64fc87ce", "bytes": 5929, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/gmail-page.js", "sha256": "sha256:6759461dbb35387f2e15d5f7877c16f8d1ac19957149bdaeec20ea79202e4da8", "bytes": 29317, "contentType": "application/javascript" },
-		{ "path": "dist/frontend/assets/mail-app.js", "sha256": "sha256:7288b0489c874e39a15e88842e20fc947b4186a72936c42786596247a4afdcec", "bytes": 45458, "contentType": "application/javascript" },
+		{ "path": "dist/frontend/assets/mail-app.js", "sha256": "sha256:659fd7831e3cb19dbe10ab92ed0392ab3bace0d63299b1bd6433fa2a6ac4ae32", "bytes": 45466, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/react.js", "sha256": "sha256:8a04d33413e1af23d3da12f720c870e7841a63671a5657a60c063c5b522ae79f", "bytes": 421948, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/zod.js", "sha256": "sha256:75f6638f0fc7e668b6016702c3993585846020ae9da2100ce7dccb255da9ebd8", "bytes": 126770, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/rolldown-runtime.js", "sha256": "sha256:5388ca8b7a40c7dc758236649b52600b193fa7b2cfaac61c9030bdf3ac2523df", "bytes": 926, "contentType": "application/javascript" }
