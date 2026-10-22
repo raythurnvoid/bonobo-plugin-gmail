@@ -227,14 +227,14 @@ http.route({
 				result.status === "finished"
 					? "<p>Gmail is connected. You can close this tab.</p>"
 					: result.finishCode
-						? `<p>Google confirmed ${escape_html(result.emailAddress ?? "")}.</p><p>Organization ID: <code>${escape_html(result.organizationId)}</code><br>Workspace ID: <code>${escape_html(result.workspaceId)}</code></p><p>Compare these IDs with the Gmail card in Press. Emails and attachments will be ordinary workspace Files. Other members with file access can read them.</p><label for="finish">Finish code</label><textarea id="finish" readonly rows="3">${escape_html(result.finishCode)}</textarea><button id="copy" type="button">Copy code</button><p id="copied" role="status"></p><p>Copy this code. Return to your original Press page, paste it, and choose Finish connection. The code expires in ten minutes. Do not share it.</p><script nonce="${nonce}">document.getElementById("copy").addEventListener("click",async()=>{try{await navigator.clipboard.writeText(document.getElementById("finish").value);document.getElementById("copied").textContent="Code copied"}catch{document.getElementById("finish").select();document.getElementById("copied").textContent="Select and copy the code above."}});</script>`
+						? `<p>Google confirmed ${escape_html(result.emailAddress ?? "")}.</p><p>Organization ID: <code>${escape_html(result.organizationId)}</code><br>Workspace ID: <code>${escape_html(result.workspaceId)}</code></p><p>Compare these IDs with the Gmail card in Bonobo Senate. Emails and attachments will be ordinary workspace Files. Other members with file access can read them.</p><label for="finish">Finish code</label><textarea id="finish" readonly rows="3">${escape_html(result.finishCode)}</textarea><button id="copy" type="button">Copy code</button><p id="copied" role="status"></p><p>Copy this code. Return to your original Bonobo Senate page, paste it, and choose Finish connection. The code expires in ten minutes. Do not share it.</p><script nonce="${nonce}">document.getElementById("copy").addEventListener("click",async()=>{try{await navigator.clipboard.writeText(document.getElementById("finish").value);document.getElementById("copied").textContent="Code copied"}catch{document.getElementById("finish").select();document.getElementById("copied").textContent="Select and copy the code above."}});</script>`
 						: "<p>Google sign-in is being checked. Reload this page shortly.</p>";
 		} catch (error) {
 			status = error instanceof gmail_PageError ? error.status : 503;
 			const message =
 				error instanceof gmail_PageError && error.code === "google_denied"
 					? "Gmail was not connected."
-					: "Gmail could not be connected. Return to Press, cancel this attempt, and start again.";
+					: "Gmail could not be connected. Return to Bonobo Senate, cancel this attempt, and start again.";
 			content = `<p>${message}</p>`;
 		}
 		return new Response(

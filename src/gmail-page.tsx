@@ -496,9 +496,9 @@ export function GmailPage({
                     {account.syncStatus === "disconnected"
                       ? "Disconnected"
                       : paused && !account.pressReady
-                        ? "Press connection needs attention"
+                        ? "Bonobo Senate connection needs attention"
                         : !account.pressReady
-                          ? "Finishing Press connection"
+                          ? "Finishing Bonobo Senate connection"
                           : !account.backfillComplete
                             ? `Backfilling… ${account.messagesSynced} emails saved`
                             : `${account.messagesSynced} emails saved`}
@@ -579,7 +579,7 @@ export function GmailPage({
                   {account.syncError === "credits" && (
                     <p>Add credits in Billing.</p>
                   )}
-                  {account.canRepair && <p>Press access needs repair.</p>}
+                  {account.canRepair && <p>Bonobo Senate access needs repair.</p>}
                   {account.syncError === "actor_lost" && (
                     <p>
                       The connecting member lost write access. A writer must
@@ -636,7 +636,7 @@ export function GmailPage({
                           })
                         }
                       >
-                        Repair Press access
+                        Repair Bonobo Senate access
                       </button>
                     )}
                     {account.sourceError !== "google_revoked" &&

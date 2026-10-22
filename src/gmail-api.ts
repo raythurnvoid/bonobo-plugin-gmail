@@ -95,7 +95,7 @@ export class gmail_ApiError extends Error {
 }
 
 const messages: Record<string, string> = {
-	press_access_changed: "Press access changed. Reopen the page to resume.",
+	press_access_changed: "Bonobo Senate access changed. Reopen the page to resume.",
 	page_write_refused: "You need write access to change this connection.",
 	account_capacity: "This service has reached its connection limit. Ask the operator to check hosting capacity.",
 	rate_limited: "Too many requests. Wait a minute and try again.",

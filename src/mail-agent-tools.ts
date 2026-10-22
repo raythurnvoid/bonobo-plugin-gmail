@@ -94,6 +94,8 @@ function describe_email(email: Email) {
 		subject: cut(email.headers.subject, MAX_PREVIEW_BYTES),
 		date: email.headers.date,
 		direction: email.headers.direction,
+		threadId: email.headers.gmailThreadId,
+		senderWarning: email.headers.senderUnconfirmed ? "Gmail could not confirm this sender. The From address may be fake." : null,
 		body: cut(email.body, MAX_TEXT_BYTES),
 	};
 }
@@ -243,8 +245,18 @@ export function register_mail_tools(client: BonoboClient, controls: MailViewCont
 			const drafts = controls.getView().drafts;
 			return {
 				drafts: drafts.map(describe_draft_row),
-				note: "These are the newest drafts, without their text. To read one, ask the member to open it, then call get_view.",
+				note: "These are the newest drafts, without their text. Call read_draft to read one.",
 			};
+		}),
+
+		register("read_draft", async (input) => {
+			const draftId = read_draft_id(read_object(input));
+			// Gmail does not have the member's unsaved typing yet, so its copy of this draft is old.
+			if (controls.getView().unsavedDraftId === draftId) {
+				throw new Error(UNSAVED_DRAFT_ERROR);
+			}
+
+			return describe_draft(await get_draft(client, require_account().accountId, draftId));
 		}),
 
 		register("create_draft", async (input) => {

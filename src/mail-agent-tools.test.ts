@@ -60,6 +60,7 @@ describe("register_mail_tools", () => {
 			get_view: {},
 			open_email: { path: "/emails/me/2026/10/18-lunch-18f2a.md" },
 			list_drafts: {},
+			read_draft: { draftId: DRAFT_ID },
 			create_draft: { to: ["ada@example.com"], subject: "Re: Lunch", body: "Yes", replyToPath: "/emails/me/2026/10/18-lunch-18f2a.md" },
 			update_draft: { draftId: DRAFT_ID, body: "Yes, at noon" },
 			delete_draft: { draftId: DRAFT_ID },
@@ -105,10 +106,11 @@ describe("register_mail_tools", () => {
 		expect(page.requests).toEqual([]);
 	});
 
-	test("tools that change the view, and delete_draft on that draft, refuse while the member has unsaved text", async () => {
+	test("tools that change the view, and read_draft or delete_draft on that draft, refuse while the member has unsaved text", async () => {
 		const page = make_page({ unsavedDraftId: DRAFT_ID });
 		const refused: [string, unknown][] = [
 			["open_email", { path: "/emails/me/2026/10/18-lunch-18f2a.md" }],
+			["read_draft", { draftId: DRAFT_ID }],
 			["create_draft", { to: ["ada@example.com"], subject: "Hello", body: "Hi" }],
 			["update_draft", { draftId: DRAFT_ID, body: "Yes, at noon" }],
 			["delete_draft", { draftId: DRAFT_ID }],

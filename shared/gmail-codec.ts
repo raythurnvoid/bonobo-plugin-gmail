@@ -110,6 +110,11 @@ export function gmail_discover_message(input: unknown) {
 	if (!root.success) throw new gmail_ContentError("invalid_source");
 	const headers = new Map(root.data.headers.map(h => [h.name.toLowerCase(), h.value]));
 	const header = (name: string) => gmail_decode_header(gmail_cap_text(headers.get(name) ?? "", 8192));
+	// Gmail adds its own Authentication-Results header at the top when it receives a message. A sender can
+	// add fake ones, but only below it, so read the first one from mx.google.com. Inside it, text the sender
+	// controls (an SPF comment, the envelope address) comes before the dmarc= result, so read the last one.
+	const authentication = root.data.headers.find(h => h.name.toLowerCase() === "authentication-results" && /^\s*mx\.google\.com\s*;/i.test(h.value));
+	const dmarc = [...gmail_cap_text(authentication?.value ?? "", 8192).matchAll(/;\s*dmarc=([a-z]+)/gi)].at(-1)?.[1].toLowerCase() ?? null;
 	const internalDate = Number(message.data.internalDate);
 	if (!Number.isSafeInteger(internalDate) || !Number.isFinite(new Date(internalDate).getTime())) throw new gmail_ContentError("invalid_source");
 	const textParts: z.infer<typeof part_validator>[] = [];
@@ -145,7 +150,7 @@ export function gmail_discover_message(input: unknown) {
 		labels: message.data.labelIds, subject: header("subject") || "(no subject)", from: header("from"),
 		to: parse_addresses(headers.get("to") ?? ""), cc: parse_addresses(headers.get("cc") ?? ""),
 		bcc: message.data.labelIds.includes("SENT") ? parse_addresses(headers.get("bcc") ?? "") : [],
-		messageId: header("message-id"), inReplyTo: header("in-reply-to"),
+		messageId: header("message-id"), inReplyTo: header("in-reply-to"), dmarc,
 		headersShortened: [...headers].some(([name, value]) => Buffer.byteLength(value) > (["to", "cc", "bcc"].includes(name) ? 65536 : 8192)),
 		bodyLimit, bodyParts: bodyLimit ? [] : selected.map(part => ({
 			partId: part.partId, mimeType: part.mimeType,
@@ -187,7 +192,10 @@ export function gmail_format_markdown(message: ReturnType<typeof gmail_discover_
 		`from: ${scalar(message.from)}`, `to: ${addresses(message.to)}`, `cc: ${addresses(message.cc)}`,
 		...(sent ? [`bcc: ${addresses(message.bcc)}`] : []),
 		`date: ${scalar(new Date(message.internalDate).toISOString())}`, `subject: ${scalar(message.subject)}`,
-		`direction: "${sent ? "sent" : "received"}"`, `gmail-message-id: ${scalar(message.id)}`,
+		`direction: "${sent ? "sent" : "received"}"`,
+		// Gmail checks the sender only for mail it receives. The Mail page warns when this is "fail".
+		...(!sent && message.dmarc ? [`dmarc: ${scalar(message.dmarc)}`] : []),
+		`gmail-message-id: ${scalar(message.id)}`,
 		`gmail-thread-id: ${scalar(message.threadId)}`, `message-id: ${scalar(message.messageId)}`,
 		`in-reply-to: ${scalar(message.inReplyTo)}`, `attachments: ${JSON.stringify(names)}`,
 	];

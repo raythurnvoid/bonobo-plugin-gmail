@@ -1414,8 +1414,12 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
         }))
       )
         throw new StaleWork();
-      active = true;
-      ingested = true;
+      // Drafts are saved as skipped rows with nothing to fetch, so they are not work. Gmail web saves a
+      // draft every few seconds, and each save would otherwise keep the next sync at one minute.
+      if (events.some((event) => event.kind !== "draft")) {
+        active = true;
+        ingested = true;
+      }
       index += events.length;
       before = { ...before, historyAnchor: events.at(-1)! };
     }

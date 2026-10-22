@@ -270,6 +270,12 @@ body {
 	}
 }
 
+.mail-sender-warning {
+	margin: 0 0 12px;
+
+	color: var(--color-red-09, #ff8f8f);
+}
+
 .mail-draft-header {
 	display: flex;
 	align-items: center;

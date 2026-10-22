@@ -6075,6 +6075,18 @@ describe("idle wait", () => {
 		const finished = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!;
 		expect(finished).toMatchObject({ idleSlices: 0, nextSyncAt: now + 60_000, syncError: null });
 	});
+	test("a history page with only drafts keeps the idle wait", async () => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
+		const f = await idle_fixture({ idleSlices: 3 });
+		network((path) =>
+			path.endsWith("/history")
+				? Response.json({ historyId: "11", history: [{ id: "11", messagesAdded: [{ message: { id: "ad", labelIds: ["DRAFT"] } }] }] })
+				: Response.json({}, { status: 500 }),
+		);
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ historyId: "11", idleSlices: 4, nextSyncAt: now + 15 * 60_000 });
+	});
 	test("a retry due before the idle wait sets the next sync, and a retry slice asks for retries once", async () => {
 		let now = Date.now();
 		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));

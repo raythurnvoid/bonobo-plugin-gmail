@@ -746,6 +746,9 @@ function EmailReader(props: { email: Email; replyBlock: string | null; onReply: 
 		<article className="mail-email" aria-label={email.headers.subject}>
 			<header className="mail-email-header">
 				<h1>{email.headers.subject}</h1>
+				{email.headers.senderUnconfirmed ? (
+					<p className="mail-sender-warning">Gmail could not confirm this sender. The From address may be fake.</p>
+				) : null}
 				<dl>
 					<dt>From</dt>
 					<dd>{email.headers.from}</dd>

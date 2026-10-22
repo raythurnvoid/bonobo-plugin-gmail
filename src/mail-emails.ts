@@ -15,6 +15,11 @@ export type EmailHeaders = {
 	date: string;
 	direction: "sent" | "received" | null;
 	gmailMessageId: string | null;
+	gmailThreadId: string | null;
+	/**
+	 * True when Gmail's DMARC check failed, so Gmail could not confirm the sender's address.
+	 */
+	senderUnconfirmed: boolean;
 };
 
 export type Email = {
@@ -101,6 +106,8 @@ export function parse_email_markdown(path: string, content: string): Email {
 			date: read_string(fields.date),
 			direction: direction === "sent" || direction === "received" ? direction : null,
 			gmailMessageId: read_string(fields["gmail-message-id"]) || null,
+			gmailThreadId: read_string(fields["gmail-thread-id"]) || null,
+			senderUnconfirmed: fields.dmarc === "fail",
 		},
 		body: body.trimEnd(),
 	};

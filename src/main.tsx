@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 const container = document.getElementById("root");
 if (!container) throw new Error("index.html is missing the #root element");
 const root = createRoot(container);
-root.render(<main role="status">Connecting to Press…</main>);
+root.render(<main role="status">Connecting to Bonobo Senate…</main>);
 
 bonobo_connect()
 	.then(
@@ -19,6 +19,6 @@ bonobo_connect()
 				root.render(<GmailPage client={client} />);
 			}
 		},
-		() => root.render(<main role="alert">Press access changed. Reopen the page.</main>),
+		() => root.render(<main role="alert">Bonobo Senate access changed. Reopen the page.</main>),
 	)
 	.catch(() => root.render(<main role="alert">The page could not load. Reload it.</main>));

@@ -220,8 +220,8 @@ describe("GmailPage", () => {
     );
     render(<GmailPage client={client} />);
     await settle();
-    expect(screen.getByText("Press connection needs attention")).toBeTruthy();
-    expect(screen.queryByText("Finishing Press connection")).toBeNull();
+    expect(screen.getByText("Bonobo Senate connection needs attention")).toBeTruthy();
+    expect(screen.queryByText("Finishing Bonobo Senate connection")).toBeNull();
     expect(screen.queryByText(/Checking for new mail/)).toBeNull();
   });
   test("queued work cannot hide an old completed check", async () => {
@@ -308,7 +308,7 @@ describe("GmailPage", () => {
     );
     render(<GmailPage client={client} />);
     await settle();
-    expect(screen.getByText("Finishing Press connection")).toBeTruthy();
+    expect(screen.getByText("Finishing Bonobo Senate connection")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Disconnect" })).toBeTruthy();
     expect(screen.getByText("No mail check completed yet")).toBeTruthy();
   });

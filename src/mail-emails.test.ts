@@ -11,6 +11,7 @@ const EMAIL_FILE = [
 	'date: "2026-10-18T09:30:00.000Z"',
 	'subject: "Lunch: friday?"',
 	'direction: "received"',
+	'dmarc: "fail"',
 	'gmail-message-id: "18f2a"',
 	'gmail-thread-id: "18f2a"',
 	'message-id: "<a@example.com>"',
@@ -38,6 +39,8 @@ describe("parse_email_markdown", () => {
 			date: "2026-10-18T09:30:00.000Z",
 			direction: "received",
 			gmailMessageId: "18f2a",
+			gmailThreadId: "18f2a",
+			senderUnconfirmed: true,
 		});
 		expect(email.body).toBe("Hi, are you free on Friday?");
 	});

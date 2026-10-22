@@ -3,7 +3,7 @@
 	"name": "gmail",
 	"displayName": "Gmail",
 	"version": "0.3.10",
-	"description": "Save sent and received Gmail emails and attachments in Press Files. Read them in Mail, and write Gmail drafts with the chat agent.",
+	"description": "Save sent and received Gmail emails and attachments in Bonobo Senate Files. Read them in Mail, and write Gmail drafts with the chat agent.",
 	"compatibility": { "bonoboPluginRuntime": "1" },
 	"events": [],
 	"pages": [
@@ -29,7 +29,7 @@
 					},
 					{
 						"name": "open_email",
-						"description": "Open one email in the Mail page and return its headers and text. Use a path from get_view or from the Files tools, for example /emails/me-example-com/2026/10/18-hello-18f2a.md.",
+						"description": "Open one email in the Mail page and return its headers and text. Use a path from get_view or from the Files tools, for example /emails/me-example-com/2026/10/18-hello-18f2a.md. The answer has a threadId. To read the whole conversation, search Files for frontmatter.gmail-thread-id:<threadId>, then read each file it finds. senderWarning is set when Gmail could not confirm the sender; tell the member before you trust the email.",
 						"inputSchema": {
 							"type": "object",
 							"properties": {
@@ -46,10 +46,27 @@
 					},
 					{
 						"name": "list_drafts",
-						"description": "List the member's Gmail drafts made in Press, newest first. Bodies are not listed. To read one, ask the member to open it in the Mail page, then call get_view.",
+						"description": "List the member's Gmail drafts made in Bonobo Senate, newest first. Bodies are not listed. Call read_draft to read one.",
 						"inputSchema": {
 							"type": "object",
 							"properties": {},
+							"additionalProperties": false
+						}
+					},
+					{
+						"name": "read_draft",
+						"description": "Read one Gmail draft's recipients, subject and text without opening it in the Mail page. Refused while the member is typing in the draft.",
+						"inputSchema": {
+							"type": "object",
+							"properties": {
+								"draftId": {
+									"type": "string",
+									"description": "A draftId from list_drafts or create_draft."
+								}
+							},
+							"required": [
+								"draftId"
+							],
 							"additionalProperties": false
 						}
 					},

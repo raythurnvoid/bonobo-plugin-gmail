@@ -212,6 +212,15 @@ describe("gmail_format_markdown", () => {
 		expect(sent).toContain("agents-attachment.md");
 		expect(sent).toContain('subject: "Quotes \\" and\\nlines: yes"');
 	});
+	test("saves Gmail's own DMARC result, not one the sender wrote", () => {
+		// The sender controls the envelope address and every header below Gmail's own one.
+		const payload = { headers: [
+			{ name: "Authentication-Results", value: "mx.google.com; spf=pass (google.com: domain of x;dmarc=pass@evil.example designates 1.2.3.4) smtp.mailfrom=\"x;dmarc=pass\"@evil.example; dmarc=fail (p=REJECT sp=REJECT dis=NONE) header.from=bank.example" },
+			{ name: "Authentication-Results", value: "mx.google.com; dmarc=pass header.from=bank.example" },
+		] };
+		expect(gmail_format_markdown(gmail_discover_message(message(payload)), "Body")).toContain('dmarc: "fail"');
+		expect(gmail_format_markdown(gmail_discover_message(message(payload, ["SENT"])), "Body")).not.toContain("dmarc:");
+	});
 	test("caps the complete file on UTF-8 boundaries", () => {
 		const parsed = gmail_discover_message(message({ headers: [{ name: "Subject", value: "Subject" }] }));
 		const markdown = gmail_format_markdown(parsed, "é".repeat(1024 * 1024));
