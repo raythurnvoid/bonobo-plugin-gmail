@@ -50,7 +50,7 @@ function make_page(viewPatch: Partial<MailView> = {}) {
 		...viewPatch,
 	};
 	register_mail_tools(client, { getView: () => view, showEmail: vi.fn(), showDraft: vi.fn(), refreshDrafts: vi.fn(async () => {}) });
-	return { handlers, requests };
+	return { handlers, requests, view };
 }
 
 describe("register_mail_tools", () => {
@@ -120,5 +120,23 @@ describe("register_mail_tools", () => {
 			await expect(page.handlers.get(name)!(input)).rejects.toThrow("not saved yet");
 		}
 		expect(page.requests).toEqual([]);
+	});
+
+	test("read_draft and update_draft refuse when the member starts typing while the draft is read", async () => {
+		for (const name of ["read_draft", "update_draft"]) {
+			const page = make_page();
+			const paths: string[] = [];
+			vi.stubGlobal(
+				"fetch",
+				vi.fn(async (input: RequestInfo | URL) => {
+					paths.push(new URL(String(input)).pathname);
+					page.view.unsavedDraftId = DRAFT_ID;
+					return Response.json(draft);
+				}),
+			);
+
+			await expect(page.handlers.get(name)!({ draftId: DRAFT_ID, body: "Yes, at noon" })).rejects.toThrow("not saved yet");
+			expect(paths).toEqual(["/page/drafts/get"]);
+		}
 	});
 });
