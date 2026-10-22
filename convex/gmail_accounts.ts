@@ -994,6 +994,22 @@ export const save_traversal = internalMutation({
 	},
 });
 
+// One-off push migration: give every account the new push fields, so the schema can require them.
+// Remove it once it ran. The table holds only the few connected accounts, so one read is enough.
+export const set_push_fields = internalMutation({
+	args: {},
+	returns: v.number(),
+	handler: async (ctx) => {
+		let count = 0;
+		for (const account of await ctx.db.query("gmail_accounts").collect()) {
+			if (account.watchExpiresAt !== undefined && account.pushPending !== undefined) continue;
+			await ctx.db.patch(account._id, { watchExpiresAt: null, pushPending: false });
+			count++;
+		}
+		return count;
+	},
+});
+
 export const save_access_token = internalMutation({
 	args: {
 		work: gmail_worker_context,

@@ -270,7 +270,7 @@ export const promote = internalMutation({
 				nextSliceKind: "backfill", messagesSynced: 0, messagesSkipped: 0,
 				ledgerCounts: { pending: 0, done: 0, skipped: 0, failed: 0, given_up: 0, emailAssumed: 0, permissionHeld: 0 },
 				attachmentsSkippedReason: null, syncWorkId: null, syncRequestId: null, lastSyncedAt: null, updatedAt: Date.now(), composeGranted: false,
-				idleSlices: 0, googleAccessToken: null, messageMark: null,
+				idleSlices: 0, googleAccessToken: null, messageMark: null, watchExpiresAt: null, pushPending: false,
 			});
 			account = (await ctx.db.get(id))!;
 		}
@@ -281,7 +281,7 @@ export const promote = internalMutation({
 		}
 		const generation = account.connectionGeneration + 1;
 		await ctx.db.patch(account._id, { hostInstallationId: attempt.installationId, hostActorUserId: attempt.actorUserId,
-			googleRefreshToken: args.accountRefreshToken, googleAccessToken: null, idleSlices: 0, messageMark: null, composeGranted: attempt.stagedComposeGranted === true, connectionGeneration: generation, connectRequestId: null, hostGrantId: grant._id,
+			googleRefreshToken: args.accountRefreshToken, googleAccessToken: null, idleSlices: 0, messageMark: null, watchExpiresAt: null, pushPending: false, composeGranted: attempt.stagedComposeGranted === true, connectionGeneration: generation, connectRequestId: null, hostGrantId: grant._id,
 			historyId: null, syncStatus: "backfilling", syncError: null, sourceError: null, backfillPageToken: null, backfillPage: null, backfillComplete: false,
 			historyPageToken: null, historyAnchor: null, historyPageSize: 25, nextSliceKind: "backfill", temporaryFailures: 0,
 			nextSyncAt: null, syncWorkId: null, syncRequestId: null, lastSyncedAt: null, updatedAt: Date.now() });
