@@ -19,7 +19,9 @@ import {
   gmail_GoogleError,
   gmail_google_get,
   gmail_google_token,
+  gmail_google_write,
   gmail_profile_response,
+  gmail_watch_response,
 } from "./gmail_google";
 import { gmail_HostError, gmail_host_post } from "./press";
 import { gmail_verify_live } from "./gmail_page";
@@ -194,11 +196,13 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
   }
 
   // A caller that read the account just before, with no write since, passes it to skip one read.
+  // A `post` body sends a POST instead of a GET.
   async function google(
     path: string,
     maximum: number,
     timeout = 20_000,
     known: Doc<"gmail_accounts"> | null = null,
+    post: unknown = null,
   ) {
     const account = known ?? (await current()).account;
     if (account.sourceError) throw new SourceStopped(account.sourceError);
@@ -220,8 +224,12 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
     }
     if (!accessToken || accessExpiresAt <= Date.now() + 30_000)
       await refresh(account);
+    const send = () =>
+      post === null
+        ? gmail_google_get(path, accessToken!, maximum, timeout)
+        : gmail_google_write("POST", path, post, accessToken!, maximum, timeout);
     try {
-      return await gmail_google_get(path, accessToken!, maximum, timeout);
+      return await send();
     } catch (error) {
       // Google can end a saved token before it expires. Refresh once and repeat the request.
       // A second 401 keeps the normal error.
@@ -232,7 +240,29 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
       )
         throw error;
       await refresh((await current()).account);
-      return gmail_google_get(path, accessToken!, maximum, timeout);
+      return send();
+    }
+  }
+
+  // Gmail ends a watch after 7 days, and Google says to renew it once a day. A failed watch only makes
+  // new mail slower: the idle wait keeps its 15-minute limit, and the next slice tries again.
+  // Returns true when it saved a new watch.
+  async function renew_watch(account: Doc<"gmail_accounts">) {
+    const topicName = process.env.GMAIL_PUSH_TOPIC;
+    if (!topicName || (account.watchExpiresAt !== null && account.watchExpiresAt > Date.now() + 6 * 24 * 3600_000))
+      return false;
+    try {
+      const parsed = gmail_watch_response.safeParse(
+        // Skip drafts: while someone types, Gmail saves the draft every few seconds, and that is no mail to save.
+        await google("/watch", 8192, 20_000, account, { topicName, labelIds: ["DRAFT"], labelFilterBehavior: "EXCLUDE" }),
+      );
+      if (!parsed.success) throw new Error("Unexpected Gmail watch response");
+      await ctx.runMutation(internal.gmail_accounts.save_watch, { work, watchExpiresAt: Number(parsed.data.expiration) });
+      return true;
+    } catch (error) {
+      if (error instanceof StaleWork || error instanceof SourceStopped) throw error;
+      console.warn("Gmail watch failed", { error: error instanceof Error ? error.message : String(error) });
+      return false;
     }
   }
 
@@ -1467,6 +1497,7 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
         });
         account = (await current()).account;
       }
+      if (await renew_watch(account)) account = (await current()).account;
       if (account.nextSliceKind === "history") await history(account);
       else if (
         account.nextSliceKind === "backfill" &&

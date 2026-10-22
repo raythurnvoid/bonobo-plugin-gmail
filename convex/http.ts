@@ -7,6 +7,7 @@ import { gmail_HostError, press_HTTP_URL } from "./press";
 import { gmail_callback, gmail_finish, gmail_start } from "./gmail_oauth";
 import { gmail_repair } from "./gmail_accounts";
 import { gmail_drafts_list } from "./gmail_drafts";
+import { gmail_sha256 } from "./gmail_secrets";
 
 const allowedOrigins = new Set([new URL(press_HTTP_URL).origin]);
 if (process.env.DEV_PLUGIN_ORIGIN) {
@@ -37,6 +38,12 @@ const draft_create_body = draft_write_body.extend({ replyToGmailMessageId: z.str
 const draft_send_body = draft_body.extend({ fields: draft_fields });
 // Draft routes carry an email body, so they take a larger request than the other routes.
 const DRAFT_REQUEST_BYTES = 64 * 1024;
+// A Pub/Sub push wraps the Gmail notification in `message.data`, as base64.
+const push_body = z.object({ message: z.object({ data: z.string().max(4096) }) });
+const push_data = z.object({
+	emailAddress: z.string().min(1).max(320),
+	historyId: z.union([z.string().regex(/^\d{1,20}$/), z.number().int().nonnegative()]),
+});
 
 async function read_body(request: Request, maximum: number) {
 	if (!request.body) return {};
@@ -183,6 +190,35 @@ page_route("/page/drafts/update", draft_write_body, true, async (ctx, actor, bod
 page_route("/page/drafts/delete", draft_body, true, async (ctx, actor, body) => page_result(await ctx.runAction(internal.gmail_drafts_google.remove, { ...actor, ...body })));
 page_route("/page/drafts/send", draft_send_body, true, async (ctx, actor, body) =>
 	page_result(await ctx.runAction(internal.gmail_drafts_google.send, { ...actor, ...body })), DRAFT_REQUEST_BYTES);
+
+// Google Pub/Sub posts here when a watched Gmail mailbox changes. Pub/Sub sends no Origin and no page
+// token, so the secret token in the subscription URL proves the caller. Never log the request URL: it
+// holds that token. Any 2xx answer tells Pub/Sub to stop sending the message, so a message we cannot
+// read also gets 204. The idle check still finds that mail later.
+http.route({
+	path: "/google/push",
+	method: "POST",
+	handler: httpAction(async (ctx, request) => {
+		const expected = process.env.GMAIL_PUSH_TOKEN;
+		const token = new URL(request.url).searchParams.get("token");
+		// Compare hashes, so the time taken does not show how much of the token matched.
+		if (!expected || !token || (await gmail_sha256(token)) !== (await gmail_sha256(expected)))
+			return new Response(null, { status: 403 });
+		try {
+			const body = push_body.parse(await read_body(request, 8192));
+			const data = push_data.parse(JSON.parse(atob(body.message.data.replace(/-/g, "+").replace(/_/g, "/"))));
+			await ctx.runMutation(internal.gmail_accounts.push_received, {
+				emailAddress: data.emailAddress,
+				historyId: String(data.historyId),
+			});
+		} catch (error) {
+			if (!(error instanceof z.ZodError || error instanceof SyntaxError || error instanceof gmail_PageError || error instanceof DOMException))
+				throw error;
+			console.warn("Ignored an unreadable Gmail push");
+		}
+		return new Response(null, { status: 204 });
+	}),
+});
 
 function escape_html(value: string) {
 	return value.replace(

@@ -74,6 +74,7 @@ export const gmail_status_response = z.object({
 				nextSyncAt: time,
 				nextPermissionRetryAt: time,
 				lastSyncedAt: time,
+				watchExpiresAt: time,
 				newestEmailAt: time,
 			}),
 		)
@@ -173,6 +174,11 @@ export async function gmail_page_post<T>(
 	throw new gmail_ApiError("press_access_changed");
 }
 
-export function gmail_check_status(lastSyncedAt: number | null, now: number) {
-	return lastSyncedAt === null ? "unchecked" : now - lastSyncedAt > 20 * 60_000 ? "delayed" : "recent";
+/**
+ * Say if the last mail check is late. With a live Gmail watch, an idle account checks only once an hour,
+ * because Gmail pushes new mail. Without one, it checks at least every 15 minutes.
+ */
+export function gmail_check_status(lastSyncedAt: number | null, now: number, watchExpiresAt: number | null) {
+	const limit = watchExpiresAt !== null && watchExpiresAt > now ? 70 * 60_000 : 20 * 60_000;
+	return lastSyncedAt === null ? "unchecked" : now - lastSyncedAt > limit ? "delayed" : "recent";
 }

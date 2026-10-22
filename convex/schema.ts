@@ -70,11 +70,10 @@ export default defineSchema({
 		// slices in a row that died there before any save of that message. Null when nothing is open.
 		messageMark: v.union(v.object({ rowId: v.id("messages_ledger"), requestId: v.string(), crashes: v.number() }), v.null()),
 		// When Gmail stops sending push notifications for this mailbox. Null when no watch is known.
-		// Optional only until the push migration has set it on every account.
-		watchExpiresAt: v.optional(nullableNumber),
+		watchExpiresAt: nullableNumber,
 		// A push came while a slice ran. That slice may have read history before the new mail, so the next
-		// sync is due one minute after it ends. Optional only until the push migration has set it.
-		pushPending: v.optional(v.boolean()),
+		// sync is due one minute after it ends.
+		pushPending: v.boolean(),
 	})
 		.index("by_hostWorkspace_emailAddress", ["hostWorkspaceId", "emailAddress"])
 		// Pushes name only the mailbox address. The same address may be connected in a few workspaces.

@@ -25,6 +25,7 @@ const account = {
 	nextPermissionRetryAt: null,
 	lastSyncedAt: 1_800_000_000_000,
 	newestEmailAt: 1_800_000_000_000,
+	watchExpiresAt: null,
 };
 
 afterEach(() => {

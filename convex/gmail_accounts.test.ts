@@ -247,6 +247,58 @@ describe("dispatch", () => {
 	});
 });
 
+describe("push_received", () => {
+	test("brings an idle sync forward at most once a minute, marks a running slice, and ignores old or blocked pushes", async () => {
+		const f = await gmail_test_fixture();
+		const now = Date.now();
+		const later = now + 60 * 60_000;
+		const read = async () => (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
+		const push = (historyId: string) => f.t.mutation(internal.gmail_accounts.push_received, { emailAddress: " Ray@Example.com", historyId });
+		const dispatches = () => f.t.run(async ctx => (await ctx.db.system.query("_scheduled_functions").collect())
+			.filter(job => job.name.includes("dispatch") && job.state.kind === "pending").length);
+		// The fixture saved history id 10, and its last history read was one minute ago.
+		await f.t.run(ctx => ctx.db.patch(f.accountId, { nextSyncAt: later }));
+
+		await push("10");
+		expect((await read()).nextSyncAt).toBe(later);
+		await push("11");
+		expect((await read()).nextSyncAt).toBe(now);
+		expect(await dispatches()).toBe(1);
+
+		// A slice that just read history makes the next push wait one minute.
+		await f.t.run(ctx => ctx.db.patch(f.accountId, { lastSyncedAt: now, nextSyncAt: later }));
+		await push("12");
+		expect((await read()).nextSyncAt).toBe(now + 60_000);
+
+		await f.t.run(ctx => ctx.db.patch(f.accountId, { syncWorkId: f.checkId, nextSyncAt: later }));
+		await push("13");
+		expect(await read()).toMatchObject({ pushPending: true, nextSyncAt: later });
+
+		// A push never shortens an error wait.
+		await f.t.run(ctx => ctx.db.patch(f.accountId, { syncWorkId: null, pushPending: false, syncStatus: "blocked" }));
+		await push("14");
+		expect(await read()).toMatchObject({ pushPending: false, nextSyncAt: later });
+	});
+	test("the push route needs the URL token and acknowledges a message it cannot read", async () => {
+		vi.stubEnv("GMAIL_PUSH_TOKEN", "a".repeat(64));
+		try {
+			const f = await gmail_test_fixture();
+			const later = Date.now() + 60 * 60_000;
+			await f.t.run(ctx => ctx.db.patch(f.accountId, { nextSyncAt: later }));
+			const post = (token: string, body: unknown) => f.t.fetch(`/google/push?token=${token}`, { method: "POST", body: JSON.stringify(body) });
+			const message = { message: { data: btoa(JSON.stringify({ emailAddress: "ray@example.com", historyId: 11 })), messageId: "1" }, subscription: "s" };
+
+			expect((await post("b".repeat(64), message)).status).toBe(403);
+			expect((await f.t.run(ctx => ctx.db.get(f.accountId)))!.nextSyncAt).toBe(later);
+			expect((await post("a".repeat(64), { message: { data: "not base64!" } })).status).toBe(204);
+			expect((await post("a".repeat(64), message)).status).toBe(204);
+			expect((await f.t.run(ctx => ctx.db.get(f.accountId)))!.nextSyncAt).toBe(Date.now());
+		} finally {
+			vi.unstubAllEnvs();
+		}
+	});
+});
+
 describe("on_complete", () => {
 	test.each([
 		["a saved idle wait", 15 * 60_000, 15 * 60_000],

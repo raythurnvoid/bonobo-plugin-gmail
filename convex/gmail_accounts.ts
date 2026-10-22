@@ -99,6 +99,8 @@ const public_account = v.object({
 	nextSyncAt: v.union(v.number(), v.null()),
 	nextPermissionRetryAt: v.union(v.number(), v.null()),
 	lastSyncedAt: v.union(v.number(), v.null()),
+	// While this is in the future, Gmail pushes new mail and the idle check runs only once an hour.
+	watchExpiresAt: v.union(v.number(), v.null()),
 	// Gmail `internalDate` of the newest saved email, or null before the first one. Backfill saves
 	// older mail, so this grows only when newer mail is saved.
 	newestEmailAt: v.union(v.number(), v.null()),
@@ -226,6 +228,7 @@ export const status = internalQuery({
 				nextSyncAt: account.nextSyncAt,
 				nextPermissionRetryAt,
 				lastSyncedAt: account.lastSyncedAt,
+				watchExpiresAt: account.watchExpiresAt,
 				newestEmailAt: newestEmail?.internalDate ?? null,
 			});
 		}
@@ -994,19 +997,45 @@ export const save_traversal = internalMutation({
 	},
 });
 
-// One-off push migration: give every account the new push fields, so the schema can require them.
-// Remove it once it ran. The table holds only the few connected accounts, so one read is enough.
-export const set_push_fields = internalMutation({
-	args: {},
-	returns: v.number(),
-	handler: async (ctx) => {
-		let count = 0;
-		for (const account of await ctx.db.query("gmail_accounts").collect()) {
-			if (account.watchExpiresAt !== undefined && account.pushPending !== undefined) continue;
-			await ctx.db.patch(account._id, { watchExpiresAt: null, pushPending: false });
-			count++;
+export const save_watch = internalMutation({
+	args: { work: gmail_worker_context, watchExpiresAt: v.number() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const current = await worker_account(ctx, args.work);
+		if (current) await ctx.db.patch(current.account._id, { watchExpiresAt: args.watchExpiresAt, updatedAt: Date.now() });
+		return null;
+	},
+});
+
+// Gmail push says only that the mailbox changed. Bring the next sync forward, and never trust the pushed
+// history id beyond that: the sync reads Gmail from the history id it saved itself. A fake push can at
+// most cause one extra sync per minute for an account that is already connected.
+export const push_received = internalMutation({
+	args: { emailAddress: v.string(), historyId: v.string() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		// Only connected accounts with this address match. The connected-account cap keeps this list small.
+		const accounts = await ctx.db
+			.query("gmail_accounts")
+			.withIndex("by_emailAddress_syncStatus", (q) =>
+				q.eq("emailAddress", args.emailAddress.trim().toLowerCase()).eq("syncStatus", "live"),
+			)
+			.collect();
+		for (const account of accounts) {
+			// This sync already read up to the pushed change. A null next sync means a grant problem owns the account.
+			if (account.historyId !== null && BigInt(args.historyId) <= BigInt(account.historyId)) continue;
+			if (account.nextSyncAt === null) continue;
+			if (account.syncWorkId !== null) {
+				await ctx.db.patch(account._id, { pushPending: true });
+				continue;
+			}
+			// At most one idle sync a minute: lastSyncedAt is the end of the last slice that read history.
+			const dueAt = Math.max(Date.now(), (account.lastSyncedAt ?? 0) + 60_000);
+			if (dueAt >= account.nextSyncAt) continue;
+			await ctx.db.patch(account._id, { nextSyncAt: dueAt });
+			await ctx.scheduler.runAfter(dueAt - Date.now(), internal.gmail_accounts.dispatch, {});
 		}
-		return count;
+		return null;
 	},
 });
 
@@ -1160,10 +1189,14 @@ export const finish_slice = internalMutation({
 				: Math.min(3600_000, 60_000 * 2 ** Math.min(failures - 1, 6)) * (1 + Math.random() * 0.1);
 		const succeeded = !deadHost && !temporary && !sourceError;
 		// The first sync rotates backfill, history and retry slices. Keep it at one minute, or it gets more than twice as slow.
-		const active = args.active || !account.backfillComplete;
-		const idleSlices = !succeeded ? account.idleSlices : active ? 0 : Math.min(account.idleSlices + 1, 4);
-		// Idle accounts wait 2, 4, 8, then at most 15 minutes. A due retry still runs on time.
-		const idleAt = Date.now() + Math.min(60_000 * 2 ** idleSlices, 15 * 60_000);
+		// A push during the slice may name mail that came after the history read, so it counts as work too.
+		const active = args.active || !account.backfillComplete || account.pushPending;
+		const idleSlices = !succeeded ? account.idleSlices : active ? 0 : Math.min(account.idleSlices + 1, 6);
+		// Idle accounts wait 2, 4, 8 minutes and more, up to 15 minutes. With a live Gmail watch, a push brings
+		// new mail at once, so the wait goes up to 60 minutes. It only catches a lost push. A due retry still
+		// runs on time.
+		const longestWait = account.watchExpiresAt !== null && account.watchExpiresAt > Date.now() ? 60 * 60_000 : 15 * 60_000;
+		const idleAt = Date.now() + Math.min(60_000 * 2 ** idleSlices, longestWait);
 		const nextSyncAt = deadHost
 			? null
 			: temporary
@@ -1179,6 +1212,7 @@ export const finish_slice = internalMutation({
 			...(args.error === "google_revoked" ? { googleRefreshToken: null, googleAccessToken: null } : {}),
 			...(args.checkedHistory ? { lastSyncedAt: Date.now() } : {}),
 			idleSlices,
+			pushPending: false,
 			syncError: args.error ?? sourceError,
 			syncStatus:
 				deadHost || temporary ? "blocked" : sourceError ? "error" : account.backfillComplete ? "live" : "backfilling",

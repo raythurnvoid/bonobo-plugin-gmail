@@ -7,6 +7,8 @@ export const GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.reado
 // Compose lets the Mail page write Gmail drafts and send them. Consent always asks for it, but the user can untick it.
 export const GMAIL_COMPOSE_SCOPE = "https://www.googleapis.com/auth/gmail.compose";
 export const gmail_profile_response = z.object({ emailAddress: z.email(), historyId: z.string().regex(/^\d+$/) });
+// `expiration` is when Gmail stops pushing, in epoch milliseconds, sent as a string.
+export const gmail_watch_response = z.object({ expiration: z.string().regex(/^\d{1,15}$/) });
 const token_response = z.object({ access_token: z.string().min(1), expires_in: z.number().positive(),
 	scope: z.string().min(1), token_type: z.string().refine(value => value.toLowerCase() === "bearer"), refresh_token: z.string().min(1).optional() });
 const error_response = z.object({ error: z.object({ errors: z.array(z.object({ reason: z.string() })).max(32) }) });

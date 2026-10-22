@@ -6054,7 +6054,7 @@ describe("idle wait", () => {
 			{ wait: 4 * 60_000, idleSlices: 2 },
 			{ wait: 8 * 60_000, idleSlices: 3 },
 			{ wait: 15 * 60_000, idleSlices: 4 },
-			{ wait: 15 * 60_000, idleSlices: 4 },
+			{ wait: 15 * 60_000, idleSlices: 5 },
 		]);
 		// An idle slice reads the account and Gmail history only. It saves no cursor and asks for no retries.
 		expect(new Set(functions)).toEqual(new Set(["gmail_accounts:get_worker", "gmail_accounts:save_access_token", "gmail_accounts:finish_slice",
@@ -6091,6 +6091,51 @@ describe("idle wait", () => {
 		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
 		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ historyId: "11", idleSlices: 4, nextSyncAt: now + 15 * 60_000 });
 		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({ skipReason: "draft", deletedAt: null });
+	});
+	test("a push during the slice makes the next sync due in one minute", async () => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
+		const f = await idle_fixture({ idleSlices: 3, pushPending: true });
+		network((path) => (path.endsWith("/history") ? Response.json(empty_history) : Response.json({}, { status: 500 })));
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ pushPending: false, idleSlices: 0, nextSyncAt: now + 60_000 });
+	});
+	test("a slice renews the Gmail watch once a day without drafts, a live watch lets the idle wait reach 60 minutes, and a failed watch keeps the sync going", async () => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
+		vi.stubEnv("GMAIL_PUSH_TOPIC", "projects/test/topics/gmail-push");
+		try {
+			const f = await idle_fixture({ idleSlices: 5 });
+			let watchStatus = 200;
+			const calls = network((path) =>
+				path.endsWith("/history")
+					? Response.json(empty_history)
+					: path.endsWith("/watch")
+						? Response.json({ historyId: "10", expiration: String(now + 7 * 24 * 3600_000) }, { status: watchStatus })
+						: Response.json({}, { status: 500 }),
+			);
+			const watches = () => calls.filter((call) => call.path.endsWith("/watch"));
+
+			await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+			expect(watches()).toEqual([{ path: "/gmail/v1/users/me/watch",
+				body: { topicName: "projects/test/topics/gmail-push", labelIds: ["DRAFT"], labelFilterBehavior: "EXCLUDE" } }]);
+			const watchExpiresAt = now + 7 * 24 * 3600_000;
+			expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ watchExpiresAt, idleSlices: 6, nextSyncAt: now + 60 * 60_000 });
+
+			// A watch that ends in more than 6 days is not renewed.
+			await hold_slot(f);
+			await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+			expect(watches()).toHaveLength(1);
+
+			await f.t.run((ctx) => ctx.db.patch(f.accountId, { watchExpiresAt: now + 5 * 24 * 3600_000 }));
+			watchStatus = 503;
+			await hold_slot(f);
+			await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+			expect(watches()).toHaveLength(2);
+			expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ syncError: null, watchExpiresAt: now + 5 * 24 * 3600_000 });
+		} finally {
+			vi.unstubAllEnvs();
+		}
 	});
 	test("a retry due before the idle wait sets the next sync, and a retry slice asks for retries once", async () => {
 		let now = Date.now();

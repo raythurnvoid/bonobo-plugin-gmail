@@ -92,6 +92,7 @@ var c = o().min(1).max(128),
         nextSyncAt: l,
         nextPermissionRetryAt: l,
         lastSyncedAt: l,
+        watchExpiresAt: l,
         newestEmailAt: l,
       }),
     ).max(25),
@@ -176,8 +177,9 @@ async function C(e, t, n, r, i = 2e4) {
   }
   throw new y(`press_access_changed`);
 }
-function w(e, t) {
-  return e === null ? `unchecked` : t - e > 12e5 ? `delayed` : `recent`;
+function w(e, t, n) {
+  let r = n !== null && n > t ? 42e5 : 12e5;
+  return e === null ? `unchecked` : t - e > r ? `delayed` : `recent`;
 }
 export {
   x as a,

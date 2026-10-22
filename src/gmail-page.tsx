@@ -471,7 +471,13 @@ export function GmailPage({
               </section>
             )}
             {status.accounts.map((account) => {
-              const check = gmail_check_status(account.lastSyncedAt, now);
+              const check = gmail_check_status(
+                account.lastSyncedAt,
+                now,
+                account.watchExpiresAt,
+              );
+              const pushLive =
+                account.watchExpiresAt !== null && account.watchExpiresAt > now;
               const change = {
                 accountId: account.accountId,
                 expectedGeneration: account.connectionGeneration,
@@ -487,6 +493,7 @@ export function GmailPage({
                   data-gmail-sync-status={account.syncStatus}
                   data-gmail-check-status={check}
                   data-gmail-files-status={held ? "write_refused" : "normal"}
+                  data-gmail-push={pushLive ? "on" : "off"}
                 >
                   <h2>{account.emailAddress}</h2>
                   <p>
@@ -523,6 +530,9 @@ export function GmailPage({
                       <>: {time_label(account.lastSyncedAt)}</>
                     )}
                   </p>
+                  {pushLive && account.syncStatus === "live" && (
+                    <p>Gmail tells us about new mail, so it arrives within about a minute.</p>
+                  )}
                   {held > 0 && (
                     <p className="GmailAttention">
                       Some saves were refused by Files. {held} emails are

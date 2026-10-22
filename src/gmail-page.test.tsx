@@ -56,6 +56,7 @@ function account() {
     nextSyncAt: Date.now() + 60_000,
     nextPermissionRetryAt: null,
     lastSyncedAt: Date.now(),
+    watchExpiresAt: null,
     newestEmailAt: null,
   };
 }
@@ -544,13 +545,14 @@ describe("gmail_page_post and gmail_check_status", () => {
       gmail_page_post(client, "/page/status", {}, gmail_status_response),
     ).rejects.toThrow("service_unavailable");
   });
-  test("freshness comes only from the saved completed-history time", () => {
-    expect(gmail_check_status(null, Date.now())).toBe("unchecked");
-    expect(gmail_check_status(Date.now() - 1_200_000, Date.now())).toBe(
-      "recent",
-    );
-    expect(gmail_check_status(Date.now() - 1_200_001, Date.now())).toBe(
-      "delayed",
-    );
+  test("freshness comes from the saved completed-history time, with a longer limit while push is on", () => {
+    const now = Date.now();
+    expect(gmail_check_status(null, now, null)).toBe("unchecked");
+    expect(gmail_check_status(now - 1_200_000, now, null)).toBe("recent");
+    expect(gmail_check_status(now - 1_200_001, now, null)).toBe("delayed");
+    // A live watch makes the idle check hourly, so 21 minutes is normal. An expired watch is not live.
+    expect(gmail_check_status(now - 1_260_000, now, now + 60_000)).toBe("recent");
+    expect(gmail_check_status(now - 4_200_001, now, now + 60_000)).toBe("delayed");
+    expect(gmail_check_status(now - 1_260_000, now, now - 1)).toBe("delayed");
   });
 });
