@@ -154,7 +154,6 @@ async function C(e, t, n, r, i = 2e4) {
     let s = await fetch(`${_}${t}`, {
       method: `POST`,
       redirect: `error`,
-      cache: `no-store`,
       headers: {
         Authorization: `Bearer ${a}`,
         "Content-Type": `application/json`,
