@@ -6104,6 +6104,7 @@ describe("idle wait", () => {
 		let now = Date.now();
 		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.stubEnv("GMAIL_PUSH_TOPIC", "projects/test/topics/gmail-push");
+		vi.stubEnv("GMAIL_PUSH_TOKEN", "a".repeat(64));
 		try {
 			const f = await idle_fixture({ idleSlices: 5 });
 			let watchStatus = 200;

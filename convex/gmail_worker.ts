@@ -246,10 +246,11 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
 
   // Gmail ends a watch after 7 days, and Google says to renew it once a day. A failed watch only makes
   // new mail slower: the idle wait keeps its 15-minute limit, and the next slice tries again.
+  // Without GMAIL_PUSH_TOKEN the push route refuses every push, so skip the watch then too.
   // Returns true when it saved a new watch.
   async function renew_watch(account: Doc<"gmail_accounts">) {
     const topicName = process.env.GMAIL_PUSH_TOPIC;
-    if (!topicName || (account.watchExpiresAt !== null && account.watchExpiresAt > Date.now() + 6 * 24 * 3600_000))
+    if (!topicName || !process.env.GMAIL_PUSH_TOKEN || (account.watchExpiresAt !== null && account.watchExpiresAt > Date.now() + 6 * 24 * 3600_000))
       return false;
     try {
       const parsed = gmail_watch_response.safeParse(
@@ -1506,7 +1507,7 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
         await backfill();
       else {
         await retries();
-        // No step ran, so this slice wrote nothing and the account read above is still current.
+        // No step ran, so the account read above is still current.
         if (steps === 0) await history(account);
       }
     }
