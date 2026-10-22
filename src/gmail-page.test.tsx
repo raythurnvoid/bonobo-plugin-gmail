@@ -106,7 +106,16 @@ describe("GmailPage", () => {
   test("polls every 5 seconds while an account backfills, and every minute after", async () => {
     let syncStatus = "backfilling";
     const fetch = vi.fn(async () =>
-      Response.json({ ...status(), accounts: [{ ...account(), syncStatus, backfillComplete: syncStatus === "live" }] }),
+      Response.json({
+        ...status(),
+        accounts: [
+          {
+            ...account(),
+            syncStatus,
+            backfillComplete: syncStatus === "live",
+          },
+        ],
+      }),
     );
     vi.stubGlobal("fetch", fetch);
     render(<GmailPage client={client} />);
@@ -158,6 +167,24 @@ describe("GmailPage", () => {
     await settle();
     expect(screen.getByText(/Checking for new mail/)).toBeTruthy();
     expect(screen.queryByText(/service is unavailable/)).toBeNull();
+  });
+  test("a failed first read retries after 5 seconds", async () => {
+    let unavailable = true;
+    const fetch = vi.fn(async () =>
+      unavailable
+        ? new Response("disabled", { status: 503 })
+        : Response.json(status()),
+    );
+    vi.stubGlobal("fetch", fetch);
+    render(<GmailPage client={client} />);
+    await settle();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    unavailable = false;
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(
+      document.querySelector("[data-gmail-service-status='unavailable']"),
+    ).toBeNull();
   });
   test("unavailable status shows one notice after a failed Connect", async () => {
     let unavailable = false;

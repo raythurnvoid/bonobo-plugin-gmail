@@ -19,17 +19,21 @@ const empty_response = z.object({});
 
 /**
  * Read the status this often while something moves: a connect attempt is open, an account is
- * still backfilling, or the member clicked a button in the last two minutes.
+ * still backfilling, the member clicked a button in the last two minutes, or the last read failed.
  */
-const STATUS_BUSY_POLL_MS = 5000;
+const STATUS_FAST_POLL_MS = 5000;
 
 /**
- * Otherwise read it this often. A sync runs at most once a minute, so a faster read finds the
- * same status.
+ * Read the status this often when nothing moves. A sync runs at most once a minute, so a faster
+ * read finds the same status.
  */
 const STATUS_IDLE_POLL_MS = 60_000;
 
-const ACTION_BUSY_MS = 2 * 60_000;
+/**
+ * After a button click, read at the fast rate for this long, so the result shows quickly.
+ */
+const FAST_POLL_AFTER_CLICK_MS = 2 * 60_000;
+
 function time_label(value: number | null) {
   return value === null ? "—" : new Date(value).toLocaleString();
 }
@@ -65,8 +69,8 @@ export function GmailPage({
   const mounted = useRef(false);
   const visibilityEpoch = useRef(0);
   const lastPollAt = useRef(0);
-  const statusBusy = useRef(false);
-  const actionBusyUntil = useRef(0);
+  const statusMoving = useRef(false);
+  const fastPollUntil = useRef(0);
 
   function keep_start(value: z.infer<typeof gmail_saved_start> | null) {
     savedStart.current = value;
@@ -94,7 +98,7 @@ export function GmailPage({
       );
       if (!mounted.current || epoch !== visibilityEpoch.current) return;
       setStatus(value);
-      statusBusy.current =
+      statusMoving.current =
         value.attempt !== null ||
         value.accounts.some((account) => account.syncStatus === "backfilling");
       setService("ready");
@@ -199,6 +203,8 @@ export function GmailPage({
         }
       }
     } catch {
+      // Retry a failed read at the fast rate, so the page leaves the unavailable state soon.
+      statusMoving.current = true;
       if (mounted.current) setService("unavailable");
     } finally {
       pollInFlight.current = false;
@@ -224,14 +230,14 @@ export function GmailPage({
       setService("loading");
       setNow(Date.now());
       void refresh();
-      // Tick at the busy rate, but read the status at the idle rate when nothing moves.
+      // Tick at the fast rate. Read the status at the idle rate when nothing moves.
       timer = setInterval(() => {
         if (document.visibilityState !== "visible") return;
         const fast =
-          statusBusy.current || Date.now() < actionBusyUntil.current;
+          statusMoving.current || Date.now() < fastPollUntil.current;
         if (fast || Date.now() - lastPollAt.current >= STATUS_IDLE_POLL_MS)
           void refresh();
-      }, STATUS_BUSY_POLL_MS);
+      }, STATUS_FAST_POLL_MS);
     }
     visible();
     document.addEventListener("visibilitychange", visible);
@@ -244,7 +250,7 @@ export function GmailPage({
   }, [refresh]);
 
   async function action(run: () => Promise<void>) {
-    actionBusyUntil.current = Date.now() + ACTION_BUSY_MS;
+    fastPollUntil.current = Date.now() + FAST_POLL_AFTER_CLICK_MS;
     setBusy(true);
     setError(null);
     try {

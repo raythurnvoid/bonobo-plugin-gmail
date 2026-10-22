@@ -47,6 +47,12 @@ const AUTOSAVE_DELAY_MS = 10_000;
  */
 const NEW_MAIL_POLL_MS = 60_000;
 
+/**
+ * Read the drafts again this often while the last read failed or a draft is still being saved.
+ * Otherwise the drafts have no timer.
+ */
+const DRAFTS_RETRY_MS = 5000;
+
 type Selection = { kind: "email"; path: string } | { kind: "draft"; id: string } | null;
 
 type ReplyDraft = { fields: DraftFields; replyToGmailMessageId: string | null };
@@ -189,6 +195,7 @@ export function MailApp(props: { client: BonoboClient }) {
 
 	const account = accounts?.find((candidate) => candidate.accountId === accountId) ?? null;
 	const composeBlock = account ? compose_block(account) : null;
+	const draftsPending = draftsError !== null || (drafts?.some((draft) => draft.saving) ?? false);
 
 	const walk = useMemo(
 		() => (account === null ? null : create_mailbox_walk(client, account.destinationPath)),
@@ -237,9 +244,9 @@ export function MailApp(props: { client: BonoboClient }) {
 		}
 	};
 
-	// A failed read keeps the old list. The next poll tries again.
+	// A failed read keeps the old list and shows the error. The retry timer below reads again.
 	const refresh_drafts = () => {
-		reload_drafts().catch(() => {});
+		reload_drafts().catch((listError: unknown) => setDraftsError(get_error_message(listError)));
 	};
 
 	const show_email = (email: Email) => {
@@ -454,7 +461,7 @@ export function MailApp(props: { client: BonoboClient }) {
 	}, [client, rows, visibleCount]);
 
 	// Read this member's drafts now and each time the page becomes visible again. Drafts change only
-	// through this page, and its own saves and agent tools read the list again, so no timer is needed.
+	// through the Mail page, and its own saves and agent tools read the list again, so no timer is needed.
 	// A draft changed in another tab shows up when the member comes back to this one.
 	useEffect(() => {
 		if (account === null || composeBlock !== null) {
@@ -471,6 +478,22 @@ export function MailApp(props: { client: BonoboClient }) {
 		document.addEventListener("visibilitychange", read);
 		return () => document.removeEventListener("visibilitychange", read);
 	}, [client, account?.accountId, composeBlock]);
+
+	// Read the drafts again while the last read failed or a draft is still being saved. A save that
+	// timed out in the browser can still finish in the backend, and only a new read shows its result.
+	useEffect(() => {
+		if (!draftsPending) {
+			return;
+		}
+
+		const timer = setInterval(() => {
+			if (document.visibilityState !== "visible") {
+				return;
+			}
+			reload_drafts().catch((listError: unknown) => setDraftsError(get_error_message(listError)));
+		}, DRAFTS_RETRY_MS);
+		return () => clearInterval(timer);
+	}, [draftsPending]);
 
 	// Check for new mail every minute while the page is visible, and at once when it becomes visible
 	// again. The same status read renews a refused Press grant. The first check only records the

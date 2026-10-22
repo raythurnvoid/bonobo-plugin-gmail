@@ -104,6 +104,46 @@ describe("MailApp", () => {
 		await vi.waitFor(() => expect(draftReads()).toBe(2));
 	});
 
+	test("reads drafts again every 5 seconds after a failed read, until one works", async () => {
+		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+		let draftsFail = true;
+		const paths: string[] = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL) => {
+				const path = new URL(String(input)).pathname;
+				paths.push(path);
+				if (path === "/page/status") {
+					const binding = { organizationId: "org", workspaceId: "workspace", installationId: "installation", actorUserId: "actor" };
+					return Response.json({ binding, canWrite: true, cursor: null, attempt: null, accounts: [{ ...account, canRepair: false }] });
+				}
+				if (path === "/page/drafts/list") {
+					return draftsFail ? Response.json({ code: "gmail_busy" }, { status: 503 }) : Response.json({ drafts: [], cursor: null });
+				}
+				return Response.json({});
+			}),
+		);
+		const client = {
+			getToken: async () => "plu_test",
+			refreshToken: async () => "plu_new",
+			fetchJson: async () => ({ status: 404, body: { message: "Not found" } }),
+			agent: { registerTool: () => () => {} },
+		} as unknown as BonoboClient;
+		const draftReads = () => paths.filter((path) => path === "/page/drafts/list").length;
+
+		render(<MailApp client={client} />);
+		fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+		await vi.waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/Gmail is busy/));
+
+		draftsFail = false;
+		await vi.advanceTimersByTimeAsync(5000);
+		await vi.waitFor(() => expect(screen.getByText(/No drafts/)).toBeTruthy());
+		expect(draftReads()).toBe(2);
+
+		await vi.advanceTimersByTimeAsync(5 * 60_000);
+		expect(draftReads()).toBe(2);
+	});
+
 	test("reads the list again only when the sync saved a newer email", async () => {
 		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
 		let messagesSynced = 4;
