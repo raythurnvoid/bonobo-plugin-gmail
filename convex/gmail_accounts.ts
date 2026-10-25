@@ -18,11 +18,25 @@ import { gmail_close_attempt } from "./gmail_oauth";
 import { gmail_encrypt, gmail_random_secret } from "./gmail_secrets";
 import { gmail_PageError, gmail_rate_limit } from "./gmail_page";
 import { gmail_grant_step, gmail_STEP_CHECK_MS } from "./gmail_grants";
+import { gmail_BACKFILL_DAYS } from "../shared/gmail-backfill";
 
 const failure = v.object({ _nay: v.object({ status: v.number(), code: v.string() }) });
 const change_args = { ...gmail_host_binding, accountId: v.string(), expectedGeneration: v.number() };
 function refused(status: number, code: string) {
 	return { _nay: { status, code } };
+}
+
+/**
+ * The most days of old mail a connect may save, from `GMAIL_BACKFILL_MAX_DAYS`, or null when it is
+ * not set and all mail is allowed. The operator pays for this deployment, so this caps every member's
+ * choice. Read it on each call, so tests can change it.
+ */
+export function gmail_backfill_max_days() {
+	const value = process.env.GMAIL_BACKFILL_MAX_DAYS;
+	if (!value) return null;
+	const days = gmail_BACKFILL_DAYS.find((choice) => String(choice) === value);
+	if (days === undefined) throw new Error("GMAIL_BACKFILL_MAX_DAYS must be 7, 30, 90 or 365");
+	return days;
 }
 
 async function workspace_account(
@@ -104,6 +118,7 @@ const public_account = v.object({
 	// Gmail `internalDate` of the newest saved email, or null before the first one. Backfill saves
 	// older mail, so this grows only when newer mail is saved.
 	newestEmailAt: v.union(v.number(), v.null()),
+	backfillAfter: v.union(v.number(), v.null()),
 });
 
 export const status = internalQuery({
@@ -121,9 +136,11 @@ export const status = internalQuery({
 				clientRequestId: v.string(),
 				accountId: v.union(v.string(), v.null()),
 				purpose: v.union(v.literal("connect"), v.literal("compose")),
+				backfillDays: v.union(v.number(), v.null()),
 			}),
 			v.null(),
 		),
+		backfillMaxDays: v.union(v.number(), v.null()),
 	}),
 	handler: async (ctx, args) => {
 		const page = await ctx.db
@@ -230,6 +247,7 @@ export const status = internalQuery({
 				lastSyncedAt: account.lastSyncedAt,
 				watchExpiresAt: account.watchExpiresAt,
 				newestEmailAt: newestEmail?.internalDate ?? null,
+				backfillAfter: account.backfillAfter,
 			});
 		}
 		let pending = null;
@@ -253,6 +271,7 @@ export const status = internalQuery({
 					clientRequestId: attempt.clientRequestId,
 					accountId: attempt.accountId,
 					purpose: attempt.purpose,
+					backfillDays: attempt.backfillDays,
 				};
 				break;
 			}
@@ -268,6 +287,7 @@ export const status = internalQuery({
 			accounts,
 			cursor: page.isDone ? null : page.continueCursor,
 			attempt: pending,
+			backfillMaxDays: gmail_backfill_max_days(),
 		};
 	},
 });
@@ -1036,27 +1056,6 @@ export const push_received = internalMutation({
 			await ctx.scheduler.runAfter(dueAt - Date.now(), internal.gmail_accounts.dispatch, {});
 		}
 		return null;
-	},
-});
-
-// One-off backfill migration: give every account and connect attempt the new backfill fields, so the
-// schema can require them. Remove it once it ran. Both tables hold only a few rows, so one read is enough.
-export const set_backfill_fields = internalMutation({
-	args: {},
-	returns: v.number(),
-	handler: async (ctx) => {
-		let count = 0;
-		for (const account of await ctx.db.query("gmail_accounts").collect()) {
-			if (account.backfillAfter !== undefined) continue;
-			await ctx.db.patch(account._id, { backfillAfter: null });
-			count++;
-		}
-		for (const attempt of await ctx.db.query("oauth_states").collect()) {
-			if (attempt.backfillDays !== undefined) continue;
-			await ctx.db.patch(attempt._id, { backfillDays: null });
-			count++;
-		}
-		return count;
 	},
 });
 

@@ -1,30 +1,30 @@
 import { n as e } from "./rolldown-runtime.js";
 import { r as t, t as n } from "./react.js";
-import { a as r, n as i, o as a, r as o, s } from "./zod.js";
+import { c as r, n as i, o as a, r as o, s } from "./zod.js";
 import { a as c, l, o as u, r as d, t as f } from "./gmail-api.js";
 var p = e(t(), 1),
   m = 50,
   h = 998,
   g = 5e4,
-  _ = a({
-    clientDraftId: s(),
-    to: i(s()),
-    cc: i(s()),
-    subject: s(),
+  _ = s({
+    clientDraftId: r(),
+    to: i(r()),
+    cc: i(r()),
+    subject: r(),
     isReply: o(),
     saving: o(),
-    agentEditedAt: r().nullable(),
-    updatedAt: r(),
+    agentEditedAt: a().nullable(),
+    updatedAt: a(),
   }),
-  v = a({ drafts: i(_).max(25), cursor: s().nullable() }),
-  y = a({
-    clientDraftId: s(),
-    to: i(s()),
-    cc: i(s()),
-    subject: s(),
-    body: s(),
+  v = s({ drafts: i(_).max(25), cursor: r().nullable() }),
+  y = s({
+    clientDraftId: r(),
+    to: i(r()),
+    cc: i(r()),
+    subject: r(),
+    body: r(),
     isReply: o(),
-    agentEditedAt: r().nullable(),
+    agentEditedAt: a().nullable(),
   });
 function ee() {
   return crypto.randomUUID();
@@ -45,17 +45,17 @@ function x(e, t, n) {
 }
 async function S(e, t) {
   (b(t.fields),
-    await u(e, `/page/drafts/create`, t, a({ clientDraftId: s() })));
+    await u(e, `/page/drafts/create`, t, s({ clientDraftId: r() })));
 }
 async function C(e, t) {
-  (b(t.fields), await u(e, `/page/drafts/update`, t, a({ saved: o() })));
+  (b(t.fields), await u(e, `/page/drafts/update`, t, s({ saved: o() })));
 }
 async function w(e, t, n) {
   await u(
     e,
     `/page/drafts/delete`,
     { accountId: t, clientDraftId: n },
-    a({ deleted: o() }),
+    s({ deleted: o() }),
   );
 }
 var T = 4;
@@ -525,7 +525,7 @@ function ue(e, t) {
 }
 var de = 45e3;
 async function fe(e, t) {
-  await u(e, `/page/drafts/send`, t, a({ sent: o() }), de);
+  await u(e, `/page/drafts/send`, t, s({ sent: o() }), de);
 }
 var Z = n(),
   pe = 30,
@@ -589,12 +589,12 @@ async function Te(e, t) {
     r = new Map(),
     i = null;
   do {
-    let o = await u(e, `/page/status`, { cursor: i }, l);
-    for (let i of o.accounts) {
-      let o = `${i.accountId}:${i.connectionGeneration}`;
+    let a = await u(e, `/page/status`, { cursor: i }, l);
+    for (let i of a.accounts) {
+      let a = `${i.accountId}:${i.connectionGeneration}`;
       (i.canRepair &&
-        !t.has(o) &&
-        (t.add(o),
+        !t.has(a) &&
+        (t.add(a),
         u(
           e,
           `/page/press-repair`,
@@ -603,7 +603,7 @@ async function Te(e, t) {
             expectedGeneration: i.connectionGeneration,
             clientRequestId: c(),
           },
-          a({}),
+          s({}),
         ).catch((e) => {
           console.error(
             `[MailApp.list_accounts] Failed to renew the Bonobo Senate grant`,
@@ -620,7 +620,7 @@ async function Te(e, t) {
           }),
           r.set(i.accountId, i.newestEmailAt ?? 0)));
     }
-    i = o.cursor;
+    i = a.cursor;
   } while (i !== null);
   return { accounts: n, newestEmailAt: r };
 }

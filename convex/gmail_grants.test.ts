@@ -98,7 +98,7 @@ describe("gmail_grant_step", () => {
 			claimed = (await f.t.run(ctx => ctx.db.get(attempt ? attempt.grantId! : f.grantId)))!;
 		};
 		if (operation === "exchange") {
-			const start = await f.t.action(ctx => gmail_start(ctx, f.actor, { purpose: "connect", accountId: f.accountId, clientRequestId: gmail_random_secret() }, `plu_${"1".repeat(64)}`));
+			const start = await f.t.action(ctx => gmail_start(ctx, f.actor, { purpose: "connect", backfillDays: null, accountId: f.accountId, clientRequestId: gmail_random_secret() }, `plu_${"1".repeat(64)}`));
 			attemptId = start.attemptId;
 			expect(start).toEqual({ attemptId, status: "preparing" });
 		} else {
@@ -176,7 +176,7 @@ describe("gmail_grant_step", () => {
 		const spy = vi.spyOn(registered, "_handler").mockImplementation((ctx, args) => handler(interrupted(ctx), args));
 		try {
 			if (operation === "exchange") {
-				await expect(f.t.action(ctx => gmail_start(interrupted(ctx), f.actor, { purpose: "connect", accountId: f.accountId,
+				await expect(f.t.action(ctx => gmail_start(interrupted(ctx), f.actor, { purpose: "connect", backfillDays: null, accountId: f.accountId,
 					clientRequestId: gmail_random_secret() }, `plu_${"1".repeat(64)}`))).rejects.toThrow(crash.message);
 			} else {
 				await f.t.mutation(internal.gmail_grants.renew, { grantId: f.grantId, lifecycleRequestId: claimed.lifecycleRequestId });
@@ -354,7 +354,7 @@ describe("gmail_grant_step", () => {
 	});
 	test("a dedicated pending exchange waits for authenticated Finish", async () => {
 		const { t, actor, requests } = await setup();
-		const result = await t.mutation(internal.gmail_oauth.prepare_start, { ...actor, clientRequestId: gmail_random_secret(), accountId: null, purpose: "connect", pageToken: `plu_${"1".repeat(64)}` });
+		const result = await t.mutation(internal.gmail_oauth.prepare_start, { ...actor, clientRequestId: gmail_random_secret(), accountId: null, purpose: "connect", backfillDays: null, pageToken: `plu_${"1".repeat(64)}` });
 		if (!("_yay" in result)) throw new Error("Expected attempt");
 		const attempt = (await t.query(internal.gmail_oauth.get_attempt, { ...actor, attemptId: result._yay }))!;
 		await t.action(ctx => gmail_grant_step(ctx, attempt.grantId!));
@@ -371,7 +371,7 @@ describe("gmail_grant_step", () => {
 		const before = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
 		const ledger = await f.t.run(ctx => ctx.db.get(f.ledgerId));
 		let claimed = (await f.t.run(ctx => ctx.db.get(f.grantId)))!;
-		const input = { purpose: "connect" as const, accountId: f.accountId, clientRequestId: gmail_random_secret() };
+		const input = { purpose: "connect" as const, backfillDays: null, accountId: f.accountId, clientRequestId: gmail_random_secret() };
 		const pageToken = `plu_${"1".repeat(64)}`;
 		if (operation === "exchange") {
 			if (reply === "recover accepted") {

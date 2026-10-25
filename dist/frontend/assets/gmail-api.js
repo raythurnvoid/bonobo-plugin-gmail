@@ -2,29 +2,32 @@ import {
   a as e,
   c as t,
   i as n,
-  n as r,
-  o as i,
-  r as a,
-  s as o,
-  t as s,
+  l as r,
+  n as i,
+  o as a,
+  r as o,
+  s,
+  t as c,
 } from "./zod.js";
-var c = o().min(1).max(128),
-  l = e().finite().nonnegative().nullable(),
-  u = e().int().nonnegative(),
-  d = i({
-    organizationId: c,
-    workspaceId: c,
-    installationId: c,
-    actorUserId: c,
+var l = [7, 30, 90, 365],
+  u = t().min(1).max(128),
+  d = a().finite().nonnegative().nullable(),
+  f = a().int().nonnegative(),
+  p = s({
+    organizationId: u,
+    workspaceId: u,
+    installationId: u,
+    actorUserId: u,
   }),
-  f = i({
-    binding: d,
-    clientRequestId: o().regex(/^[0-9a-f]{64}$/),
-    accountId: c.nullable(),
-    attemptId: c.nullable(),
-    purpose: s([`connect`, `compose`]),
+  m = s({
+    binding: p,
+    clientRequestId: t().regex(/^[0-9a-f]{64}$/),
+    accountId: u.nullable(),
+    attemptId: u.nullable(),
+    purpose: c([`connect`, `compose`]),
+    backfillDays: e(l).nullable(),
   }),
-  p = s([
+  h = c([
     `preparing`,
     `pending`,
     `exchanging`,
@@ -33,88 +36,92 @@ var c = o().min(1).max(128),
     `failed`,
     `cancelled`,
   ]),
-  m = i({
-    attemptId: c,
-    status: p,
-    consentUrl: t()
+  g = s({
+    attemptId: u,
+    status: h,
+    consentUrl: r()
       .refine((e) => new URL(e).origin === `https://accounts.google.com`)
       .optional(),
   }),
-  h = i({
-    binding: d,
-    canWrite: a(),
-    cursor: o().nullable(),
-    attempt: i({
-      attemptId: c,
-      status: p,
-      expiresAt: e().finite().positive(),
-      clientRequestId: o().regex(/^[0-9a-f]{64}$/),
-      accountId: c.nullable(),
-      purpose: s([`connect`, `compose`]),
+  _ = s({
+    binding: p,
+    canWrite: o(),
+    cursor: t().nullable(),
+    attempt: s({
+      attemptId: u,
+      status: h,
+      expiresAt: a().finite().positive(),
+      clientRequestId: t().regex(/^[0-9a-f]{64}$/),
+      accountId: u.nullable(),
+      purpose: c([`connect`, `compose`]),
+      backfillDays: e(l).nullable(),
     }).nullable(),
-    accounts: r(
-      i({
-        accountId: c,
+    backfillMaxDays: e(l).nullable(),
+    accounts: i(
+      s({
+        accountId: u,
         emailAddress: n(),
-        destinationPath: o().min(1),
-        connectionGeneration: e().int().positive(),
-        syncStatus: s([
+        destinationPath: t().min(1),
+        connectionGeneration: a().int().positive(),
+        syncStatus: c([
           `backfilling`,
           `live`,
           `blocked`,
           `error`,
           `disconnected`,
         ]),
-        syncError: o().nullable(),
-        sourceError: s([
+        syncError: t().nullable(),
+        sourceError: c([
           `google_revoked`,
           `gmail_request`,
           `history_response_too_large`,
         ]).nullable(),
-        pressReady: a(),
-        canRepair: a(),
-        needsReconnect: a(),
-        isComposer: a(),
-        canCompose: a(),
-        backfillComplete: a(),
-        messagesSynced: u,
-        messagesSkipped: u,
-        ledgerCounts: i({
-          pending: u,
-          done: u,
-          skipped: u,
-          failed: u,
-          given_up: u,
-          emailAssumed: u,
-          permissionHeld: u,
+        pressReady: o(),
+        canRepair: o(),
+        needsReconnect: o(),
+        isComposer: o(),
+        canCompose: o(),
+        backfillComplete: o(),
+        messagesSynced: f,
+        messagesSkipped: f,
+        ledgerCounts: s({
+          pending: f,
+          done: f,
+          skipped: f,
+          failed: f,
+          given_up: f,
+          emailAssumed: f,
+          permissionHeld: f,
         }),
-        attachmentsSkippedReason: s([`plan`, `storage`]).nullable(),
-        nextSyncAt: l,
-        nextPermissionRetryAt: l,
-        lastSyncedAt: l,
-        watchExpiresAt: l,
-        newestEmailAt: l,
+        attachmentsSkippedReason: c([`plan`, `storage`]).nullable(),
+        nextSyncAt: d,
+        nextPermissionRetryAt: d,
+        lastSyncedAt: d,
+        watchExpiresAt: d,
+        newestEmailAt: d,
+        backfillAfter: a().int().nonnegative().nullable(),
       }),
     ).max(25),
   }),
-  g = i({
-    items: r(
-      i({ gmailMessageId: o().regex(/^[0-9a-f]+$/), reasonCode: o() }),
+  v = s({
+    items: i(
+      s({ gmailMessageId: t().regex(/^[0-9a-f]+$/), reasonCode: t() }),
     ).max(25),
-    cursor: o().nullable(),
+    cursor: t().nullable(),
   }),
-  _ = `https://kindhearted-mallard-511.convex.site`,
-  v = i({ code: o() }),
-  y = class extends Error {
+  y = `https://kindhearted-mallard-511.convex.site`,
+  b = s({ code: t() }),
+  x = class extends Error {
     code;
     constructor(e) {
       (super(e), (this.code = e));
     }
   },
-  b = {
+  S = {
     press_access_changed: `Bonobo Senate access changed. Reopen the page to resume.`,
     page_write_refused: `You need write access to change this connection.`,
     account_capacity: `This service has reached its connection limit. Ask the operator to check hosting capacity.`,
+    backfill_too_long: `This service saves less old mail now. Reload the page and choose a shorter time.`,
     rate_limited: `Too many requests. Wait a minute and try again.`,
     start_again: `This connection expired or stopped. Start again.`,
     choose_reconnect: `This Gmail account already exists here. Use Reconnect Gmail.`,
@@ -138,21 +145,21 @@ var c = o().min(1).max(128),
     gmail_refused: `Gmail refused the request. Try again, or check the draft in Gmail.`,
     body_too_large: `This draft is too large to save.`,
   };
-function x() {
+function C() {
   return [...crypto.getRandomValues(new Uint8Array(32))]
     .map((e) => e.toString(16).padStart(2, `0`))
     .join(``);
 }
-function S(e) {
-  return e instanceof y
-    ? (b[e.code] ??
+function w(e) {
+  return e instanceof x
+    ? (S[e.code] ??
         `Gmail service is unavailable. Retry or ask the operator to check Convex.`)
     : `Gmail service is unavailable. Retry or ask the operator to check Convex.`;
 }
-async function C(e, t, n, r, i = 2e4) {
+async function T(e, t, n, r, i = 2e4) {
   let a = await e.getToken();
   for (let o = 0; o < 2; o++) {
-    let s = await fetch(`${_}${t}`, {
+    let s = await fetch(`${y}${t}`, {
       method: `POST`,
       redirect: `error`,
       headers: {
@@ -168,27 +175,28 @@ async function C(e, t, n, r, i = 2e4) {
     }
     let c = await s.json();
     if (!s.ok) {
-      let e = v.safeParse(c);
-      throw new y(e.success ? e.data.code : `service_unavailable`);
+      let e = b.safeParse(c);
+      throw new x(e.success ? e.data.code : `service_unavailable`);
     }
     let l = r.safeParse(c);
-    if (!l.success) throw new y(`service_unavailable`);
+    if (!l.success) throw new x(`service_unavailable`);
     return l.data;
   }
-  throw new y(`press_access_changed`);
+  throw new x(`press_access_changed`);
 }
-function w(e, t, n) {
+function E(e, t, n) {
   let r = n !== null && n > t ? 42e5 : 12e5;
   return e === null ? `unchecked` : t - e > r ? `delayed` : `recent`;
 }
 export {
-  x as a,
-  m as c,
-  g as i,
-  h as l,
-  w as n,
-  C as o,
-  S as r,
-  f as s,
-  y as t,
+  C as a,
+  g as c,
+  v as i,
+  _ as l,
+  E as n,
+  T as o,
+  w as r,
+  m as s,
+  x as t,
+  l as u,
 };

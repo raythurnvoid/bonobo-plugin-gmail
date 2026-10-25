@@ -26,6 +26,7 @@ const account = {
 	lastSyncedAt: 1_800_000_000_000,
 	newestEmailAt: 1_800_000_000_000,
 	watchExpiresAt: null,
+	backfillAfter: null,
 };
 
 afterEach(() => {
@@ -47,7 +48,7 @@ describe("MailApp", () => {
 				requests.push({ path, body: JSON.parse(String(init?.body)) });
 				if (path === "/page/status") {
 					const binding = { organizationId: "org", workspaceId: "workspace", installationId: "installation", actorUserId: "actor" };
-					return Response.json({ binding, canWrite: true, cursor: null, attempt: null, accounts: [{ ...account, canRepair }] });
+					return Response.json({ binding, canWrite: true, cursor: null, attempt: null, backfillMaxDays: null, accounts: [{ ...account, canRepair }] });
 				}
 				return Response.json(path === "/page/drafts/list" ? { drafts: [], cursor: null } : {});
 			}),
@@ -82,7 +83,7 @@ describe("MailApp", () => {
 				paths.push(path);
 				if (path === "/page/status") {
 					const binding = { organizationId: "org", workspaceId: "workspace", installationId: "installation", actorUserId: "actor" };
-					return Response.json({ binding, canWrite: true, cursor: null, attempt: null, accounts: [{ ...account, canRepair: false }] });
+					return Response.json({ binding, canWrite: true, cursor: null, attempt: null, backfillMaxDays: null, accounts: [{ ...account, canRepair: false }] });
 				}
 				return Response.json(path === "/page/drafts/list" ? { drafts: [], cursor: null } : {});
 			}),
@@ -116,7 +117,7 @@ describe("MailApp", () => {
 				paths.push(path);
 				if (path === "/page/status") {
 					const binding = { organizationId: "org", workspaceId: "workspace", installationId: "installation", actorUserId: "actor" };
-					return Response.json({ binding, canWrite: true, cursor: null, attempt: null, accounts: [{ ...account, canRepair: false }] });
+					return Response.json({ binding, canWrite: true, cursor: null, attempt: null, backfillMaxDays: null, accounts: [{ ...account, canRepair: false }] });
 				}
 				if (path === "/page/drafts/list") {
 					return draftsFail ? Response.json({ code: "gmail_busy" }, { status: 503 }) : Response.json({ drafts: [], cursor: null });
@@ -161,7 +162,7 @@ describe("MailApp", () => {
 				const path = new URL(String(input)).pathname;
 				if (path === "/page/status") {
 					const binding = { organizationId: "org", workspaceId: "workspace", installationId: "installation", actorUserId: "actor" };
-					return Response.json({ binding, canWrite: true, cursor: null, attempt: null, accounts: [{ ...account, canRepair: false, messagesSynced, newestEmailAt }] });
+					return Response.json({ binding, canWrite: true, cursor: null, attempt: null, backfillMaxDays: null, accounts: [{ ...account, canRepair: false, messagesSynced, newestEmailAt }] });
 				}
 				return Response.json(path === "/page/drafts/list" ? { drafts: [], cursor: null } : {});
 			}),
@@ -219,7 +220,7 @@ describe("MailApp", () => {
 				requests.push(path);
 				if (path === "/page/status") {
 					const binding = { organizationId: "org", workspaceId: "workspace", installationId: "installation", actorUserId: "actor" };
-					return Response.json({ binding, canWrite: true, cursor: null, attempt: null, accounts: [{ ...account, canRepair: false }] });
+					return Response.json({ binding, canWrite: true, cursor: null, attempt: null, backfillMaxDays: null, accounts: [{ ...account, canRepair: false }] });
 				}
 				if (path === "/page/drafts/list") return Response.json({ drafts: [row], cursor: null });
 				if (path === "/page/drafts/get") return Response.json({ ...row, body: "Hi" });

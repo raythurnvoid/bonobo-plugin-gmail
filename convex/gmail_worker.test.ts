@@ -2137,7 +2137,7 @@ describe("work_account_slice", () => {
 					.toEqual({ phase: "seal", clientRequestId: repair.clientRequestId });
 			} else {
 				const beforeStart = (await f.t.run(ctx => ctx.db.get(f.accountId)))!;
-				const start = await f.t.action(ctx => gmail_start(ctx, f.actor, { purpose: "connect", accountId: f.accountId, clientRequestId: gmail_random_secret() }, `plu_${"1".repeat(64)}`));
+				const start = await f.t.action(ctx => gmail_start(ctx, f.actor, { purpose: "connect", backfillDays: null, accountId: f.accountId, clientRequestId: gmail_random_secret() }, `plu_${"1".repeat(64)}`));
 				const started = { ...beforeStart, connectRequestId: start.attemptId };
 				expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toEqual(started);
 				const consent = await f.t.action(ctx => gmail_callback(ctx, new URL(start.consentUrl!).searchParams.get("state")!, "reconnect-code", false));
@@ -3967,6 +3967,25 @@ describe("work_account_slice", () => {
 			lastSyncedAt: null,
 		});
 	});
+	test.each([
+		[1_790_000_000, "after:1790000000"],
+		[null, null],
+	] as const)("backfill with saved date %s lists only mail after it", async (backfillAfter, query) => {
+		const f = await fixture();
+		await f.t.run((ctx) =>
+			ctx.db.patch(f.accountId, { nextSliceKind: "backfill", historyId: "10", backfillComplete: false, backfillPage: null, backfillAfter }),
+		);
+		const queries: (string | null)[] = [];
+		network((path, _body, url) => {
+			if (path.endsWith("/messages")) {
+				queries.push(url.searchParams.get("q"));
+				return Response.json({});
+			}
+			return Response.json({}, { status: 500 });
+		});
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		expect(queries).toEqual([query]);
+	});
 });
 
 describe("permission guards", () => {
@@ -4154,7 +4173,7 @@ describe("permission guards", () => {
 			attachments: [{ accepted: true, deliveries: 1, sourceUnavailablePendingChecks: 0 }] });
 		replacementPath = held.attachments[0].initialPath.replace(/\.pdf$/, "-2.pdf");
 		reinstalled = true;
-		const started = await f.t.action(ctx => gmail_start(ctx, actor, { clientRequestId: gmail_random_secret(), accountId: f.accountId, purpose: "connect" }, `plu_${"1".repeat(64)}`));
+		const started = await f.t.action(ctx => gmail_start(ctx, actor, { clientRequestId: gmail_random_secret(), accountId: f.accountId, purpose: "connect", backfillDays: null }, `plu_${"1".repeat(64)}`));
 		const callback = await f.t.action(ctx => gmail_callback(ctx, new URL(started.consentUrl!).searchParams.get("state")!, "reinstall-code", false));
 		expect(await f.t.action(ctx => gmail_finish(ctx, actor, { attemptId: started.attemptId, finishCode: callback.finishCode! })))
 			.toEqual({ accountId: f.accountId, connectionGeneration: 2 });

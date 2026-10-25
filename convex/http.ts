@@ -8,6 +8,7 @@ import { gmail_callback, gmail_finish, gmail_start } from "./gmail_oauth";
 import { gmail_repair } from "./gmail_accounts";
 import { gmail_drafts_list } from "./gmail_drafts";
 import { gmail_sha256 } from "./gmail_secrets";
+import { gmail_BACKFILL_DAYS } from "../shared/gmail-backfill";
 
 const allowedOrigins = new Set([new URL(press_HTTP_URL).origin]);
 if (process.env.DEV_PLUGIN_ORIGIN) {
@@ -22,7 +23,8 @@ const http = httpRouter();
 const status_body = z.object({ cursor: z.string().max(2048).nullable().optional() }).strict();
 const id = z.string().min(1).max(64);
 const secret = z.string().regex(/^[0-9a-f]{64}$/);
-const start_body = z.object({ clientRequestId: secret, accountId: id.nullable(), purpose: z.enum(["connect", "compose"]) }).strict();
+const start_body = z.object({ clientRequestId: secret, accountId: id.nullable(), purpose: z.enum(["connect", "compose"]),
+	backfillDays: z.literal(gmail_BACKFILL_DAYS).nullable() }).strict();
 const finish_body = z.object({ attemptId: id, finishCode: secret }).strict();
 const cancel_body = z.object({ attemptId: id }).strict();
 const account_body = z.object({ accountId: id, expectedGeneration: z.number().int().positive() }).strict();

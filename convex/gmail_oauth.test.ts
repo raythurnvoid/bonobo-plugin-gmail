@@ -51,7 +51,7 @@ function setup(t = convexTest(schema, modules)) {
 	}));
 	const page = (path: string, body: unknown) => t.fetch(path, { method: "POST", headers: { Origin: "https://press.test", Authorization: `Bearer ${plu}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
 	const start = (requestId = gmail_random_secret(), accountId: string | null = null, purpose: "connect" | "compose" = "connect") =>
-		t.action(ctx => gmail_start(ctx, actor, { clientRequestId: requestId, accountId, purpose }, plu));
+		t.action(ctx => gmail_start(ctx, actor, { clientRequestId: requestId, accountId, purpose, backfillDays: null }, plu));
 	const stage = async (accountId: string | null = null, purpose: "connect" | "compose" = "connect") => {
 		const started = await start(gmail_random_secret(), accountId, purpose);
 		const consentState = new URL(started.consentUrl!).searchParams.get("state")!;
@@ -102,12 +102,28 @@ describe("gmail_start", () => {
 		const account = (await t.run(ctx => ctx.db.get(first.accountId)))!;
 		const before = await t.run(ctx => ctx.db.get(account.hostGrantId!));
 		const second = await t.mutation(internal.gmail_oauth.prepare_start, {
-			...actor, clientRequestId: gmail_random_secret(), accountId: null, purpose: "connect", pageToken: plu,
+			...actor, clientRequestId: gmail_random_secret(), accountId: null, purpose: "connect", backfillDays: null, pageToken: plu,
 		});
 		if (!("_yay" in second)) throw new Error("Expected a second attempt");
 		const attempt = (await t.query(internal.gmail_oauth.get_attempt, { ...actor, attemptId: second._yay }))!;
 		expect(attempt.grantId).not.toBe(account.hostGrantId);
 		expect(await t.run(ctx => ctx.db.get(account.hostGrantId!))).toEqual(before);
+	});
+	test("refuses more old mail than the operator limit, and Finish saves the chosen date", async () => {
+		vi.stubEnv("GMAIL_BACKFILL_MAX_DAYS", "30");
+		try {
+			const { t } = setup();
+			const begin = (backfillDays: 30 | 90 | null) => t.action(ctx => gmail_start(ctx, actor,
+				{ clientRequestId: gmail_random_secret(), accountId: null, purpose: "connect", backfillDays }, plu));
+			await expect(begin(90)).rejects.toThrow("backfill_too_long");
+			await expect(begin(null)).rejects.toThrow("backfill_too_long");
+			const started = await begin(30);
+			const callback = await t.action(ctx => gmail_callback(ctx, new URL(started.consentUrl!).searchParams.get("state")!, "google-code", false));
+			const finished = await t.action(ctx => gmail_finish(ctx, actor, { attemptId: started.attemptId, finishCode: callback.finishCode! }));
+			expect((await t.run(ctx => ctx.db.get(finished.accountId)))!.backfillAfter).toBe(1_800_000_000 - 30 * 86_400);
+		} finally {
+			vi.unstubAllEnvs();
+		}
 	});
 	test("bounds ten new attempts per hour without charging exact recovery", async () => {
 		const { start } = setup(); const id = gmail_random_secret(); await start(id);
@@ -196,7 +212,7 @@ describe("gmail_callback", () => {
 	test("the public callback accepts navigation without Origin and escapes its output", async () => {
 		const { t, state } = setup();
 		const escapedActor = { ...actor, organizationId: "<script>alert(1)</script>" }; state.grantActor = escapedActor;
-		const started = await t.action(ctx => gmail_start(ctx, escapedActor, { clientRequestId: gmail_random_secret(), accountId: null, purpose: "connect" }, plu));
+		const started = await t.action(ctx => gmail_start(ctx, escapedActor, { clientRequestId: gmail_random_secret(), accountId: null, purpose: "connect", backfillDays: null }, plu));
 		const response = await t.fetch(`/oauth/google/callback?state=${new URL(started.consentUrl!).searchParams.get("state")}&code=google-code`);
 		expect(response.status).toBe(200);
 		expect(response.headers.get("Cache-Control")).toBe("no-store");
@@ -273,7 +289,7 @@ describe("gmail_finish", () => {
 	test("concurrent Finish calls cannot exceed the final active slot", async () => {
 		const { t, state, stage } = setup(); const first = await stage();
 		const otherActor = { ...actor, actorUserId: "other" }; state.grantActor = otherActor; state.email = "other@example.com";
-		const started = await t.action(ctx => gmail_start(ctx, otherActor, { clientRequestId: gmail_random_secret(), accountId: null, purpose: "connect" }, plu));
+		const started = await t.action(ctx => gmail_start(ctx, otherActor, { clientRequestId: gmail_random_secret(), accountId: null, purpose: "connect", backfillDays: null }, plu));
 		const callback = await t.action(ctx => gmail_callback(ctx, new URL(started.consentUrl!).searchParams.get("state")!, "other-code", false));
 		const results = await Promise.allSettled([
 			t.action(ctx => gmail_finish(ctx, actor, { attemptId: first.attemptId, finishCode: first.finishCode })),
@@ -308,7 +324,7 @@ describe("gmail_finish", () => {
 		const oldAttempt = (await t.query(internal.gmail_oauth.get_attempt, { ...actor, attemptId: older.attemptId }))!;
 		const laterWriter = { ...actor, actorUserId: "later-writer" }; state.grantActor = laterWriter;
 		const newer = await t.action(ctx => gmail_start(ctx, laterWriter, {
-			clientRequestId: gmail_random_secret(), accountId: f.accountId, purpose: "connect",
+			clientRequestId: gmail_random_secret(), accountId: f.accountId, purpose: "connect", backfillDays: null,
 		}, plu));
 		const cancelled = await t.query(internal.gmail_oauth.get_attempt, { ...actor, attemptId: older.attemptId });
 		expect(cancelled?.status).toBe("cancelled");
@@ -367,7 +383,7 @@ describe("gmail_finish", () => {
 		const laterWriter = { ...actor, actorUserId: "later-writer" }; state.grantActor = laterWriter;
 		try {
 			const newer = await t.action(ctx => gmail_start(ctx, laterWriter, {
-				clientRequestId: gmail_random_secret(), accountId: f.accountId, purpose: "connect",
+				clientRequestId: gmail_random_secret(), accountId: f.accountId, purpose: "connect", backfillDays: null,
 			}, plu));
 			const callback = await t.action(ctx => gmail_callback(ctx, new URL(newer.consentUrl!).searchParams.get("state")!, "newer-code", false));
 			await t.action(ctx => gmail_finish(ctx, laterWriter, { attemptId: newer.attemptId, finishCode: callback.finishCode! }));
@@ -416,7 +432,7 @@ describe("finish_upgrade", () => {
 		const { t, state, stage } = setup(); const first = await stage();
 		const receipt = await t.action(ctx => gmail_finish(ctx, actor, { attemptId: first.attemptId, finishCode: first.finishCode }));
 		const other = { ...actor, actorUserId: "other" }; state.grantActor = other;
-		await expect(t.action(ctx => gmail_start(ctx, other, { clientRequestId: gmail_random_secret(), accountId: receipt.accountId, purpose: "compose" }, plu)))
+		await expect(t.action(ctx => gmail_start(ctx, other, { clientRequestId: gmail_random_secret(), accountId: receipt.accountId, purpose: "compose", backfillDays: null }, plu)))
 			.rejects.toThrow("not_composer");
 		expect(await t.run(ctx => ctx.db.query("oauth_states").collect())).toHaveLength(1);
 	});

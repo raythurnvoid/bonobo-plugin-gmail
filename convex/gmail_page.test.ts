@@ -153,7 +153,7 @@ describe("page HTTP boundary", () => {
 		const attempt = await t.run(ctx => ctx.db.insert("oauth_states", {
 			organizationId: "org", workspaceId: "workspace", installationId: "installation", actorUserId: "actor", clientRequestId: "request",
 			accountId: null, expectedGeneration: null, grantId: null, status: "awaiting_finish", stateHash: "state-hash", encryptedState: "private-state",
-			googleCodeHash: "google-hash", stagedRefreshToken: "private-token", stagedEmailAddress: "private@example.com", stagedHistoryId: "10", purpose: "connect", stagedComposeGranted: true,
+			googleCodeHash: "google-hash", stagedRefreshToken: "private-token", stagedEmailAddress: "private@example.com", stagedHistoryId: "10", purpose: "connect", stagedComposeGranted: true, backfillDays: null,
 			finishCodeHash: "finish-hash", encryptedFinishCode: "private-code", completedAccountId: null, completedGeneration: null,
 			expiresAt: Date.now() + 600_000, processingDeadline: null, receiptExpiresAt: null, error: null, updatedAt: Date.now(),
 		}));

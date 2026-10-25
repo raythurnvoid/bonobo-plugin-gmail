@@ -1,5 +1,6 @@
 import type { BonoboClient } from "bonobo-plugin-sdk/frontend";
 import { z } from "zod";
+import { gmail_BACKFILL_DAYS } from "../shared/gmail-backfill";
 
 const id = z.string().min(1).max(128);
 const time = z.number().finite().nonnegative().nullable();
@@ -11,6 +12,7 @@ export const gmail_saved_start = z.object({
 	accountId: id.nullable(),
 	attemptId: id.nullable(),
 	purpose: z.enum(["connect", "compose"]),
+	backfillDays: z.literal(gmail_BACKFILL_DAYS).nullable(),
 });
 const oauth_status = z.enum([
 	"preparing",
@@ -41,8 +43,10 @@ export const gmail_status_response = z.object({
 			clientRequestId: z.string().regex(/^[0-9a-f]{64}$/),
 			accountId: id.nullable(),
 			purpose: z.enum(["connect", "compose"]),
+			backfillDays: z.literal(gmail_BACKFILL_DAYS).nullable(),
 		})
 		.nullable(),
+	backfillMaxDays: z.literal(gmail_BACKFILL_DAYS).nullable(),
 	accounts: z
 		.array(
 			z.object({
@@ -76,6 +80,7 @@ export const gmail_status_response = z.object({
 				lastSyncedAt: time,
 				watchExpiresAt: time,
 				newestEmailAt: time,
+				backfillAfter: z.number().int().nonnegative().nullable(),
 			}),
 		)
 		.max(25),
@@ -99,6 +104,7 @@ const messages: Record<string, string> = {
 	press_access_changed: "Bonobo Senate access changed. Reopen the page to resume.",
 	page_write_refused: "You need write access to change this connection.",
 	account_capacity: "This service has reached its connection limit. Ask the operator to check hosting capacity.",
+	backfill_too_long: "This service saves less old mail now. Reload the page and choose a shorter time.",
 	rate_limited: "Too many requests. Wait a minute and try again.",
 	start_again: "This connection expired or stopped. Start again.",
 	choose_reconnect: "This Gmail account already exists here. Use Reconnect Gmail.",

@@ -1271,8 +1271,13 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
     }
     if (!account.backfillPage) {
       const before = checkpoint(account);
+      // Gmail reads `after:` with epoch seconds as an exact time, not as a day in Pacific time.
       const path = (token: string | null) =>
-        `/messages?${new URLSearchParams({ maxResults: "25", ...(token ? { pageToken: token } : {}) })}`;
+        `/messages?${new URLSearchParams({
+          maxResults: "25",
+          ...(account.backfillAfter !== null ? { q: `after:${account.backfillAfter}` } : {}),
+          ...(token ? { pageToken: token } : {}),
+        })}`;
       let raw: unknown;
       try {
         raw = await google(path(account.backfillPageToken), 1024 * 1024);

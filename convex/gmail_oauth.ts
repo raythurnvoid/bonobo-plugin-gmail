@@ -10,7 +10,7 @@ import { gmail_HostError } from "./press";
 import { gmail_grant_step, gmail_STEP_CHECK_MS } from "./gmail_grants";
 import { gmail_consent_url, gmail_google_get, gmail_google_token, gmail_profile_response } from "./gmail_google";
 import { gmail_slug } from "../shared/gmail-paths";
-import { gmail_stop_slice } from "./gmail_accounts";
+import { gmail_backfill_max_days, gmail_stop_slice } from "./gmail_accounts";
 
 const maximumAccounts = Number(process.env.GMAIL_MAX_CONNECTED_ACCOUNTS);
 if (!Number.isSafeInteger(maximumAccounts) || maximumAccounts < 1) throw new Error("GMAIL_MAX_CONNECTED_ACCOUNTS must be a positive integer");
@@ -48,13 +48,14 @@ export async function gmail_close_attempt(ctx: MutationCtx, attempt: Doc<"oauth_
 }
 
 export const prepare_start = internalMutation({
-	args: { ...gmail_host_binding, clientRequestId: v.string(), accountId: v.union(v.string(), v.null()), purpose: v.union(v.literal("connect"), v.literal("compose")), pageToken: v.string() },
+	args: { ...gmail_host_binding, clientRequestId: v.string(), accountId: v.union(v.string(), v.null()), purpose: v.union(v.literal("connect"), v.literal("compose")),
+		backfillDays: v.union(v.number(), v.null()), pageToken: v.string() },
 	returns: v.union(failure, v.object({ _yay: v.id("oauth_states") })),
 	handler: async (ctx, args) => {
 		const prior = await ctx.db.query("oauth_states").withIndex("by_actorUser_installation_clientRequestId", q =>
 			q.eq("actorUserId", args.actorUserId).eq("installationId", args.installationId).eq("clientRequestId", args.clientRequestId)).unique();
 		if (prior) {
-			if (!same_binding(prior, args) || prior.accountId !== args.accountId || prior.purpose !== args.purpose) return refused(409, "request_changed");
+			if (!same_binding(prior, args) || prior.accountId !== args.accountId || prior.purpose !== args.purpose || prior.backfillDays !== args.backfillDays) return refused(409, "request_changed");
 			if (["failed", "cancelled"].includes(prior.status)) return refused(409, "start_again");
 			if (prior.status !== "finished" && (prior.expiresAt <= Date.now() || !await target_current(ctx, prior))) {
 				await gmail_close_attempt(ctx, prior, "failed", "attempt_expired"); return refused(409, "start_again");
@@ -67,6 +68,11 @@ export const prepare_start = internalMutation({
 		// Only the member who connected the account, in this installation, may add the compose scope to it.
 		if (args.purpose === "compose" && (!account || account.syncStatus === "disconnected"
 			|| account.hostActorUserId !== args.actorUserId || account.hostInstallationId !== args.installationId)) return refused(403, "not_composer");
+		// A compose attempt never restarts sync, so it saves no old mail. The page hides choices above the
+		// operator's limit, so a connect that still asks for more mail is refused.
+		const maximumDays = gmail_backfill_max_days();
+		if (args.purpose === "compose" && args.backfillDays !== null) return refused(400, "invalid_body");
+		if (args.purpose === "connect" && maximumDays !== null && (args.backfillDays === null || args.backfillDays > maximumDays)) return refused(400, "backfill_too_long");
 		if (!await gmail_rate_limit(ctx, `start:${args.actorUserId}:${args.installationId}`, 60 * 60_000, 10)) return refused(429, "rate_limited");
 		for (const status of activeStatuses) {
 			const old = await ctx.db.query("oauth_states").withIndex("by_actorUser_installation_status", q =>
@@ -81,7 +87,7 @@ export const prepare_start = internalMutation({
 			installationId: args.installationId, actorUserId: args.actorUserId, clientRequestId: args.clientRequestId,
 			accountId, expectedGeneration: account?.connectionGeneration ?? null, grantId: null, status: "preparing",
 			stateHash: null, encryptedState: null, googleCodeHash: null, stagedRefreshToken: null, stagedEmailAddress: null, stagedHistoryId: null,
-			purpose: args.purpose, stagedComposeGranted: null, backfillDays: null,
+			purpose: args.purpose, stagedComposeGranted: null, backfillDays: args.backfillDays,
 			finishCodeHash: null, encryptedFinishCode: null, completedAccountId: null, completedGeneration: null,
 			expiresAt: Date.now() + 10 * 60_000, processingDeadline: null, receiptExpiresAt: null, error: null, updatedAt: Date.now() });
 		const state = gmail_random_secret();
@@ -119,7 +125,7 @@ export const fail_attempt = internalMutation({
 });
 
 export async function gmail_start(ctx: ActionCtx, actor: { organizationId: string; workspaceId: string; installationId: string; actorUserId: string },
-	input: { clientRequestId: string; accountId: string | null; purpose: "connect" | "compose" }, pageToken: string) {
+	input: { clientRequestId: string; accountId: string | null; purpose: "connect" | "compose"; backfillDays: number | null }, pageToken: string) {
 	// Check setup before saving an attempt. This never returns a partly configured consent URL.
 	gmail_consent_url("", callback);
 	const result = await ctx.runMutation(internal.gmail_oauth.prepare_start, { ...actor, ...input, pageToken });
@@ -257,6 +263,8 @@ export const promote = internalMutation({
 			for (const status of ["backfilling", "live", "blocked", "error"] as const) active += (await ctx.db.query("gmail_accounts").withIndex("by_syncStatus", q => q.eq("syncStatus", status)).take(maximumAccounts + 1)).length;
 			if (active >= maximumAccounts) return refused(409, "account_capacity");
 		}
+		// Fix the date now. A backfill runs for many slices, and its Gmail page tokens belong to one query.
+		const backfillAfter = attempt.backfillDays === null ? null : Math.floor(Date.now() / 1000) - attempt.backfillDays * 86_400;
 		if (!account) {
 			const base = `/emails/${gmail_slug(attempt.stagedEmailAddress)}`;
 			let destinationPath = base;
@@ -270,7 +278,7 @@ export const promote = internalMutation({
 				nextSliceKind: "backfill", messagesSynced: 0, messagesSkipped: 0,
 				ledgerCounts: { pending: 0, done: 0, skipped: 0, failed: 0, given_up: 0, emailAssumed: 0, permissionHeld: 0 },
 				attachmentsSkippedReason: null, syncWorkId: null, syncRequestId: null, lastSyncedAt: null, updatedAt: Date.now(), composeGranted: false,
-				idleSlices: 0, googleAccessToken: null, messageMark: null, watchExpiresAt: null, pushPending: false, backfillAfter: null,
+				idleSlices: 0, googleAccessToken: null, messageMark: null, watchExpiresAt: null, pushPending: false, backfillAfter,
 			});
 			account = (await ctx.db.get(id))!;
 		}
@@ -282,7 +290,7 @@ export const promote = internalMutation({
 		const generation = account.connectionGeneration + 1;
 		await ctx.db.patch(account._id, { hostInstallationId: attempt.installationId, hostActorUserId: attempt.actorUserId,
 			googleRefreshToken: args.accountRefreshToken, googleAccessToken: null, idleSlices: 0, messageMark: null, watchExpiresAt: null, pushPending: false, composeGranted: attempt.stagedComposeGranted === true, connectionGeneration: generation, connectRequestId: null, hostGrantId: grant._id,
-			historyId: null, syncStatus: "backfilling", syncError: null, sourceError: null, backfillPageToken: null, backfillPage: null, backfillComplete: false,
+			historyId: null, syncStatus: "backfilling", syncError: null, sourceError: null, backfillPageToken: null, backfillPage: null, backfillComplete: false, backfillAfter,
 			historyPageToken: null, historyAnchor: null, historyPageSize: 25, nextSliceKind: "backfill", temporaryFailures: 0,
 			nextSyncAt: null, syncWorkId: null, syncRequestId: null, lastSyncedAt: null, updatedAt: Date.now() });
 		await ctx.db.patch(grant._id, { accountId: account._id, attemptId: null, connectionGeneration: generation, phase: "seal",

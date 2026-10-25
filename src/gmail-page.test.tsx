@@ -24,7 +24,7 @@ const client = {
   refreshToken: vi.fn(async () => "plu_new"),
 };
 function status() {
-  return { binding, canWrite: true, accounts: [], cursor: null, attempt: null };
+  return { binding, canWrite: true, accounts: [], cursor: null, attempt: null, backfillMaxDays: 30 };
 }
 function account() {
   return {
@@ -58,6 +58,7 @@ function account() {
     lastSyncedAt: Date.now(),
     watchExpiresAt: null,
     newestEmailAt: null,
+    backfillAfter: null,
   };
 }
 function visible(state: "visible" | "hidden") {
@@ -321,6 +322,7 @@ describe("GmailPage", () => {
       clientRequestId: string;
       accountId: null;
       purpose: "connect";
+      backfillDays: number;
       expiresAt: number;
     } | null = null;
     vi.stubGlobal(
@@ -346,6 +348,7 @@ describe("GmailPage", () => {
             clientRequestId: local.clientRequestId,
             accountId: null,
             purpose: "connect",
+            backfillDays: 30,
             expiresAt: Date.now() + 60_000,
           };
           return Response.json({
@@ -374,6 +377,7 @@ describe("GmailPage", () => {
       accountId: null,
       attemptId: "attempt",
       purpose: "connect" as const,
+      backfillDays: 30,
     };
     sessionStorage.setItem("gmail-connect-retry", JSON.stringify(saved));
     const calls: { url: string; body: unknown }[] = [];
@@ -410,6 +414,7 @@ describe("GmailPage", () => {
       clientRequestId: saved.clientRequestId,
       accountId: null,
       purpose: "connect",
+      backfillDays: 30,
     });
     expect(screen.getByRole("button", { name: "Copy link" })).toBeTruthy();
     expect(sessionStorage.getItem("gmail-connect-retry")).not.toContain(
@@ -433,6 +438,7 @@ describe("GmailPage", () => {
                     clientRequestId: requests[1],
                     accountId: null,
                     purpose: "connect",
+                    backfillDays: 30,
                     expiresAt: Date.now() + 60_000,
                   },
           });
@@ -490,6 +496,7 @@ describe("GmailPage", () => {
       clientRequestId: "a".repeat(64),
       accountId: null,
       purpose: "connect",
+      backfillDays: 30,
       expiresAt: Date.now() + 60_000,
     };
     const calls: string[] = [];

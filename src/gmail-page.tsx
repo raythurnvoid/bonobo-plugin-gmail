@@ -12,6 +12,7 @@ import {
   gmail_start_response,
   gmail_status_response,
 } from "./gmail-api";
+import { gmail_BACKFILL_DAYS } from "../shared/gmail-backfill";
 import "./gmail.css";
 
 const storageKey = "gmail-connect-retry";
@@ -61,7 +62,9 @@ export function GmailPage({
   } | null>(null);
   const [now, setNow] = useState(Date.now());
   const [inputError, setInputError] = useState<string | null>(null);
+  const [backfillChoice, setBackfillChoice] = useState("30");
   const finishInputId = useId();
+  const backfillSelectId = useId();
   const savedStart = useRef<z.infer<typeof gmail_saved_start> | null>(null);
   const recovered = useRef(false);
   const pollInFlight = useRef(false);
@@ -128,6 +131,7 @@ export function GmailPage({
             accountId: value.attempt.accountId,
             attemptId: value.attempt.attemptId,
             purpose: value.attempt.purpose,
+            backfillDays: value.attempt.backfillDays,
           };
         else if (local?.attemptId) local = null;
         keep_start(local);
@@ -140,6 +144,7 @@ export function GmailPage({
                 clientRequestId: local.clientRequestId,
                 accountId: local.accountId,
                 purpose: local.purpose,
+                backfillDays: local.backfillDays,
               },
               gmail_start_response,
             );
@@ -161,6 +166,7 @@ export function GmailPage({
           accountId: value.attempt.accountId,
           attemptId: value.attempt.attemptId,
           purpose: value.attempt.purpose,
+          backfillDays: value.attempt.backfillDays,
         };
         keep_start(local);
         if (value.canWrite) {
@@ -172,6 +178,7 @@ export function GmailPage({
                 clientRequestId: local.clientRequestId,
                 accountId: local.accountId,
                 purpose: local.purpose,
+                backfillDays: local.backfillDays,
               },
               gmail_start_response,
             );
@@ -278,18 +285,21 @@ export function GmailPage({
     purpose: "connect" | "compose",
   ) {
     if (!status) return;
+    // Only Connect and Reconnect save old mail. Allow drafts and Send keeps the sync as it is.
+    const backfillDays = purpose === "connect" ? chosenDays : null;
     const local = {
       binding: status.binding,
       clientRequestId: gmail_new_request_id(),
       accountId,
       attemptId: null,
       purpose,
+      backfillDays,
     };
     keep_start(local); // Save only bound retry IDs before the request can be lost.
     const result = await gmail_page_post(
       client,
       "/page/connect/start",
-      { clientRequestId: local.clientRequestId, accountId, purpose },
+      { clientRequestId: local.clientRequestId, accountId, purpose, backfillDays },
       gmail_start_response,
     );
     keep_start({ ...local, attemptId: result.attemptId });
@@ -306,6 +316,16 @@ export function GmailPage({
   }
 
   const attempt = status?.attempt;
+  // The operator's limit hides the longer choices. When the chosen one is hidden, use the longest left.
+  const allowedDays = gmail_BACKFILL_DAYS.filter(
+    (days) => !status?.backfillMaxDays || days <= status.backfillMaxDays,
+  );
+  const allMailAllowed = status?.backfillMaxDays === null;
+  const chosenDays =
+    backfillChoice === "all" && allMailAllowed
+      ? null
+      : (allowedDays.find((days) => String(days) === backfillChoice) ??
+        allowedDays[allowedDays.length - 1]);
   return (
     <main className="GmailPage" data-gmail-service-status={service}>
       <h1>Gmail</h1>
@@ -341,12 +361,32 @@ export function GmailPage({
               </p>
             )}
             {!attempt && (
-              <button
-                disabled={busy || !status.canWrite}
-                onClick={() => void action(() => start(null, "connect"))}
-              >
-                Connect Gmail
-              </button>
+              <>
+                <p>
+                  <label htmlFor={backfillSelectId}>Old mail to save </label>
+                  <select
+                    id={backfillSelectId}
+                    value={chosenDays === null ? "all" : String(chosenDays)}
+                    disabled={busy || !status.canWrite}
+                    onChange={(event) => setBackfillChoice(event.target.value)}
+                  >
+                    {allowedDays.map((days) => (
+                      <option key={days} value={String(days)}>
+                        {days === 365 ? "Last year" : `Last ${days} days`}
+                      </option>
+                    ))}
+                    {allMailAllowed && <option value="all">All mail</option>}
+                  </select>
+                  . New mail is always saved. Connect and Reconnect use this
+                  choice.
+                </p>
+                <button
+                  disabled={busy || !status.canWrite}
+                  onClick={() => void action(() => start(null, "connect"))}
+                >
+                  Connect Gmail
+                </button>
+              </>
             )}
             {attempt && (
               <section
@@ -391,6 +431,7 @@ export function GmailPage({
                                 clientRequestId: attempt.clientRequestId,
                                 accountId: attempt.accountId,
                                 purpose: attempt.purpose,
+                                backfillDays: attempt.backfillDays,
                               },
                               gmail_start_response,
                             );
@@ -509,6 +550,11 @@ export function GmailPage({
                           : !account.backfillComplete
                             ? `Backfilling… ${account.messagesSynced} emails saved`
                             : `${account.messagesSynced} emails saved`}
+                  </p>
+                  <p data-gmail-backfill-after={account.backfillAfter ?? "all"}>
+                    {account.backfillAfter === null
+                      ? "Saves all old mail."
+                      : `Saves old mail since ${new Date(account.backfillAfter * 1000).toLocaleDateString()}.`}
                   </p>
                   <p>
                     {account.messagesSkipped} skipped.{" "}
