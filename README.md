@@ -26,7 +26,7 @@ Set these on the plugin backend. Never commit them or put them on Bonobo Senate.
 - `PRESS_GMAIL_SERVICE_SECRET`: the plugin service proof from Bonobo Senate registration.
 - `GMAIL_PLUGIN_ENCRYPTION_KEY`: one base64 key with 32 random bytes. Keep it when redeploying.
 - `GMAIL_OAUTH_CLIENT_ID` and `GMAIL_OAUTH_CLIENT_SECRET`: the Google web client.
-- `GMAIL_MAX_CONNECTED_ACCOUNTS`: the atomic connection cap; dev starts at 1.
+- `GMAIL_MAX_CONNECTED_ACCOUNTS`: the atomic connection cap; dev uses 3.
 - `GMAIL_BACKFILL_MAX_DAYS`: optional limit on how much old mail a connect may save: 7, 30, 90 or 365. The page hides longer choices, and Start refuses them with `backfill_too_long`. Without it, members may also choose All mail. Dev uses 30. Any other value makes the Gmail and Mail pages show the service as unavailable. A connect that was already open when the limit was lowered keeps its choice.
 - `DEV_PLUGIN_ORIGIN`: optional exact dev origin, such as `http://localhost:5173`. Do not include a path or trailing slash.
 - `GMAIL_PUSH_TOPIC`: optional Pub/Sub topic for Gmail push, `projects/<project id>/topics/<topic>`. Without it, sync only polls.
@@ -34,7 +34,7 @@ Set these on the plugin backend. Never commit them or put them on Bonobo Senate.
 
 Before Connect or Reconnect, the member chooses how much old mail to save: the last 7, 30 or 90 days, the last year, or all mail. The default is 30 days. Finish turns the choice into a fixed date, saved on the account. Backfill saves only mail after that date, and new mail is always saved. The date does not move while the backfill runs, so Gmail page tokens stay valid. Mail that is already in Files stays. To save older mail, Reconnect and choose a longer time; mail already saved is skipped. This follows mail apps such as Outlook ("Download email for the past") and iPhone Mail ("Mail Days to Sync"): the mailbox owner picks from fixed choices.
 
-Connect asks Google only for the Gmail read-only scope. **Allow drafts and Send** asks again, for read-only plus `gmail.compose`. Only the member who connected the account sees that button. Each step requires Google consent and an authenticated Finish step on the original Bonobo Senate page. Disconnect clears saved Gmail access and keeps Files. Disconnect before uninstalling.
+Connect asks Google for the Gmail read-only scope and `gmail.compose`. Google lets the member untick each one. Finish refuses a connect without read-only, and without `gmail.compose` drafts and Send stay off. **Allow drafts and Send** asks again, for both scopes. Only the member who connected the account sees that button. Each step requires Google consent and an authenticated Finish step on the original Bonobo Senate page. Disconnect clears saved Gmail access and keeps Files. Disconnect before uninstalling.
 
 After each plugin update, open the Gmail or Mail page and keep it open until sync runs again. Bonobo Senate ties the sync's Bonobo Senate grant to the installed version, so after an update Bonobo Senate refuses it. Sync then stops with "Bonobo Senate connection needs attention". Sync notices this only at its next Bonobo Senate write, which can be minutes after the update. Only an open plugin page can get a new grant. Both pages check the sync status while they are open and visible (about once a minute, and at once when the tab becomes visible again) and renew the grant on their own, once per connection.
 
