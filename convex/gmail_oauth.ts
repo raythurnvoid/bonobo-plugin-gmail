@@ -81,7 +81,7 @@ export const prepare_start = internalMutation({
 			installationId: args.installationId, actorUserId: args.actorUserId, clientRequestId: args.clientRequestId,
 			accountId, expectedGeneration: account?.connectionGeneration ?? null, grantId: null, status: "preparing",
 			stateHash: null, encryptedState: null, googleCodeHash: null, stagedRefreshToken: null, stagedEmailAddress: null, stagedHistoryId: null,
-			purpose: args.purpose, stagedComposeGranted: null,
+			purpose: args.purpose, stagedComposeGranted: null, backfillDays: null,
 			finishCodeHash: null, encryptedFinishCode: null, completedAccountId: null, completedGeneration: null,
 			expiresAt: Date.now() + 10 * 60_000, processingDeadline: null, receiptExpiresAt: null, error: null, updatedAt: Date.now() });
 		const state = gmail_random_secret();
@@ -270,7 +270,7 @@ export const promote = internalMutation({
 				nextSliceKind: "backfill", messagesSynced: 0, messagesSkipped: 0,
 				ledgerCounts: { pending: 0, done: 0, skipped: 0, failed: 0, given_up: 0, emailAssumed: 0, permissionHeld: 0 },
 				attachmentsSkippedReason: null, syncWorkId: null, syncRequestId: null, lastSyncedAt: null, updatedAt: Date.now(), composeGranted: false,
-				idleSlices: 0, googleAccessToken: null, messageMark: null, watchExpiresAt: null, pushPending: false,
+				idleSlices: 0, googleAccessToken: null, messageMark: null, watchExpiresAt: null, pushPending: false, backfillAfter: null,
 			});
 			account = (await ctx.db.get(id))!;
 		}

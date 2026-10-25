@@ -74,6 +74,9 @@ export default defineSchema({
 		// A push came while a slice ran. That slice may have read history before the new mail, so the next
 		// sync is due one minute after it ends.
 		pushPending: v.boolean(),
+		// Backfill saves only mail after this time, in epoch seconds. Null saves all old mail.
+		// Optional only until the backfill migration has set it on every account.
+		backfillAfter: v.optional(nullableNumber),
 	})
 		.index("by_hostWorkspace_emailAddress", ["hostWorkspaceId", "emailAddress"])
 		// Pushes name only the mailbox address. The same address may be connected in a few workspaces.
@@ -104,6 +107,9 @@ export default defineSchema({
 		stagedRefreshToken: nullableString, stagedEmailAddress: nullableString, stagedHistoryId: nullableString,
 		// "compose" only swaps the Google token of an existing account. It never restarts sync.
 		purpose: v.union(v.literal("connect"), v.literal("compose")), stagedComposeGranted: v.union(v.boolean(), v.null()),
+		// How many days of old mail a connect saves. Null saves all old mail. A compose attempt keeps null.
+		// Optional only until the backfill migration has set it on every attempt.
+		backfillDays: v.optional(nullableNumber),
 		finishCodeHash: nullableString, encryptedFinishCode: nullableString,
 		completedAccountId: v.union(v.id("gmail_accounts"), v.null()), completedGeneration: nullableNumber,
 		expiresAt: v.number(), processingDeadline: nullableNumber, receiptExpiresAt: nullableNumber,

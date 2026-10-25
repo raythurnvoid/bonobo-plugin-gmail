@@ -1039,6 +1039,27 @@ export const push_received = internalMutation({
 	},
 });
 
+// One-off backfill migration: give every account and connect attempt the new backfill fields, so the
+// schema can require them. Remove it once it ran. Both tables hold only a few rows, so one read is enough.
+export const set_backfill_fields = internalMutation({
+	args: {},
+	returns: v.number(),
+	handler: async (ctx) => {
+		let count = 0;
+		for (const account of await ctx.db.query("gmail_accounts").collect()) {
+			if (account.backfillAfter !== undefined) continue;
+			await ctx.db.patch(account._id, { backfillAfter: null });
+			count++;
+		}
+		for (const attempt of await ctx.db.query("oauth_states").collect()) {
+			if (attempt.backfillDays !== undefined) continue;
+			await ctx.db.patch(attempt._id, { backfillDays: null });
+			count++;
+		}
+		return count;
+	},
+});
+
 export const save_access_token = internalMutation({
 	args: {
 		work: gmail_worker_context,
