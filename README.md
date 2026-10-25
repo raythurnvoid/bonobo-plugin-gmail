@@ -27,7 +27,7 @@ Set these on the plugin backend. Never commit them or put them on Bonobo Senate.
 - `GMAIL_PLUGIN_ENCRYPTION_KEY`: one base64 key with 32 random bytes. Keep it when redeploying.
 - `GMAIL_OAUTH_CLIENT_ID` and `GMAIL_OAUTH_CLIENT_SECRET`: the Google web client.
 - `GMAIL_MAX_CONNECTED_ACCOUNTS`: the atomic connection cap; dev starts at 1.
-- `GMAIL_BACKFILL_MAX_DAYS`: optional limit on how much old mail a connect may save: 7, 30, 90 or 365. The page hides longer choices, and Start refuses them with `backfill_too_long`. Without it, members may also choose All mail. Dev uses 30.
+- `GMAIL_BACKFILL_MAX_DAYS`: optional limit on how much old mail a connect may save: 7, 30, 90 or 365. The page hides longer choices, and Start refuses them with `backfill_too_long`. Without it, members may also choose All mail. Dev uses 30. Any other value makes the Gmail and Mail pages show the service as unavailable. A connect that was already open when the limit was lowered keeps its choice.
 - `DEV_PLUGIN_ORIGIN`: optional exact dev origin, such as `http://localhost:5173`. Do not include a path or trailing slash.
 - `GMAIL_PUSH_TOPIC`: optional Pub/Sub topic for Gmail push, `projects/<project id>/topics/<topic>`. Without it, sync only polls.
 - `GMAIL_PUSH_TOKEN`: the secret in the push subscription URL. 32 random bytes as hex. See "Push notifications" below.

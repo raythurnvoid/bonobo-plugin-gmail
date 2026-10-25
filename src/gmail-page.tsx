@@ -154,6 +154,10 @@ export function GmailPage({
             }
           } catch (failure) {
             if (mounted.current) setError(gmail_error_message(failure));
+            // The operator lowered the limit after this start was saved. Drop it, so a reload does not
+            // send the same refused choice again.
+            if (failure instanceof gmail_ApiError && failure.code === "backfill_too_long")
+              keep_start(null);
           }
         }
       } else if (
@@ -272,6 +276,7 @@ export function GmailPage({
           "attempt_expired",
           "choose_reconnect",
           "gmail_account_changed",
+          "backfill_too_long",
         ].includes(failure.code)
       )
         keep_start(null);

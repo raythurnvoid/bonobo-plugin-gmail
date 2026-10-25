@@ -174,7 +174,7 @@
 		{ "path": "dist/frontend/assets/gmail-page.css", "sha256": "sha256:0080682c7f1a01d174fa68c5c7d93a9480e6f8ca30a9e0b9ec1aa7b5947c5de5", "bytes": 1517, "contentType": "text/css" },
 		{ "path": "dist/frontend/assets/mail-app.css", "sha256": "sha256:f7b52cbcb504bdab1e177300611f45cc087bcb94bee84b824e6812761cab0ff2", "bytes": 6396, "contentType": "text/css" },
 		{ "path": "dist/frontend/assets/gmail-api.js", "sha256": "sha256:c0e6d64f5f07f2d2acfbf59fee0489cd74e58b39914f03b045d48af1a3a66709", "bytes": 6316, "contentType": "application/javascript" },
-		{ "path": "dist/frontend/assets/gmail-page.js", "sha256": "sha256:6c9b7bb083968d8974bfd8f979095dca6b4002bc3418592cee3319fc3af96317", "bytes": 32376, "contentType": "application/javascript" },
+		{ "path": "dist/frontend/assets/gmail-page.js", "sha256": "sha256:23e10e7311628d67d6db15684a80e43ca2e751da80f195089bedec53d2142a12", "bytes": 32487, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/mail-app.js", "sha256": "sha256:b92352aac79cb121cc874b82d95b82669824efae39ccf0f3277e613171acc7ef", "bytes": 45466, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/react.js", "sha256": "sha256:8a04d33413e1af23d3da12f720c870e7841a63671a5657a60c063c5b522ae79f", "bytes": 421948, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/zod.js", "sha256": "sha256:6590790c7ddf201510d0d91cd868a5300928824d6b0783c1455ae8910df3b4cf", "bytes": 129182, "contentType": "application/javascript" },
