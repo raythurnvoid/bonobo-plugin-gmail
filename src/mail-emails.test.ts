@@ -1,6 +1,6 @@
 import type { BonoboClient } from "bonobo-plugin-sdk/frontend";
 import { describe, expect, test, vi } from "vitest";
-import { create_mailbox_walk, parse_email_markdown } from "./mail-emails";
+import { create_mailbox_walk, parse_email_markdown, read_email } from "./mail-emails";
 
 // The same shape the Gmail plugin writes (gmail_format_markdown in bonobo-plugin-gmail).
 const EMAIL_FILE = [
@@ -43,6 +43,51 @@ describe("parse_email_markdown", () => {
 			senderUnconfirmed: true,
 		});
 		expect(email.body).toBe("Hi, are you free on Friday?");
+	});
+});
+
+describe("read_email", () => {
+	test("reads every page and joins a UTF-8 character split across pages", async () => {
+		const content = EMAIL_FILE + "Hello 👋";
+		const bytes = new TextEncoder().encode(content);
+		const fetchRaw = vi.fn()
+			.mockResolvedValueOnce(new Response(bytes.slice(0, -2), { headers: { "X-File-Next-Cursor": "page-two" } }))
+			.mockResolvedValueOnce(new Response(bytes.slice(-2)));
+		const email = await read_email({ fetchRaw } as unknown as BonoboClient, "/email.md");
+		expect(email).toEqual(parse_email_markdown("/email.md", content));
+		expect(fetchRaw.mock.calls).toEqual([
+			["/api/v1/files/read", { path: "/email.md", cursor: null }],
+			["/api/v1/files/read", { path: "/email.md", cursor: "page-two" }],
+		]);
+	});
+
+	test("does not return partial text when a later page fails", async () => {
+		const fetchRaw = vi.fn()
+			.mockResolvedValueOnce(new Response(EMAIL_FILE, { headers: { "X-File-Next-Cursor": "page-two" } }))
+			.mockResolvedValueOnce(Response.json({ message: "File changed.", errorCode: "file_changed" }, { status: 409 }));
+		await expect(read_email({ fetchRaw } as unknown as BonoboClient, "/email.md")).rejects.toThrow("File changed.");
+	});
+
+	test("retries a rate-limited page with the same cursor", async () => {
+		vi.useFakeTimers();
+		try {
+			const fetchRaw = vi.fn()
+				.mockResolvedValueOnce(new Response("Hello ", { headers: { "X-File-Next-Cursor": "page-two" } }))
+				.mockResolvedValueOnce(Response.json({ retryAfterMs: 20 }, { status: 429 }))
+				.mockResolvedValueOnce(new Response("world"));
+			const result = read_email({ fetchRaw } as unknown as BonoboClient, "/email.md");
+			await vi.runAllTimersAsync();
+			expect((await result).body).toBe("Hello world");
+			expect(fetchRaw.mock.calls[1]).toEqual(fetchRaw.mock.calls[2]);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	test("returns a call-limit refusal without retrying", async () => {
+		const fetchRaw = vi.fn().mockResolvedValue(Response.json({ message: "Plugin API call limit exceeded" }, { status: 429 }));
+		await expect(read_email({ fetchRaw } as unknown as BonoboClient, "/email.md")).rejects.toThrow("Plugin API call limit exceeded");
+		expect(fetchRaw).toHaveBeenCalledOnce();
 	});
 });
 

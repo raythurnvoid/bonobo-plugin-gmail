@@ -2,6 +2,8 @@
 
 Gmail is a Bonobo Senate plugin with its own Convex backend. It saves received and sent mail as Markdown files. Attachments are saved beside each email. Bonobo Senate owns Files, permissions, billing, and installation.
 
+The Mail page reads saved emails through the paged `files/read` API. It follows each next cursor and keeps one UTF-8 decoder until EOF. It parses only the complete email. A failed later page shows the read error. Rate-limit retries keep the same path and cursor.
+
 The build follows plan v4. Version 0.2.4 added the connection page and background sync. Version 0.3.0 adds the Mail page: read the saved emails, and write Gmail drafts with the chat agent. It replaces the separate Mail plugin. Live Gmail and hosting checks are still open. The integration is not release ready yet.
 
 The frontend build keeps the page, React, and Zod in separate files. Each file is formatted and listed in the manifest with its hash. This lets the publisher read the page code within its scan limit.

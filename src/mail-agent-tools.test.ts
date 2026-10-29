@@ -30,7 +30,7 @@ function make_page(viewPatch: Partial<MailView> = {}) {
 	const client = {
 		getToken: async () => "plu_test",
 		refreshToken: async () => "plu_new",
-		fetchJson: async () => ({ status: 200, body: { content: EMAIL_FILE } }),
+		fetchRaw: async () => new Response(EMAIL_FILE),
 		agent: {
 			registerTool: (name: string, handler: (input: unknown) => unknown) => {
 				handlers.set(name, handler);

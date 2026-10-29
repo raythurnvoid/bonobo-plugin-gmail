@@ -1,4 +1,4 @@
-import type { BonoboClient } from "bonobo-plugin-sdk/frontend";
+import type { BonoboClient, BonoboHttpJsonApiPath } from "bonobo-plugin-sdk/frontend";
 import type { BonoboHttpApi, BonoboHttpApiPath, BonoboHttpResponse } from "bonobo-plugin-sdk/http-api";
 import { gmail_ApiError, gmail_error_message } from "./gmail-api";
 
@@ -26,7 +26,7 @@ export function get_error_message(error: unknown): string {
  * A 429 without `retryAfterMs` ("Plugin API call limit exceeded") does not clear soon, so it comes
  * back at once. Every other status comes back for the caller to narrow on, a 5xx included.
  */
-export async function fetch_json_with_429_retry<P extends BonoboHttpApiPath>(
+export async function fetch_json_with_429_retry<P extends BonoboHttpJsonApiPath>(
 	client: BonoboClient,
 	path: P,
 	body: BonoboHttpApi[P]["POST"]["body"],
@@ -44,5 +44,27 @@ export async function fetch_json_with_429_retry<P extends BonoboHttpApiPath>(
 			continue;
 		}
 		return answer;
+	}
+}
+
+/**
+ * Retry a raw response on 429, leaving the final response body unread for its caller.
+ */
+export async function fetch_raw_with_429_retry<P extends BonoboHttpApiPath>(
+	client: BonoboClient,
+	path: P,
+	body: BonoboHttpApi[P]["POST"]["body"],
+): Promise<Response> {
+	for (let attempt = 0; ; attempt += 1) {
+		const answer = await client.fetchRaw(path, body);
+		if (answer.status !== 429 || attempt >= MAX_429_RETRIES) return answer;
+		const answerBody: unknown = await answer.clone().json().catch(() => null);
+		const retryAfterMs =
+			typeof answerBody === "object" && answerBody !== null && "retryAfterMs" in answerBody
+				? answerBody.retryAfterMs
+				: undefined;
+		if (typeof retryAfterMs !== "number") return answer;
+		await answer.body?.cancel();
+		await sleep(retryAfterMs + Math.random() * 250);
 	}
 }

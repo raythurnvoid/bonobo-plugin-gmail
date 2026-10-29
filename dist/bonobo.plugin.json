@@ -2,7 +2,7 @@
 	"schemaVersion": 1,
 	"name": "gmail",
 	"displayName": "Gmail",
-	"version": "0.4.1",
+	"version": "0.4.2",
 	"description": "Save sent and received Gmail emails and attachments in Bonobo Senate Files. Read them in Mail, and write Gmail drafts with the chat agent.",
 	"compatibility": { "bonoboPluginRuntime": "1" },
 	"events": [],
@@ -170,12 +170,12 @@
 	"uiOutboundOrigins": ["https://kindhearted-mallard-511.convex.site"],
 	"files": [
 		{ "path": "dist/frontend/index.html", "sha256": "sha256:0f1543e7d0ad370fe64039ff2d49ff01174d9239e7257de765e0eb775aa3a96a", "bytes": 437, "contentType": "text/html" },
-		{ "path": "dist/frontend/assets/index.js", "sha256": "sha256:62344a078d0a34c458e6b492e2169b7c742047b094cff68abd07c80f348c43b8", "bytes": 111103, "contentType": "application/javascript" },
+		{ "path": "dist/frontend/assets/index.js", "sha256": "sha256:2009bfd33398062c7e8b438257a4510c5e1f32bb78ea7ce4bfb3d34471b52a25", "bytes": 111307, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/gmail-page.css", "sha256": "sha256:0080682c7f1a01d174fa68c5c7d93a9480e6f8ca30a9e0b9ec1aa7b5947c5de5", "bytes": 1517, "contentType": "text/css" },
 		{ "path": "dist/frontend/assets/mail-app.css", "sha256": "sha256:f7b52cbcb504bdab1e177300611f45cc087bcb94bee84b824e6812761cab0ff2", "bytes": 6396, "contentType": "text/css" },
 		{ "path": "dist/frontend/assets/gmail-api.js", "sha256": "sha256:c0e6d64f5f07f2d2acfbf59fee0489cd74e58b39914f03b045d48af1a3a66709", "bytes": 6316, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/gmail-page.js", "sha256": "sha256:23e10e7311628d67d6db15684a80e43ca2e751da80f195089bedec53d2142a12", "bytes": 32487, "contentType": "application/javascript" },
-		{ "path": "dist/frontend/assets/mail-app.js", "sha256": "sha256:b92352aac79cb121cc874b82d95b82669824efae39ccf0f3277e613171acc7ef", "bytes": 45466, "contentType": "application/javascript" },
+		{ "path": "dist/frontend/assets/mail-app.js", "sha256": "sha256:61be30c5fcf2fc46132d38147ca979293c72b440ee639375d3b8b48e3363fb6a", "bytes": 46181, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/react.js", "sha256": "sha256:8a04d33413e1af23d3da12f720c870e7841a63671a5657a60c063c5b522ae79f", "bytes": 421948, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/zod.js", "sha256": "sha256:6590790c7ddf201510d0d91cd868a5300928824d6b0783c1455ae8910df3b4cf", "bytes": 129182, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/rolldown-runtime.js", "sha256": "sha256:5388ca8b7a40c7dc758236649b52600b193fa7b2cfaac61c9030bdf3ac2523df", "bytes": 926, "contentType": "application/javascript" }

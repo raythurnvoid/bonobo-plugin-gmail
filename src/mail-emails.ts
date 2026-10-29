@@ -1,6 +1,6 @@
 import type { BonoboClient } from "bonobo-plugin-sdk/frontend";
 import type { BonoboHttpResponse } from "bonobo-plugin-sdk/http-api";
-import { fetch_json_with_429_retry } from "./mail-retry";
+import { fetch_json_with_429_retry, fetch_raw_with_429_retry } from "./mail-retry";
 
 /**
  * The sync saves each email as `<account destination>/<YYYY>/<MM>/<DD>-<subject>-<gmail id>.md`.
@@ -114,16 +114,23 @@ export function parse_email_markdown(path: string, content: string): Email {
 }
 
 /**
- * Read one email file. The read door has no partial read, so a list row reads the whole file too.
+ * Read all saved pages before parsing. One decoder keeps split UTF-8 characters intact.
  */
 export async function read_email(client: BonoboClient, path: string) {
-	const answer = await fetch_json_with_429_retry(client, "/api/v1/files/read", { path });
-	if (answer.status !== 200 || answer.body === null || !("content" in answer.body)) {
-		const message = answer.body && "message" in answer.body ? answer.body.message : `HTTP ${answer.status}`;
-		throw new Error(`Failed to read ${path}: ${message}`);
-	}
-
-	return parse_email_markdown(path, answer.body.content);
+	const decoder = new TextDecoder();
+	let cursor: string | null = null;
+	let content = "";
+	do {
+		const answer: Response = await fetch_raw_with_429_retry(client, "/api/v1/files/read", { path, cursor });
+		if (answer.status !== 200) {
+			const body: unknown = await answer.json().catch(() => null);
+			const message = typeof body === "object" && body !== null && "message" in body ? body.message : `HTTP ${answer.status}`;
+			throw new Error(`Failed to read ${path}: ${message}`);
+		}
+		content += decoder.decode(await answer.arrayBuffer(), { stream: true });
+		cursor = answer.headers.get("X-File-Next-Cursor");
+	} while (cursor !== null);
+	return parse_email_markdown(path, content + decoder.decode());
 }
 
 type ListedChild = { path: string; name: string; kind: "folder" | "file"; locked: boolean };
