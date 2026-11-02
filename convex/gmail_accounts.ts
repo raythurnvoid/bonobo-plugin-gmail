@@ -682,50 +682,63 @@ function matching_claim(account: Doc<"gmail_accounts">, row: Doc<"messages_ledge
 		: claim === null;
 }
 
+const worker_validator = v.union(v.object({ account: doc(schema, "gmail_accounts"), grant: doc(schema, "host_grants") }), v.null());
+
 export const get_worker = internalQuery({
 	args: { work: gmail_worker_context },
-	returns: v.union(v.object({ account: doc(schema, "gmail_accounts"), grant: doc(schema, "host_grants") }), v.null()),
+	returns: worker_validator,
 	handler: async (ctx, args) => worker_account(ctx, args.work),
 });
 
+const message_guard_args = {
+	work: gmail_worker_context,
+	row: doc(schema, "messages_ledger"),
+	claim: v.union(gmail_permission_claim, v.null()),
+};
+
+// Return the account and grant when the work is current and the message row is still the one the worker
+// read, with the same permission claim. Return null otherwise. The worker uses the returned account
+// instead of a separate get_worker read, because each read is a function call.
+async function guarded_worker(
+	ctx: QueryCtx | MutationCtx,
+	args: { work: WorkerContext; row: Doc<"messages_ledger">; claim: PermissionClaim | null },
+) {
+	const current = await worker_account(ctx, args.work);
+	const row = await ctx.db.get(args.row._id);
+	return current &&
+		row &&
+		row.accountId === current.account._id &&
+		same(row, args.row) &&
+		matching_claim(current.account, row, args.claim)
+		? current
+		: null;
+}
+
 // A slice records the message it starts. If the slice dies before it saves that message, complete_slice
 // blames the message. A crash after a save is progress. The message's own retry limits handle it.
+// It also checks the row like guard_message, so the worker needs no other read before it starts.
 export const mark_message = internalMutation({
-	args: { work: gmail_worker_context, rowId: v.id("messages_ledger") },
-	returns: v.boolean(),
+	args: message_guard_args,
+	returns: worker_validator,
 	handler: async (ctx, args) => {
-		const current = await worker_account(ctx, args.work);
-		if (!current) return false;
+		const current = await guarded_worker(ctx, args);
+		if (!current) return null;
 		const mark = current.account.messageMark;
 		await ctx.db.patch(current.account._id, {
 			messageMark: {
-				rowId: args.rowId,
+				rowId: args.row._id,
 				requestId: args.work.requestId,
-				crashes: mark?.rowId === args.rowId ? mark.crashes : 0,
+				crashes: mark?.rowId === args.row._id ? mark.crashes : 0,
 			},
 		});
-		return true;
+		return { account: (await ctx.db.get(current.account._id))!, grant: current.grant };
 	},
 });
 
 export const guard_message = internalQuery({
-	args: {
-		work: gmail_worker_context,
-		row: doc(schema, "messages_ledger"),
-		claim: v.union(gmail_permission_claim, v.null()),
-	},
-	returns: v.boolean(),
-	handler: async (ctx, args) => {
-		const current = await worker_account(ctx, args.work);
-		const row = await ctx.db.get(args.row._id);
-		return (
-			!!current &&
-			!!row &&
-			row.accountId === current.account._id &&
-			same(row, args.row) &&
-			matching_claim(current.account, row, args.claim)
-		);
-	},
+	args: message_guard_args,
+	returns: worker_validator,
+	handler: async (ctx, args) => guarded_worker(ctx, args),
 });
 
 async function save_ledger(
@@ -1099,27 +1112,30 @@ export const ingest_history = internalMutation({
 	},
 });
 
+// Check the message like guard_message, then reserve the next call time for this Files route. Doing both
+// in one mutation, and returning the account and grant, saves the worker three function calls for each
+// Files call.
 export const pace_press = internalMutation({
-	args: { work: gmail_worker_context, route: v.string() },
-	returns: v.union(v.number(), v.null()),
+	args: { ...message_guard_args, route: v.string() },
+	returns: v.union(v.object({ delay: v.number(), account: doc(schema, "gmail_accounts"), grant: doc(schema, "host_grants") }), v.null()),
 	handler: async (ctx, args) => {
-		const current = await worker_account(ctx, args.work);
+		const current = await guarded_worker(ctx, args);
 		if (!current) return null;
-		const row = await ctx.db
+		const pacing = await ctx.db
 			.query("press_route_pacing")
 			.withIndex("by_installation_route", (q) =>
 				q.eq("installationId", current.account.hostInstallationId).eq("route", args.route),
 			)
 			.unique();
-		const callAt = Math.max(Date.now(), (row?.lastCallAt ?? 0) + 600);
-		if (row) await ctx.db.patch(row._id, { lastCallAt: callAt });
+		const callAt = Math.max(Date.now(), (pacing?.lastCallAt ?? 0) + 600);
+		if (pacing) await ctx.db.patch(pacing._id, { lastCallAt: callAt });
 		else
 			await ctx.db.insert("press_route_pacing", {
 				installationId: current.account.hostInstallationId,
 				route: args.route,
 				lastCallAt: callAt,
 			});
-		return callAt - Date.now();
+		return { delay: callAt - Date.now(), ...current };
 	},
 });
 

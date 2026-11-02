@@ -366,6 +366,26 @@ describe("work_account_slice", () => {
 			attachments: [{ state: "saved" }],
 		});
 	});
+	test("saves an email without attachments with one read, one pace and two saves", async () => {
+		const f = await fixture({ fresh: true });
+		const plain = { ...source, payload: { ...source.payload, parts: [source.payload.parts[0]] } };
+		network((path) =>
+			path.endsWith("/messages/ab")
+				? Response.json(plain)
+				: path.endsWith("/files/write")
+					? Response.json({ nodeId: "email-node" })
+					: Response.json({}, { status: 500 }),
+		);
+		// Each nested call is a function call that the plugin pays for.
+		const functions = record_functions();
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		// The token is saved at the first Gmail read, the message source read.
+		expect(functions).toEqual(["gmail_accounts:get_worker", "gmail_accounts:retry_candidates", "gmail_accounts:mark_message",
+			"gmail_accounts:save_access_token", "gmail_accounts:save_message", "gmail_accounts:pace_press", "gmail_accounts:save_message",
+			"gmail_accounts:finish_slice"]);
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({ status: "done", emailWritten: true, fileNodeId: "email-node",
+			attachments: [], nextAttemptAt: null });
+	});
 	test.each(["planned", "written"] as const)("a stop after the %s email save keeps its path and writes once", async (step) => {
 		let now = Date.now();
 		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
@@ -4022,7 +4042,7 @@ describe("permission guards", () => {
 				row,
 				claim: null,
 			}),
-		).toBe(false);
+		).toBeNull();
 		const calls = network(() => Response.json(committed));
 		await f.t.action(internal.gmail_worker.work_account_slice, {
 			work: f.work,
@@ -4863,10 +4883,10 @@ describe("worker budget and completion", () => {
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const f = await fixture(kind === "email" ? { fresh: true } : { sourceError: "google_revoked" });
 		const route = kind === "email" ? "/api/v1/files/write" : "/api/v1/files/service-uploads/finalize";
-		expect(await f.t.mutation(internal.gmail_accounts.pace_press, { work: f.work, route })).toBe(0);
+		const original = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		expect(await f.t.mutation(internal.gmail_accounts.pace_press, { work: f.work, row: original, claim: null, route })).toMatchObject({ delay: 0 });
 		const prior = (await f.t.run((ctx) => ctx.db.query("press_route_pacing").withIndex("by_installation_route",
 			(q) => q.eq("installationId", f.actor.installationId).eq("route", route)).unique()))!;
-		const original = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
 		let resume = false;
 		const calls = network((path) => {
 			if (resume) now += 600;

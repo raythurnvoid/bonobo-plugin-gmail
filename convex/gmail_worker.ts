@@ -298,22 +298,24 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
     )
       return;
     steps++;
-    if (
-      !(await ctx.runMutation(internal.gmail_accounts.mark_message, {
-        work,
-        rowId: row._id,
-      }))
-    )
-      throw new StaleWork();
+    // The mark also checks the row and returns the account, like guard().
+    const marked = await ctx.runMutation(internal.gmail_accounts.mark_message, {
+      work,
+      row,
+      claim,
+    });
+    if (!marked) throw new StaleWork();
+    latestAccount = marked.account;
+    // Return the current account and grant, so callers need no get_worker read too.
     async function guard() {
-      if (
-        !(await ctx.runQuery(internal.gmail_accounts.guard_message, {
-          work,
-          row,
-          claim,
-        }))
-      )
-        throw new StaleWork();
+      const value = await ctx.runQuery(internal.gmail_accounts.guard_message, {
+        work,
+        row,
+        claim,
+      });
+      if (!value) throw new StaleWork();
+      latestAccount = value.account;
+      return value;
     }
     async function save(
       next: Partial<Doc<"messages_ledger">>,
@@ -375,18 +377,24 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
       run: (token: string) => Promise<T>,
       operation: NonNullable<Doc<"messages_ledger">["fileAccessOperation"]>,
     ) {
-      await guard();
-      const delay = await ctx.runMutation(
-        internal.gmail_accounts.pace_press,
-        { work, route },
-      );
-      if (delay === null) throw new StaleWork();
+      // The pace also checks the row and returns the account and grant, like guard().
+      const paced = await ctx.runMutation(internal.gmail_accounts.pace_press, {
+        work,
+        row,
+        claim,
+        route,
+      });
+      if (!paced) throw new StaleWork();
+      latestAccount = paced.account;
+      let { account, grant } = paced;
       // A short shared pace avoids burst errors. Longer waits release the slot.
-      if (delay > 1000) throw new gmail_HostError(429, "local_pace", delay);
-      if (delay > 0)
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      await guard();
-      const { account, grant } = await current();
+      if (paced.delay > 1000)
+        throw new gmail_HostError(429, "local_pace", paced.delay);
+      // Check again only after a wait. Without a wait, the pace check is still fresh.
+      if (paced.delay > 0) {
+        await new Promise((resolve) => setTimeout(resolve, paced.delay));
+        ({ account, grant } = await guard());
+      }
       const token = await gmail_decrypt(
         grant.sealedSecret!,
         `grant:${grant._id}:sealed`,
@@ -425,7 +433,7 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
     }
     async function finish(
       next: Partial<Doc<"messages_ledger">> = {},
-      proof: number | null = null,
+      proof: "email_write" | number | null = null,
       transfer = false,
     ) {
       const progress = { ...row, ...next };
@@ -543,10 +551,13 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
       });
       await finish({ ...next, attachments }, answer ? selected : null);
     }
+    // A unit that starts with a receipt check may save before the source read, so it reads the account again.
+    // Other units use the account from the mark: nothing was saved since.
+    const settles = selected >= 0 && row.attachments[selected].request !== null;
     try {
-      if (selected >= 0 && row.attachments[selected].request) {
+      if (settles) {
         const task = row.attachments[selected];
-        const { account } = await current();
+        const { account } = marked;
         if (task.request!.installationId === account.hostInstallationId) {
           try {
             const answer = await host(
@@ -630,7 +641,8 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
           }
         }
       }
-      const { account } = await current();
+      // guard() also checks the row before the source read.
+      const { account } = settles ? await guard() : marked;
       let message: ReturnType<typeof gmail_discover_message> | null = null;
       if (
         !account.sourceError &&
@@ -640,11 +652,12 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
         !settlementOnly
       ) {
         try {
-          await guard();
           message = gmail_discover_message(
             await google(
               `/messages/${row.gmailMessageId}?format=full`,
               GMAIL_JSON_BYTES,
+              20_000,
+              account,
             ),
           );
           if (message.id !== row.gmailMessageId)
@@ -736,13 +749,14 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
         let data = part.data;
         delete part.data;
         if (data === undefined && part.attachmentId) {
-          await guard();
+          const { account } = await guard();
           let raw: unknown;
           try {
             raw = await google(
               `/messages/${row.gmailMessageId}/attachments/${encodeURIComponent(part.attachmentId)}`,
               GMAIL_JSON_BYTES,
               timeout,
+              account,
             );
           } catch (error) {
             if (!(error instanceof gmail_GoogleError) || error.status !== 404)
@@ -826,6 +840,11 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
               ),
             { kind: "email_write" },
           );
+          // With no attachment due now, save the final state in the same write. That saves a function call.
+          if (selected < 0) {
+            await finish({ emailWritten: true, fileNodeId: answer.nodeId, error: null }, "email_write");
+            return;
+          }
           await save(
             {
               emailWritten: true,
@@ -1242,8 +1261,10 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
     }
     const stepsBefore = steps;
     // The account counts its held rows, so skip the read when there are none. A row that a unit holds
-    // later in this slice waits at least an hour, so it cannot be due yet.
-    if (latestAccount.ledgerCounts.permissionHeld > 0) await held();
+    // later in this slice waits at least an hour, so it cannot be due yet. That is true for the loop
+    // below too, so it reads held rows only when this count was not zero.
+    const anyHeld = latestAccount.ledgerCounts.permissionHeld > 0;
+    if (anyHeld) await held();
     const rows: Doc<"messages_ledger">[] = await ctx.runQuery(
       internal.gmail_accounts.retry_candidates,
       {
@@ -1256,7 +1277,7 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
       await unit(row);
     }
     // Only a unit that ran in this pass can bring the proof that frees the next held unit.
-    if (steps > stepsBefore) {
+    if (anyHeld && steps > stepsBefore) {
       while (budget() && (await held())) {
         /* Each successful proof may free the next held unit. */
       }
