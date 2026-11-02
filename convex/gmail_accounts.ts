@@ -1246,6 +1246,10 @@ export const finish_slice = internalMutation({
 		if (deadHost) await ctx.db.patch(current.grant._id, { phase: "blocked", error: args.error, nextAttemptAt: null });
 		await ctx.db.patch(account._id, {
 			sourceError,
+			// TODO: A Compose upgrade swaps the refresh token but keeps the generation (see gmail_oauth.ts),
+			// so this slice still passes its worker check. If the slice used the old token and Google refused
+			// it as revoked, this line deletes the new token too, and sync stops until the member connects
+			// again. Clear the tokens only when the saved refresh token is still the one this slice used.
 			...(args.error === "google_revoked" ? { googleRefreshToken: null, googleAccessToken: null } : {}),
 			...(args.checkedHistory ? { lastSyncedAt: Date.now() } : {}),
 			idleSlices,
