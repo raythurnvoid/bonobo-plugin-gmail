@@ -1213,10 +1213,11 @@ export const finish_slice = internalMutation({
 		const active = args.active || !account.backfillComplete || account.pushPending;
 		const idleSlices = !succeeded ? account.idleSlices : active ? 0 : Math.min(account.idleSlices + 1, 6);
 		// Idle accounts wait 2, 4, 8 minutes and more, up to 15 minutes. With a live Gmail watch, a push brings
-		// new mail at once, so the wait goes up to 60 minutes. It only catches a lost push. A due retry still
-		// runs on time.
-		const longestWait = account.watchExpiresAt !== null && account.watchExpiresAt > Date.now() ? 60 * 60_000 : 15 * 60_000;
-		const idleAt = Date.now() + Math.min(60_000 * 2 ** idleSlices, longestWait);
+		// new mail at once, so an idle account waits 60 minutes from the first idle slice. That wait only
+		// catches a lost push. Short waits there would cost about six more slices after each email, and each
+		// slice is several function calls. A due retry still runs on time.
+		const watchLive = account.watchExpiresAt !== null && account.watchExpiresAt > Date.now();
+		const idleAt = Date.now() + (watchLive ? 60 * 60_000 : Math.min(60_000 * 2 ** idleSlices, 15 * 60_000));
 		const nextSyncAt = deadHost
 			? null
 			: temporary
@@ -1279,7 +1280,7 @@ async function cancel_stuck_slice_or_check_alive(ctx: MutationCtx, workId: Id<"_
 }
 
 // Each writer that leaves an account free (no syncWorkId) with a due time schedules this for that
-// time. The 15-minute cron only catches a lost schedule. One slice runs at a time in the whole
+// time. The hourly cron only catches a lost schedule. One slice runs at a time in the whole
 // deployment. A due account that finds the slot busy waits: the busy slice's completion schedules
 // the next dispatch.
 export const dispatch = internalMutation({
@@ -1294,7 +1295,7 @@ export const dispatch = internalMutation({
 		if (busy) {
 			if (await cancel_stuck_slice_or_check_alive(ctx, busy.syncWorkId!)) return null;
 			// The slice ended before finish_slice, or never started. Free the slot as check_slice would. This
-			// also covers a lost check_slice (for example, cancelled in the dashboard), so the 15-minute cron
+			// also covers a lost check_slice (for example, cancelled in the dashboard), so the hourly cron
 			// still recovers sync.
 			await complete_slice(ctx, busy, true);
 			return null;
@@ -1333,8 +1334,9 @@ export const dispatch = internalMutation({
 			await ctx.db.patch(account._id, { syncRequestId: requestId, syncWorkId: workId });
 			return null;
 		}
-		// Every row read was cleared. Read on, because the next valid account may have no other dispatch.
-		if (due.length === 25) await ctx.scheduler.runAfter(0, internal.gmail_accounts.dispatch, {});
+		// Every row read was cleared. The next valid account may have counted on this dispatch, because a
+		// completion schedules only one, so schedule the next one here. With 25 rows read, more may be due now.
+		if (due.length) await schedule_next_dispatch(ctx);
 		return null;
 	},
 });
@@ -1391,18 +1393,20 @@ async function complete_slice(ctx: MutationCtx, account: Doc<"gmail_accounts">, 
 			: {}),
 		updatedAt: Date.now(),
 	});
-	if (nextSyncAt !== null)
-		await ctx.scheduler.runAfter(nextSyncAt - Date.now(), internal.gmail_accounts.dispatch, {});
-	// The earliest other free account may have missed its own dispatch while the slot was busy. Start
-	// it first. Keep this account's dispatch too, in case that account can no longer start.
-	const other = (
-		await ctx.db
-			.query("gmail_accounts")
-			.withIndex("by_syncWorkId_nextSyncAt", (q) => q.eq("syncWorkId", null).gt("nextSyncAt", null))
-			.take(2)
-	).find((row) => row._id !== account._id);
-	if (other?.nextSyncAt && (nextSyncAt === null || other.nextSyncAt < nextSyncAt))
-		await ctx.scheduler.runAfter(Math.max(0, other.nextSyncAt - Date.now()), internal.gmail_accounts.dispatch, {});
+	await schedule_next_dispatch(ctx);
+}
+
+// Schedule one dispatch, for the earliest free account. That can be the account that just ended, or
+// another account that missed its own dispatch while the slot was busy. One dispatch is enough: the
+// slice it starts schedules the next one when it ends. Each dispatch is a function call, and the month
+// has a call limit, so do not schedule one for each account.
+async function schedule_next_dispatch(ctx: MutationCtx) {
+	const next = await ctx.db
+		.query("gmail_accounts")
+		.withIndex("by_syncWorkId_nextSyncAt", (q) => q.eq("syncWorkId", null).gt("nextSyncAt", null))
+		.first();
+	if (next?.nextSyncAt)
+		await ctx.scheduler.runAfter(Math.max(0, next.nextSyncAt - Date.now()), internal.gmail_accounts.dispatch, {});
 }
 
 // The slice action calls this when finish_slice did not free the slot: after a stale exit, or when the

@@ -168,7 +168,7 @@ export const connect = internalAction({
 });
 
 // Each writer of a grant due time schedules this. A step action runs at most once, so a writer that
-// starts one also schedules a check after gmail_STEP_CHECK_MS. The 15-minute cron only catches a lost
+// starts one also schedules a check after gmail_STEP_CHECK_MS. The hourly cron only catches a lost
 // schedule.
 export const sweep = internalMutation({
 	args: {}, returns: v.null(),

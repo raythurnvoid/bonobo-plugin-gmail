@@ -6119,13 +6119,13 @@ describe("idle wait", () => {
 		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
 		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ pushPending: false, idleSlices: 0, nextSyncAt: now + 60_000 });
 	});
-	test("a slice renews the Gmail watch once a day without drafts, a live watch lets the idle wait reach 60 minutes, and a failed watch keeps the sync going", async () => {
+	test("a slice renews the Gmail watch once a day without drafts, a live watch makes the first idle wait 60 minutes, and a failed watch keeps the sync going", async () => {
 		let now = Date.now();
 		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.stubEnv("GMAIL_PUSH_TOPIC", "projects/test/topics/gmail-push");
 		vi.stubEnv("GMAIL_PUSH_TOKEN", "a".repeat(64));
 		try {
-			const f = await idle_fixture({ idleSlices: 5 });
+			const f = await idle_fixture({ idleSlices: 0 });
 			let watchStatus = 200;
 			const calls = network((path) =>
 				path.endsWith("/history")
@@ -6140,7 +6140,7 @@ describe("idle wait", () => {
 			expect(watches()).toEqual([{ path: "/gmail/v1/users/me/watch",
 				body: { topicName: "projects/test/topics/gmail-push", labelIds: ["DRAFT"], labelFilterBehavior: "EXCLUDE" } }]);
 			const watchExpiresAt = now + 7 * 24 * 3600_000;
-			expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ watchExpiresAt, idleSlices: 6, nextSyncAt: now + 60 * 60_000 });
+			expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ watchExpiresAt, idleSlices: 1, nextSyncAt: now + 60 * 60_000 });
 
 			// A watch that ends in more than 6 days is not renewed.
 			await hold_slot(f);
@@ -6198,12 +6198,14 @@ describe("saved access token", () => {
 		expect(calls.map((call) => call.path)).toEqual(["/token", "/gmail/v1/users/me/history", "/gmail/v1/users/me/history"]);
 		expect((await f.t.run((ctx) => ctx.db.get(f.accountId)))!.googleAccessToken).toMatchObject({ encrypted: expect.any(String) });
 	});
-	test("an idle slice with a saved token reads the account once", async () => {
+	test("an idle slice reads the account once, with or without a saved token", async () => {
 		const f = await idle_fixture();
 		network((path) => (path.endsWith("/history") ? Response.json(empty_history) : Response.json({}, { status: 500 })));
-		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
-		await hold_slot(f);
 		const functions = record_functions();
+		// The first slice has no saved token, so it gets one from Google and saves it.
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		expect(functions.splice(0)).toEqual(["gmail_accounts:get_worker", "gmail_accounts:save_access_token", "gmail_accounts:finish_slice"]);
+		await hold_slot(f);
 		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
 		expect(functions).toEqual(["gmail_accounts:get_worker", "gmail_accounts:finish_slice"]);
 	});

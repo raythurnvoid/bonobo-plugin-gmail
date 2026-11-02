@@ -314,6 +314,20 @@ describe("on_complete", () => {
 		vi.advanceTimersByTime(1); await t.finishInProgressScheduledFunctions();
 		expect((await t.run(ctx => ctx.db.get(accountId)))?.syncWorkId).toEqual(expect.any(String));
 	});
+	test("schedules one dispatch, for the earliest free account", async () => {
+		const f = await gmail_test_fixture();
+		const secondId = await second_account(f);
+		const due = Date.now() + 5 * 60_000;
+		await f.t.run(async ctx => {
+			await ctx.db.patch(f.accountId, { syncWorkId: await ctx.scheduler.runAfter(3600_000, internal.gmail_grants.connect, { grantId: f.grantId }),
+				syncRequestId: "request", nextSyncAt: Date.now() + 15 * 60_000 });
+			await ctx.db.patch(secondId, { nextSyncAt: due });
+		});
+		await f.t.mutation(internal.gmail_accounts.on_complete, { context: { accountId: f.accountId, generation: 1, requestId: "request", grantId: f.grantId, checkId: f.checkId } });
+		const dispatches = await f.t.run(async ctx => (await ctx.db.system.query("_scheduled_functions").collect())
+			.filter(job => job.name.includes("dispatch") && job.state.kind === "pending"));
+		expect(dispatches.map(job => job.scheduledTime)).toEqual([due]);
+	});
 	test("keeps this account's dispatch when an earlier account can no longer start", async () => {
 		const f = await gmail_test_fixture();
 		const secondId = await second_account(f);

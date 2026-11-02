@@ -163,6 +163,8 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
     );
   }
 
+  // Every caller read the account just before. Do not read it again here: slices often run an hour
+  // apart, after the saved token ended, so each extra read would cost a function call in most slices.
   async function refresh(account: Doc<"gmail_accounts">) {
     if (!account.googleRefreshToken)
       throw new SourceStopped("google_revoked");
@@ -174,7 +176,6 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
         account.emailAddress,
       ),
     );
-    await current();
     const result = await gmail_google_token({ refreshToken });
     accessToken = result.access_token;
     accessExpiresAt = Date.now() + result.expires_in * 1000;
@@ -192,7 +193,6 @@ async function run_slice(ctx: ActionCtx, work: Infer<typeof gmail_worker_context
         expiresAt: accessExpiresAt,
       },
     });
-    await current();
   }
 
   // A caller that read the account just before, with no write since, passes it to skip one read.
