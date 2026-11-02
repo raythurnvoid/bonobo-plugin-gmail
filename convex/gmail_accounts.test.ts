@@ -5,6 +5,7 @@ import type { ActionCtx } from "./_generated/server";
 import { gmail_test_fixture } from "../scripts/gmail-test-fixtures";
 import { gmail_random_secret } from "./gmail_secrets";
 import { work_account_slice } from "./gmail_worker";
+import { gmail_schedule_dispatch } from "./gmail_accounts";
 
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(1_800_000_000_000); });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
@@ -226,6 +227,23 @@ describe("dispatch", () => {
 		vi.advanceTimersByTime(0); await f.t.finishInProgressScheduledFunctions();
 		expect((await f.t.run(ctx => ctx.db.get(first._id)))!.syncWorkId).toBeNull();
 		expect((await f.t.run(ctx => ctx.db.get(other._id)))!.syncWorkId).toEqual(expect.any(String));
+	});
+	test("keeps one dispatch waiting, at the earliest asked time, and a dispatch that starts nothing asks for the next", async () => {
+		const f = await gmail_test_fixture();
+		const now = Date.now();
+		const waiting = () => f.t.run(async ctx => (await ctx.db.system.query("_scheduled_functions").collect())
+			.filter(job => job.name.includes("dispatch") && job.state.kind === "pending").map(job => job.scheduledTime));
+		await f.t.run(ctx => gmail_schedule_dispatch(ctx, now + 10 * 60_000));
+		await f.t.run(ctx => gmail_schedule_dispatch(ctx, now + 20 * 60_000));
+		expect(await waiting()).toEqual([now + 10 * 60_000]);
+		await f.t.run(ctx => gmail_schedule_dispatch(ctx, now + 5 * 60_000));
+		expect(await waiting()).toEqual([now + 5 * 60_000]);
+
+		// The account is due later than the waiting dispatch, so that dispatch starts nothing.
+		await f.t.run(ctx => ctx.db.patch(f.accountId, { nextSyncAt: now + 30 * 60_000 }));
+		vi.advanceTimersByTime(5 * 60_000); await f.t.finishInProgressScheduledFunctions();
+		expect((await f.t.run(ctx => ctx.db.get(f.accountId)))!.syncWorkId).toBeNull();
+		expect(await waiting()).toEqual([now + 30 * 60_000]);
 	});
 	test("frees the slot of a dead slice whose check was lost", async () => {
 		const f = await gmail_test_fixture();

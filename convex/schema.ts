@@ -132,6 +132,8 @@ export default defineSchema({
 		.index("by_expiresAt", ["expiresAt"]),
 	press_route_pacing: defineTable({ installationId: v.string(), route: v.string(), lastCallAt: v.number() })
 		.index("by_installation_route", ["installationId", "route"]),
+	// One row: the dispatch job that gmail_schedule_dispatch scheduled last.
+	dispatch_schedule: defineTable({ jobId: v.id("_scheduled_functions") }),
 	messages_ledger: defineTable({
 		accountId: v.id("gmail_accounts"), gmailMessageId: v.string(), gmailThreadId: nullableString, internalDate: nullableNumber,
 		status: gmail_ledger_status, skipReason: v.union(v.literal("spam"), v.literal("trash"), v.literal("draft"), v.literal("deleted_before_fetch"), v.null()),

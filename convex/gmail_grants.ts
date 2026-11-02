@@ -8,6 +8,7 @@ import schema from "./schema";
 import { gmail_decrypt, gmail_encrypt, gmail_random_secret } from "./gmail_secrets";
 import { gmail_grant_response, gmail_HostError, press_post } from "./press";
 import { gmail_verify_live } from "./gmail_page";
+import { gmail_schedule_dispatch } from "./gmail_accounts";
 
 const token_response = z.object({ token: z.string().regex(/^psg_[0-9a-f]{64}$/), expiresAt: z.number().positive(), scopes: z.array(z.string()) });
 const active_phase = v.union(v.literal("exchange"), v.literal("renew"), v.literal("seal"));
@@ -68,7 +69,7 @@ export const save_step = internalMutation({
 			await ctx.db.patch(account._id, { nextSyncAt, idleSlices: renewal ? account.idleSlices : 0, syncError: account.sourceError,
 				syncStatus: account.sourceError ? "error" : account.backfillComplete ? "live" : "backfilling", updatedAt: Date.now() });
 			// A kept due time already has its dispatch.
-			if (nextSyncAt !== null && nextSyncAt !== keptAt) await ctx.scheduler.runAfter(Math.max(0, nextSyncAt - Date.now()), internal.gmail_accounts.dispatch, {});
+			if (nextSyncAt !== null && nextSyncAt !== keptAt) await gmail_schedule_dispatch(ctx, nextSyncAt);
 			await ctx.scheduler.runAfter(12 * 60 * 60_000, internal.gmail_grants.renew, { grantId: grant._id, lifecycleRequestId: grant.lifecycleRequestId });
 		} else {
 			const pending = args.phase === "exchange" && grant.attemptId !== null;
