@@ -245,6 +245,17 @@ describe("dispatch", () => {
 		expect((await f.t.run(ctx => ctx.db.get(f.accountId)))!.syncWorkId).toBeNull();
 		expect(await waiting()).toEqual([now + 30 * 60_000]);
 	});
+	test("replaces a waiting dispatch that is stuck before its start with one that runs now", async () => {
+		const f = await gmail_test_fixture();
+		const now = Date.now();
+		const waiting = () => f.t.run(async ctx => (await ctx.db.system.query("_scheduled_functions").collect())
+			.filter(job => job.name.includes("dispatch") && job.state.kind === "pending").map(job => job.scheduledTime));
+		await f.t.run(ctx => gmail_schedule_dispatch(ctx, now));
+		// Move the clock without running the job, as when Convex keeps retrying a job that fails before it starts.
+		vi.setSystemTime(now + 6 * 60_000);
+		await f.t.run(ctx => gmail_schedule_dispatch(ctx, now + 30 * 60_000));
+		expect(await waiting()).toEqual([now + 6 * 60_000]);
+	});
 	test("frees the slot of a dead slice whose check was lost", async () => {
 		const f = await gmail_test_fixture();
 		stub_slice(async () => { throw new Error("Slice stopped before completion"); });
@@ -258,7 +269,7 @@ describe("dispatch", () => {
 		});
 		vi.advanceTimersByTime(60_000); await f.t.finishInProgressScheduledFunctions();
 		expect((await f.t.run(ctx => ctx.db.get(f.accountId)))!.syncWorkId).not.toBeNull();
-		// The 15-minute cron runs this dispatch.
+		// The hourly cron runs this dispatch.
 		await f.t.mutation(internal.gmail_accounts.dispatch, {});
 		expect(await f.t.run(ctx => ctx.db.get(f.accountId))).toMatchObject({ syncWorkId: null, syncRequestId: null,
 			syncStatus: "blocked", syncError: "sync_error", temporaryFailures: 1 });
@@ -346,7 +357,7 @@ describe("on_complete", () => {
 			.filter(job => job.name.includes("dispatch") && job.state.kind === "pending"));
 		expect(dispatches.map(job => job.scheduledTime)).toEqual([due]);
 	});
-	test("keeps this account's dispatch when an earlier account can no longer start", async () => {
+	test("starts this account after an earlier account can no longer start", async () => {
 		const f = await gmail_test_fixture();
 		const secondId = await second_account(f);
 		stub_slice();

@@ -52,7 +52,7 @@ async function workspace_account(
 
 // The caller frees the slot. Cancel only a slice that has not started. A running action keeps going:
 // its late writes fail the request guards, and it stops at its next account read. Then start the
-// next due account, because its own dispatch may have run while the slot was busy.
+// next due account, because a dispatch may have run and found the slot busy.
 export async function gmail_stop_slice(ctx: MutationCtx, workId: Id<"_scheduled_functions">) {
 	const job = await ctx.db.system.get(workId);
 	if (job?.state.kind === "pending") await ctx.scheduler.cancel(workId);
@@ -1414,7 +1414,7 @@ async function complete_slice(ctx: MutationCtx, account: Doc<"gmail_accounts">, 
 }
 
 // Ask for a dispatch for the earliest free account. That can be the account that just ended, or
-// another account that missed its own dispatch while the slot was busy. One dispatch is enough: the
+// another account whose dispatch ran while the slot was busy. One dispatch is enough: the
 // slice it starts schedules the next one when it ends.
 async function schedule_next_dispatch(ctx: MutationCtx) {
 	const next = await ctx.db
@@ -1428,14 +1428,21 @@ async function schedule_next_dispatch(ctx: MutationCtx) {
 // one. When each got its own, most of them ran later and found nothing to do. Each one is a function
 // call, and the month has a call limit.
 //
-// A waiting dispatch at or before the asked time is enough: if it starts no slice, it asks for the next
-// one itself. A waiting dispatch after the asked time is cancelled for the same reason.
+// A waiting dispatch at or before the asked time is enough. If it finds the slot free but starts no
+// slice, it asks for the next one itself. If the slot is busy, the running slice asks when it ends.
+// A waiting dispatch after the asked time is cancelled and replaced for the same reason.
+//
+// A dispatch can get stuck before its start, like a slice job (see SLICE_START_LIMIT_MS). Every later
+// request would then keep it, and only the hourly cron would start slices. So replace a stuck dispatch
+// with one that runs now.
 export async function gmail_schedule_dispatch(ctx: MutationCtx, runAt: number) {
 	const saved = await ctx.db.query("dispatch_schedule").first();
 	const job = saved ? await ctx.db.system.get(saved.jobId) : null;
 	if (job?.state.kind === "pending") {
-		if (job.scheduledTime <= runAt) return;
+		const stuck = job.scheduledTime < Date.now() - SLICE_START_LIMIT_MS;
+		if (job.scheduledTime <= runAt && !stuck) return;
 		await ctx.scheduler.cancel(job._id);
+		runAt = Math.min(runAt, job.scheduledTime);
 	}
 	const jobId = await ctx.scheduler.runAt(Math.max(runAt, Date.now()), internal.gmail_accounts.dispatch, {});
 	if (saved) await ctx.db.patch(saved._id, { jobId });

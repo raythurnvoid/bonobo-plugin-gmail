@@ -366,7 +366,7 @@ describe("work_account_slice", () => {
 			attachments: [{ state: "saved" }],
 		});
 	});
-	test("saves an email without attachments with one read, one pace and two saves", async () => {
+	test("saves an email without attachments in eight function calls", async () => {
 		const f = await fixture({ fresh: true });
 		const plain = { ...source, payload: { ...source.payload, parts: [source.payload.parts[0]] } };
 		network((path) =>
@@ -1750,6 +1750,35 @@ describe("work_account_slice", () => {
 			ledgerCounts: { permissionHeld: 1 },
 		});
 	});
+	test("a held email without attachments releases its hold when the retry saves it", async () => {
+		let now = Date.now();
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const f = await fixture({ fresh: true });
+		const plain = { ...source, payload: { ...source.payload, parts: [source.payload.parts[0]] } };
+		let refused = true;
+		network((path) =>
+			path.endsWith("/messages/ab")
+				? Response.json(plain)
+				: refused
+					? Response.json({ message: "Forbidden" }, { status: 403 })
+					: path.endsWith("/files/write")
+						? Response.json({ nodeId: "email-node" })
+						: Response.json({}),
+		);
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		const held = (await f.t.run((ctx) => ctx.db.get(f.ledgerId)))!;
+		expect(held).toMatchObject({ status: "failed", permissionHeld: true });
+
+		// The one email save also proves the write is allowed again, so the hold ends with it.
+		refused = false;
+		now = held.nextAttemptAt!;
+		await f.t.run((ctx) => ctx.db.patch(f.accountId, { nextSliceKind: "retry" }));
+		await hold_slot(f);
+		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
+		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({ status: "done", permissionHeld: false, fileNodeId: "email-node" });
+		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ permissionProbeNotBefore: null, ledgerCounts: { permissionHeld: 0 } });
+	});
 	test("continuing denial starts at most one held unit and keeps the claimed hour", async () => {
 		const f = await fixture({ held: true, sourceError: "google_revoked" });
 		let claimedDeadline = 0;
@@ -2966,9 +2995,12 @@ describe("work_account_slice", () => {
 		expect((await f.t.run((ctx) => ctx.db.get(f.accountId)))!.attachmentsSkippedReason).toBeNull();
 	});
 	test("five definite file conflicts stop at given_up while outages spend no attempts", async () => {
-		const f = await fixture({ fresh: true });
 		let now = Date.now();
 		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
+		// Pause scheduled dispatches. The clock jumps hours ahead, so a waiting dispatch looks stuck and would
+		// be replaced by one that runs at once.
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const f = await fixture({ fresh: true });
 		let outage = true;
 		const calls = network((path) => {
 			now += 1000;

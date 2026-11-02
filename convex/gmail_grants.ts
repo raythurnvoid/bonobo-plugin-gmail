@@ -68,7 +68,7 @@ export const save_step = internalMutation({
 			}
 			await ctx.db.patch(account._id, { nextSyncAt, idleSlices: renewal ? account.idleSlices : 0, syncError: account.sourceError,
 				syncStatus: account.sourceError ? "error" : account.backfillComplete ? "live" : "backfilling", updatedAt: Date.now() });
-			// A kept due time already has its dispatch.
+			// The waiting dispatch already covers a kept due time.
 			if (nextSyncAt !== null && nextSyncAt !== keptAt) await gmail_schedule_dispatch(ctx, nextSyncAt);
 			await ctx.scheduler.runAfter(12 * 60 * 60_000, internal.gmail_grants.renew, { grantId: grant._id, lifecycleRequestId: grant.lifecycleRequestId });
 		} else {

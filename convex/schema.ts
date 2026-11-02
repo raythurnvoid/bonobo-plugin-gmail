@@ -62,7 +62,8 @@ export default defineSchema({
 		syncWorkId: v.union(v.id("_scheduled_functions"), v.null()), syncRequestId: nullableString, lastSyncedAt: nullableNumber, updatedAt: v.number(),
 		// The Google token has the compose scope, so the connecting member can write drafts and send.
 		composeGranted: v.boolean(),
-		// Successful slices in a row that found no work. The next idle wait doubles with each one.
+		// Successful slices in a row that found no work. Without a live Gmail watch, the next idle wait
+		// doubles with each one.
 		idleSlices: v.number(),
 		// The last Google access token, encrypted, and when Google said it expires. Null when none is saved.
 		googleAccessToken: v.union(v.object({ encrypted: v.string(), expiresAt: v.number() }), v.null()),
