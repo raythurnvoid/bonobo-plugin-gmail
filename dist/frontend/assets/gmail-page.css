@@ -28,7 +28,8 @@ p {
   color: var(--color-fg-10, light-dark(#575757, #b8b8b8));
 }
 button,
-input {
+input,
+select {
   font: inherit;
 }
 button {
@@ -45,6 +46,10 @@ button:focus-visible,
 input:focus-visible {
   outline: 2px solid #619ef7;
   outline-offset: 3px;
+}
+select {
+  min-height: 36px;
+  padding: 4px 8px;
 }
 input {
   box-sizing: border-box;
