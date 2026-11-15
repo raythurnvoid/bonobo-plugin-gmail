@@ -132,13 +132,13 @@ function h(e) {
 }
 function g(e) {
   if (e === void 0) return {};
-  if (!te(e))
+  if (!v(e))
     throw Error(
       `The arguments to a Convex function must be an object. Received: ${e}`,
     );
   return e;
 }
-function ee(e) {
+function _(e) {
   if (e === void 0)
     throw Error(
       `Client created with undefined deployment address. If you used an environment variable, check that it's set.`,
@@ -161,76 +161,76 @@ function ee(e) {
       `Invalid deployment address: "${e}" ends with .convex.site, which is used for HTTP Actions. Convex deployment URLs typically end with .convex.cloud? If you believe this URL is correct, use the \`skipConvexDeploymentUrlCheck\` option to bypass this.`,
     );
 }
-function te(e) {
+function v(e) {
   let t = typeof e == `object`,
     n = Object.getPrototypeOf(e),
     r =
       n === null || n === Object.prototype || n?.constructor?.name === `Object`;
   return t && r;
 }
-var _ = !0,
-  v = BigInt(`-9223372036854775808`),
-  y = BigInt(`9223372036854775807`),
-  b = BigInt(`0`),
-  ne = BigInt(`8`),
-  re = BigInt(`256`),
-  x = `This commit timestamp is unresolved: its value is assigned when the mutation commits. Read the document after the mutation completes to get its value.`,
-  ie = class {
+var y = !0,
+  b = BigInt(`-9223372036854775808`),
+  x = BigInt(`9223372036854775807`),
+  S = BigInt(`0`),
+  C = BigInt(`8`),
+  w = BigInt(`256`),
+  T = `This commit timestamp is unresolved: its value is assigned when the mutation commits. Read the document after the mutation completes to get its value.`,
+  ee = class {
     [Symbol.toPrimitive](e) {
       if (e === `string`) return this.toString();
-      throw Error(x);
+      throw Error(T);
     }
     valueOf() {
-      throw Error(x);
+      throw Error(T);
     }
     toJSON() {
-      throw Error(x);
+      throw Error(T);
     }
     toString() {
       return `[unresolved commit timestamp]`;
     }
   },
-  ae = new ie();
-function oe(e) {
+  te = new ee();
+function ne(e) {
   return Number.isNaN(e) || !Number.isFinite(e) || Object.is(e, -0);
 }
-function se(e) {
-  e < b && (e -= v + v);
+function re(e) {
+  e < S && (e -= b + b);
   let t = e.toString(16);
   t.length % 2 == 1 && (t = `0` + t);
   let n = new Uint8Array(new ArrayBuffer(8)),
     r = 0;
   for (let i of t.match(/.{2}/g).reverse())
-    (n.set([parseInt(i, 16)], r++), (e >>= ne));
+    (n.set([parseInt(i, 16)], r++), (e >>= C));
   return h(n);
 }
-function ce(e) {
+function ie(e) {
   let t = f(e);
   if (t.byteLength !== 8)
     throw Error(`Received ${t.byteLength} bytes, expected 8 for $integer`);
-  let n = b,
-    r = b;
-  for (let e of t) ((n += BigInt(e) * re ** r), r++);
-  return (n > y && (n += v + v), n);
+  let n = S,
+    r = S;
+  for (let e of t) ((n += BigInt(e) * w ** r), r++);
+  return (n > x && (n += b + b), n);
 }
-function le(e) {
-  if (e < v || y < e)
+function ae(e) {
+  if (e < b || x < e)
     throw Error(`BigInt ${e} does not fit into a 64-bit signed integer.`);
   let t = new ArrayBuffer(8);
   return (new DataView(t).setBigInt64(0, e, !0), h(new Uint8Array(t)));
 }
-function ue(e) {
+function oe(e) {
   let t = f(e);
   if (t.byteLength !== 8)
     throw Error(`Received ${t.byteLength} bytes, expected 8 for $integer`);
   return new DataView(t.buffer).getBigInt64(0, !0);
 }
-var de = DataView.prototype.setBigInt64 ? le : se,
-  fe = DataView.prototype.getBigInt64 ? ue : ce,
-  pe = 1024;
-function S(e) {
-  if (e.length > pe)
-    throw Error(`Field name ${e} exceeds maximum field name length ${pe}.`);
+var se = DataView.prototype.setBigInt64 ? ae : re,
+  ce = DataView.prototype.getBigInt64 ? oe : ie,
+  le = 1024;
+function ue(e) {
+  if (e.length > le)
+    throw Error(`Field name ${e} exceeds maximum field name length ${le}.`);
   if (e.startsWith(`$`))
     throw Error(`Field name ${e} starts with a '$', which is reserved.`);
   for (let t = 0; t < e.length; t += 1) {
@@ -241,7 +241,7 @@ function S(e) {
       );
   }
 }
-function C(e) {
+function E(e) {
   if (
     e === null ||
     typeof e == `boolean` ||
@@ -249,7 +249,7 @@ function C(e) {
     typeof e == `string`
   )
     return e;
-  if (Array.isArray(e)) return e.map((e) => C(e));
+  if (Array.isArray(e)) return e.map((e) => E(e));
   if (typeof e != `object`) throw Error(`Unexpected type of ${e}`);
   let t = Object.entries(e);
   if (t.length === 1) {
@@ -262,7 +262,7 @@ function C(e) {
     if (n === `$integer`) {
       if (typeof e.$integer != `string`)
         throw Error(`Malformed $integer field on ${e}`);
-      return fe(e.$integer);
+      return ce(e.$integer);
     }
     if (n === `$float`) {
       if (typeof e.$float != `string`)
@@ -270,14 +270,14 @@ function C(e) {
       let t = f(e.$float);
       if (t.byteLength !== 8)
         throw Error(`Received ${t.byteLength} bytes, expected 8 for $float`);
-      let n = new DataView(t.buffer).getFloat64(0, _);
-      if (!oe(n)) throw Error(`Float ${n} should be encoded as a number`);
+      let n = new DataView(t.buffer).getFloat64(0, y);
+      if (!ne(n)) throw Error(`Float ${n} should be encoded as a number`);
       return n;
     }
     if (n === `$commitTs`) {
       if (e.$commitTs !== null)
         throw Error(`Malformed $commitTs field on ${e}`);
-      return ae;
+      return te;
     }
     if (n === `$set`)
       throw Error(
@@ -289,11 +289,11 @@ function C(e) {
       );
   }
   let n = {};
-  for (let [t, r] of Object.entries(e)) (S(t), (n[t] = C(r)));
+  for (let [t, r] of Object.entries(e)) (ue(t), (n[t] = E(r)));
   return n;
 }
-var me = 16384;
-function w(e) {
+var de = 16384;
+function D(e) {
   let t = JSON.stringify(e, (e, t) =>
     t === void 0
       ? `undefined`
@@ -305,7 +305,7 @@ function w(e) {
             ? `${t.toString()}n`
             : t,
   );
-  if (t.length > me) {
+  if (t.length > de) {
     let e = 16370,
       n = t.codePointAt(e - 1);
     return (
@@ -315,24 +315,24 @@ function w(e) {
   }
   return t;
 }
-function T(e, t, n, r) {
+function O(e, t, n, r) {
   if (e === void 0) {
-    let e = n && ` (present at path ${n} in original object ${w(t)})`;
+    let e = n && ` (present at path ${n} in original object ${D(t)})`;
     throw Error(
       `undefined is not a valid Convex value${e}. To learn about Convex's supported types, see https://docs.convex.dev/using/types.`,
     );
   }
   if (e === null) return e;
   if (typeof e == `bigint`) {
-    if (e < v || y < e)
+    if (e < b || x < e)
       throw Error(`BigInt ${e} does not fit into a 64-bit signed integer.`);
-    return { $integer: de(e) };
+    return { $integer: se(e) };
   }
   if (typeof e == `number`) {
-    if (oe(e)) {
+    if (ne(e)) {
       let t = new ArrayBuffer(8);
       return (
-        new DataView(t).setFloat64(0, e, _),
+        new DataView(t).setFloat64(0, e, y),
         { $float: h(new Uint8Array(t)) }
       );
     }
@@ -340,67 +340,67 @@ function T(e, t, n, r) {
   }
   if (typeof e == `boolean` || typeof e == `string`) return e;
   if (e instanceof ArrayBuffer) return { $bytes: h(new Uint8Array(e)) };
-  if (e instanceof ie) return { $commitTs: null };
-  if (Array.isArray(e)) return e.map((e, r) => T(e, t, n + `[${r}]`, !1));
-  if (e instanceof Set) throw Error(E(n, `Set`, [...e], t));
-  if (e instanceof Map) throw Error(E(n, `Map`, [...e], t));
-  if (!te(e)) {
+  if (e instanceof ee) return { $commitTs: null };
+  if (Array.isArray(e)) return e.map((e, r) => O(e, t, n + `[${r}]`, !1));
+  if (e instanceof Set) throw Error(fe(n, `Set`, [...e], t));
+  if (e instanceof Map) throw Error(fe(n, `Map`, [...e], t));
+  if (!v(e)) {
     let r = e?.constructor?.name,
       i = r ? `${r} ` : ``;
-    throw Error(E(n, i, e, t));
+    throw Error(fe(n, i, e, t));
   }
   let i = {},
     a = Object.entries(e);
   a.sort(([e, t], [n, r]) => (e === n ? 0 : e < n ? -1 : 1));
   for (let [e, o] of a)
     o === void 0
-      ? r && (S(e), (i[e] = he(o, t, n + `.${e}`)))
-      : (S(e), (i[e] = T(o, t, n + `.${e}`, !1)));
+      ? r && (ue(e), (i[e] = pe(o, t, n + `.${e}`)))
+      : (ue(e), (i[e] = O(o, t, n + `.${e}`, !1)));
   return i;
 }
-function E(e, t, n, r) {
+function fe(e, t, n, r) {
   return e
-    ? `${t}${w(n)} is not a supported Convex type (present at path ${e} in original object ${w(r)}). To learn about Convex's supported types, see https://docs.convex.dev/using/types.`
-    : `${t}${w(n)} is not a supported Convex type.`;
+    ? `${t}${D(n)} is not a supported Convex type (present at path ${e} in original object ${D(r)}). To learn about Convex's supported types, see https://docs.convex.dev/using/types.`
+    : `${t}${D(n)} is not a supported Convex type.`;
 }
-function he(e, t, n) {
+function pe(e, t, n) {
   if (e === void 0) return { $undefined: null };
   if (t === void 0)
     throw Error(
-      `Programming error. Current value is ${w(e)} but original value is undefined`,
+      `Programming error. Current value is ${D(e)} but original value is undefined`,
     );
-  return T(e, t, n, !1);
+  return O(e, t, n, !1);
 }
-function D(e) {
-  return T(e, e, ``, !1);
+function k(e) {
+  return O(e, e, ``, !1);
 }
-var ge = Object.defineProperty,
-  _e = (e, t, n) =>
+var me = Object.defineProperty,
+  he = (e, t, n) =>
     t in e
-      ? ge(e, t, { enumerable: !0, configurable: !0, writable: !0, value: n })
+      ? me(e, t, { enumerable: !0, configurable: !0, writable: !0, value: n })
       : (e[t] = n),
-  ve = (e, t, n) => _e(e, typeof t == `symbol` ? t : t + ``, n),
-  ye,
-  be,
-  xe = Symbol.for(`ConvexError`),
-  O = class extends ((be = Error), (ye = xe), be) {
+  ge = (e, t, n) => he(e, typeof t == `symbol` ? t : t + ``, n),
+  _e,
+  ve,
+  ye = Symbol.for(`ConvexError`),
+  A = class extends ((ve = Error), (_e = ye), ve) {
     constructor(e) {
-      (super(typeof e == `string` ? e : w(e)),
-        ve(this, `name`, `ConvexError`),
-        ve(this, `data`),
-        ve(this, ye, !0),
+      (super(typeof e == `string` ? e : D(e)),
+        ge(this, `name`, `ConvexError`),
+        ge(this, `data`),
+        ge(this, _e, !0),
         (this.data = e));
     }
   },
-  Se = `1.47.0`,
-  Ce = Object.defineProperty,
-  we = (e, t, n) =>
+  be = `1.47.0`,
+  xe = Object.defineProperty,
+  Se = (e, t, n) =>
     t in e
-      ? Ce(e, t, { enumerable: !0, configurable: !0, writable: !0, value: n })
+      ? xe(e, t, { enumerable: !0, configurable: !0, writable: !0, value: n })
       : (e[t] = n),
-  Te = (e, t, n) => we(e, typeof t == `symbol` ? t : t + ``, n),
-  Ee = `color:rgb(0, 145, 255)`;
-function De(e) {
+  Ce = (e, t, n) => Se(e, typeof t == `symbol` ? t : t + ``, n),
+  we = `color:rgb(0, 145, 255)`;
+function Te(e) {
   switch (e) {
     case `query`:
       return `Q`;
@@ -412,10 +412,10 @@ function De(e) {
       return `?`;
   }
 }
-var Oe = class {
+var Ee = class {
   constructor(e) {
-    (Te(this, `_onLogLineFuncs`),
-      Te(this, `_verbose`),
+    (Ce(this, `_onLogLineFuncs`),
+      Ce(this, `_verbose`),
       (this._onLogLineFuncs = {}),
       (this._verbose = e.verbose));
   }
@@ -445,8 +445,8 @@ var Oe = class {
     for (let t of Object.values(this._onLogLineFuncs)) t(`error`, ...e);
   }
 };
-function ke(e) {
-  let t = new Oe(e);
+function De(e) {
+  let t = new Ee(e);
   return (
     t.addLogLineListener((e, ...t) => {
       switch (e) {
@@ -469,11 +469,11 @@ function ke(e) {
     t
   );
 }
-function Ae(e) {
-  return new Oe(e);
+function Oe(e) {
+  return new Ee(e);
 }
-function k(e, t, n, r, i) {
-  let a = De(n);
+function j(e, t, n, r, i) {
+  let a = Te(n);
   if (
     (typeof i == `object` &&
       (i = `ConvexError ${JSON.stringify(i.errorData, null, 2)}`),
@@ -486,21 +486,21 @@ function k(e, t, n, r, i) {
     }
     let n = i.slice(1, t[0].length - 2),
       o = i.slice(t[0].length);
-    e.log(`%c[CONVEX ${a}(${r})] [${n}]`, Ee, o);
+    e.log(`%c[CONVEX ${a}(${r})] [${n}]`, we, o);
   } else e.error(`[CONVEX ${a}(${r})] ${i}`);
 }
-function je(e, t) {
+function ke(e, t) {
   let n = `[CONVEX FATAL ERROR] ${t}`;
   return (e.error(n), Error(n));
 }
-function A(e, t, n) {
-  return `[CONVEX ${De(e)}(${t})] ${n.errorMessage}
+function M(e, t, n) {
+  return `[CONVEX ${Te(e)}(${t})] ${n.errorMessage}
   Called by client`;
 }
-function j(e, t) {
+function N(e, t) {
   return ((t.data = e.errorData), t);
 }
-function M(e) {
+function P(e) {
   let t = e.split(`:`),
     n,
     r;
@@ -512,36 +512,36 @@ function M(e) {
     `${n}:${r}`
   );
 }
-function N(e, t) {
-  return JSON.stringify({ udfPath: M(e), args: D(t) });
+function F(e, t) {
+  return JSON.stringify({ udfPath: P(e), args: k(t) });
 }
-function Me(e, t, n) {
+function Ae(e, t, n) {
   let { initialNumItems: r, id: i } = n;
   return JSON.stringify({
     type: `paginated`,
-    udfPath: M(e),
-    args: D(t),
-    options: D({ initialNumItems: r, id: i }),
+    udfPath: P(e),
+    args: k(t),
+    options: k({ initialNumItems: r, id: i }),
   });
 }
-var Ne = Object.defineProperty,
-  Pe = (e, t, n) =>
+var je = Object.defineProperty,
+  Me = (e, t, n) =>
     t in e
-      ? Ne(e, t, { enumerable: !0, configurable: !0, writable: !0, value: n })
+      ? je(e, t, { enumerable: !0, configurable: !0, writable: !0, value: n })
       : (e[t] = n),
-  P = (e, t, n) => Pe(e, typeof t == `symbol` ? t : t + ``, n),
-  Fe = class {
+  I = (e, t, n) => Me(e, typeof t == `symbol` ? t : t + ``, n),
+  Ne = class {
     constructor() {
-      (P(this, `nextQueryId`),
-        P(this, `querySetVersion`),
-        P(this, `querySet`),
-        P(this, `queryIdToToken`),
-        P(this, `identityVersion`),
-        P(this, `auth`),
-        P(this, `outstandingQueriesOlderThanRestart`),
-        P(this, `outstandingAuthOlderThanRestart`),
-        P(this, `paused`),
-        P(this, `pendingQuerySetModifications`),
+      (I(this, `nextQueryId`),
+        I(this, `querySetVersion`),
+        I(this, `querySet`),
+        I(this, `queryIdToToken`),
+        I(this, `identityVersion`),
+        I(this, `auth`),
+        I(this, `outstandingQueriesOlderThanRestart`),
+        I(this, `outstandingAuthOlderThanRestart`),
+        I(this, `paused`),
+        I(this, `pendingQuerySetModifications`),
         (this.nextQueryId = 0),
         (this.querySetVersion = 0),
         (this.identityVersion = 0),
@@ -562,8 +562,8 @@ var Ne = Object.defineProperty,
       this.outstandingAuthOlderThanRestart = !1;
     }
     subscribe(e, t, n, r) {
-      let i = M(e),
-        a = N(i, t),
+      let i = P(e),
+        a = F(i, t),
         o = this.querySet.get(a);
       if (o !== void 0)
         return (
@@ -591,7 +591,7 @@ var Ne = Object.defineProperty,
             type: `Add`,
             queryId: e,
             udfPath: i,
-            args: [D(t)],
+            args: [k(t)],
             journal: n,
             componentPath: r,
           };
@@ -633,7 +633,7 @@ var Ne = Object.defineProperty,
         }
     }
     queryId(e, t) {
-      let n = N(M(e), t),
+      let n = F(P(e), t),
         r = this.querySet.get(n);
       return r === void 0 ? null : r.id;
     }
@@ -696,7 +696,7 @@ var Ne = Object.defineProperty,
           type: `Add`,
           queryId: t.id,
           udfPath: t.canonicalizedUdfPath,
-          args: [D(t.args)],
+          args: [k(t.args)],
           journal: t.journal,
           componentPath: t.componentPath,
         };
@@ -768,20 +768,20 @@ var Ne = Object.defineProperty,
       }
     }
   },
-  Ie = Object.defineProperty,
-  Le = (e, t, n) =>
+  Pe = Object.defineProperty,
+  Fe = (e, t, n) =>
     t in e
-      ? Ie(e, t, { enumerable: !0, configurable: !0, writable: !0, value: n })
+      ? Pe(e, t, { enumerable: !0, configurable: !0, writable: !0, value: n })
       : (e[t] = n),
-  F = (e, t, n) => Le(e, typeof t == `symbol` ? t : t + ``, n),
-  Re = class {
+  L = (e, t, n) => Fe(e, typeof t == `symbol` ? t : t + ``, n),
+  Ie = class {
     constructor(e, t) {
       ((this.logger = e),
         (this.markConnectionStateDirty = t),
-        F(this, `inflightRequests`),
-        F(this, `requestsOlderThanRestart`),
-        F(this, `inflightMutationsCount`, 0),
-        F(this, `inflightActionsCount`, 0),
+        L(this, `inflightRequests`),
+        L(this, `requestsOlderThanRestart`),
+        L(this, `inflightMutationsCount`, 0),
+        L(this, `inflightActionsCount`, 0),
         (this.inflightRequests = new Map()),
         (this.requestsOlderThanRestart = new Set()));
     }
@@ -803,21 +803,21 @@ var Ne = Object.defineProperty,
       if (t === void 0 || t.status.status === `Completed`) return null;
       let n = t.message.type === `Mutation` ? `mutation` : `action`,
         r = t.message.udfPath;
-      for (let t of e.logLines) k(this.logger, `info`, n, r, t);
+      for (let t of e.logLines) j(this.logger, `info`, n, r, t);
       let i = t.status,
         a,
         o;
       if (e.success)
-        ((a = { success: !0, logLines: e.logLines, value: C(e.result) }),
+        ((a = { success: !0, logLines: e.logLines, value: E(e.result) }),
           (o = () => i.onResult(a)));
       else {
         let t = e.result,
           { errorData: s } = e;
-        (k(this.logger, `error`, n, r, t),
+        (j(this.logger, `error`, n, r, t),
           (a = {
             success: !1,
             errorMessage: t,
-            errorData: s === void 0 ? void 0 : C(s),
+            errorData: s === void 0 ? void 0 : E(s),
             logLines: e.logLines,
           }),
           (o = () => i.onResult(a)));
@@ -914,27 +914,27 @@ var Ne = Object.defineProperty,
       return this.inflightActionsCount;
     }
   },
-  I = Symbol.for(`functionName`),
-  ze = Symbol.for(`toReferencePath`);
-function Be(e) {
-  return e[ze] ?? null;
+  R = Symbol.for(`functionName`),
+  Le = Symbol.for(`toReferencePath`);
+function Re(e) {
+  return e[Le] ?? null;
 }
-function Ve(e) {
+function ze(e) {
   return e.startsWith(`function://`);
 }
-function He(e) {
+function Be(e) {
   let t;
-  if (typeof e == `string`) t = Ve(e) ? { functionHandle: e } : { name: e };
-  else if (e[I]) t = { name: e[I] };
+  if (typeof e == `string`) t = ze(e) ? { functionHandle: e } : { name: e };
+  else if (e[R]) t = { name: e[R] };
   else {
-    let n = Be(e);
+    let n = Re(e);
     if (!n) throw Error(`${e} is not a functionReference`);
     t = { reference: n };
   }
   return t;
 }
-function L(e) {
-  let t = He(e);
+function z(e) {
+  let t = Be(e);
   if (t.name === void 0)
     throw t.functionHandle === void 0
       ? t.reference === void 0
@@ -948,17 +948,17 @@ function L(e) {
           `Expected function reference like "api.file.func" or "internal.file.func", but received function handle ${t.functionHandle}`,
         );
   if (typeof e == `string`) return e;
-  let n = e[I];
+  let n = e[R];
   if (!n) throw Error(`${e} is not a functionReference`);
   return n;
 }
-function Ue(e = []) {
+function Ve(e = []) {
   return new Proxy(
     {},
     {
       get(t, n) {
-        if (typeof n == `string`) return Ue([...e, n]);
-        if (n === I) {
+        if (typeof n == `string`) return Ve([...e, n]);
+        if (n === R) {
           if (e.length < 2) {
             let t = [`api`, ...e].join(`.`);
             throw Error(
@@ -974,38 +974,38 @@ function Ue(e = []) {
     },
   );
 }
-var We = Ue(),
-  Ge = Object.defineProperty,
-  Ke = (e, t, n) =>
+var He = Ve(),
+  Ue = Object.defineProperty,
+  We = (e, t, n) =>
     t in e
-      ? Ge(e, t, { enumerable: !0, configurable: !0, writable: !0, value: n })
+      ? Ue(e, t, { enumerable: !0, configurable: !0, writable: !0, value: n })
       : (e[t] = n),
-  R = (e, t, n) => Ke(e, typeof t == `symbol` ? t : t + ``, n),
-  qe = class e {
+  B = (e, t, n) => We(e, typeof t == `symbol` ? t : t + ``, n),
+  Ge = class e {
     constructor(e) {
-      (R(this, `queryResults`),
-        R(this, `modifiedQueries`),
+      (B(this, `queryResults`),
+        B(this, `modifiedQueries`),
         (this.queryResults = e),
         (this.modifiedQueries = []));
     }
     getQuery(t, ...n) {
       let r = g(n[0]),
-        i = L(t),
-        a = this.queryResults.get(N(i, r));
+        i = z(t),
+        a = this.queryResults.get(F(i, r));
       if (a !== void 0) return e.queryValue(a.result);
     }
     getAllQueries(t) {
       let n = [],
-        r = L(t);
+        r = z(t);
       for (let t of this.queryResults.values())
-        t.udfPath === M(r) &&
+        t.udfPath === P(r) &&
           n.push({ args: t.args, value: e.queryValue(t.result) });
       return n;
     }
     setQuery(e, t, n) {
       let r = g(t),
-        i = L(e),
-        a = N(i, r),
+        i = z(e),
+        a = F(i, r),
         o;
       o = n === void 0 ? void 0 : { success: !0, value: n, logLines: [] };
       let s = { udfPath: i, args: r, result: o };
@@ -1015,10 +1015,10 @@ var We = Ue(),
       if (e !== void 0 && e.success) return e.value;
     }
   },
-  Je = class {
+  Ke = class {
     constructor() {
-      (R(this, `queryResults`),
-        R(this, `optimisticUpdates`),
+      (B(this, `queryResults`),
+        B(this, `optimisticUpdates`),
         (this.queryResults = new Map()),
         (this.optimisticUpdates = []));
     }
@@ -1028,7 +1028,7 @@ var We = Ue(),
       );
       let n = this.queryResults;
       this.queryResults = new Map(e);
-      let r = new qe(this.queryResults);
+      let r = new Ge(this.queryResults);
       for (let e of this.optimisticUpdates) e.update(r);
       let i = [];
       for (let [e, t] of this.queryResults) {
@@ -1039,7 +1039,7 @@ var We = Ue(),
     }
     applyOptimisticUpdate(e, t) {
       this.optimisticUpdates.push({ update: e, mutationId: t });
-      let n = new qe(this.queryResults);
+      let n = new Ge(this.queryResults);
       return (e(n), n.modifiedQueries);
     }
     rawQueryResult(e) {
@@ -1053,8 +1053,8 @@ var We = Ue(),
       if (n !== void 0) {
         if (n.success) return n.value;
         throw n.errorData === void 0
-          ? Error(A(`query`, t.udfPath, n))
-          : j(n, new O(A(`query`, t.udfPath, n)));
+          ? Error(M(`query`, t.udfPath, n))
+          : N(n, new A(M(`query`, t.udfPath, n)));
       }
     }
     hasQueryResult(e) {
@@ -1064,17 +1064,17 @@ var We = Ue(),
       return this.queryResults.get(e)?.result?.logLines;
     }
   },
-  Ye = Object.defineProperty,
-  Xe = (e, t, n) =>
+  qe = Object.defineProperty,
+  Je = (e, t, n) =>
     t in e
-      ? Ye(e, t, { enumerable: !0, configurable: !0, writable: !0, value: n })
+      ? qe(e, t, { enumerable: !0, configurable: !0, writable: !0, value: n })
       : (e[t] = n),
-  z = (e, t, n) => Xe(e, typeof t == `symbol` ? t : t + ``, n),
-  B = class e {
+  V = (e, t, n) => Je(e, typeof t == `symbol` ? t : t + ``, n),
+  H = class e {
     constructor(e, t) {
-      (z(this, `low`),
-        z(this, `high`),
-        z(this, `__isUnsignedLong__`),
+      (V(this, `low`),
+        V(this, `high`),
+        V(this, `__isUnsignedLong__`),
         (this.low = e | 0),
         (this.high = t | 0),
         (this.__isUnsignedLong__ = !0));
@@ -1104,13 +1104,13 @@ var We = Ue(),
     }
     static fromNumber(t) {
       return isNaN(t) || t < 0
-        ? Ze
-        : t >= $e
-          ? et
-          : new e((t % V) | 0, (t / V) | 0);
+        ? Ye
+        : t >= Ze
+          ? Qe
+          : new e((t % U) | 0, (t / U) | 0);
     }
     toString() {
-      return (BigInt(this.high) * BigInt(V) + BigInt(this.low)).toString();
+      return (BigInt(this.high) * BigInt(U) + BigInt(this.low)).toString();
     }
     equals(t) {
       return (
@@ -1141,24 +1141,24 @@ var We = Ue(),
       return typeof t == `number` ? e.fromNumber(t) : new e(t.low, t.high);
     }
   },
-  Ze = new B(0, 0),
-  Qe = 65536,
-  V = Qe * Qe,
-  $e = V * V,
-  et = new B(-1, -1),
-  tt = Object.defineProperty,
-  nt = (e, t, n) =>
+  Ye = new H(0, 0),
+  Xe = 65536,
+  U = Xe * Xe,
+  Ze = U * U,
+  Qe = new H(-1, -1),
+  $e = Object.defineProperty,
+  et = (e, t, n) =>
     t in e
-      ? tt(e, t, { enumerable: !0, configurable: !0, writable: !0, value: n })
+      ? $e(e, t, { enumerable: !0, configurable: !0, writable: !0, value: n })
       : (e[t] = n),
-  H = (e, t, n) => nt(e, typeof t == `symbol` ? t : t + ``, n),
-  rt = class {
+  W = (e, t, n) => et(e, typeof t == `symbol` ? t : t + ``, n),
+  tt = class {
     constructor(e, t) {
-      (H(this, `version`),
-        H(this, `remoteQuerySet`),
-        H(this, `queryPath`),
-        H(this, `logger`),
-        (this.version = { querySet: 0, ts: B.fromNumber(0), identity: 0 }),
+      (W(this, `version`),
+        W(this, `remoteQuerySet`),
+        W(this, `queryPath`),
+        W(this, `logger`),
+        (this.version = { querySet: 0, ts: H.fromNumber(0), identity: 0 }),
         (this.remoteQuerySet = new Map()),
         (this.queryPath = e),
         (this.logger = t));
@@ -1178,8 +1178,8 @@ var We = Ue(),
           case `QueryUpdated`: {
             let e = this.queryPath(t.queryId);
             if (e)
-              for (let n of t.logLines) k(this.logger, `info`, `query`, e, n);
-            let n = C(t.value ?? null);
+              for (let n of t.logLines) j(this.logger, `info`, `query`, e, n);
+            let n = E(t.value ?? null);
             this.remoteQuerySet.set(t.queryId, {
               success: !0,
               value: n,
@@ -1190,12 +1190,12 @@ var We = Ue(),
           case `QueryFailed`: {
             let e = this.queryPath(t.queryId);
             if (e)
-              for (let n of t.logLines) k(this.logger, `info`, `query`, e, n);
+              for (let n of t.logLines) j(this.logger, `info`, `query`, e, n);
             let { errorData: n } = t;
             this.remoteQuerySet.set(t.queryId, {
               success: !1,
               errorMessage: t.errorMessage,
-              errorData: n === void 0 ? void 0 : C(n),
+              errorData: n === void 0 ? void 0 : E(n),
               logLines: t.logLines,
             });
             break;
@@ -1215,14 +1215,14 @@ var We = Ue(),
       return this.version.ts;
     }
   };
-function U(e) {
+function nt(e) {
   let t = f(e);
-  return B.fromBytesLE(Array.from(t));
+  return H.fromBytesLE(Array.from(t));
 }
-function it(e) {
+function rt(e) {
   return h(new Uint8Array(e.toBytesLE()));
 }
-function at(e) {
+function it(e) {
   switch (e.type) {
     case `FatalError`:
     case `AuthError`:
@@ -1231,16 +1231,16 @@ function at(e) {
     case `Ping`:
       return { ...e };
     case `MutationResponse`:
-      return e.success ? { ...e, ts: U(e.ts) } : { ...e };
+      return e.success ? { ...e, ts: nt(e.ts) } : { ...e };
     case `Transition`:
       return {
         ...e,
-        startVersion: { ...e.startVersion, ts: U(e.startVersion.ts) },
-        endVersion: { ...e.endVersion, ts: U(e.endVersion.ts) },
+        startVersion: { ...e.startVersion, ts: nt(e.startVersion.ts) },
+        endVersion: { ...e.endVersion, ts: nt(e.endVersion.ts) },
       };
   }
 }
-function ot(e) {
+function at(e) {
   switch (e.type) {
     case `Authenticate`:
     case `ModifyQuerySet`:
@@ -1251,32 +1251,32 @@ function ot(e) {
     case `Connect`:
       return e.maxObservedTimestamp === void 0
         ? { ...e, maxObservedTimestamp: void 0 }
-        : { ...e, maxObservedTimestamp: it(e.maxObservedTimestamp) };
+        : { ...e, maxObservedTimestamp: rt(e.maxObservedTimestamp) };
   }
 }
-var st = Object.defineProperty,
-  ct = (e, t, n) =>
+var ot = Object.defineProperty,
+  st = (e, t, n) =>
     t in e
-      ? st(e, t, { enumerable: !0, configurable: !0, writable: !0, value: n })
+      ? ot(e, t, { enumerable: !0, configurable: !0, writable: !0, value: n })
       : (e[t] = n),
-  W = (e, t, n) => ct(e, typeof t == `symbol` ? t : t + ``, n),
-  lt = 1e3,
-  ut = 1001,
-  dt = 1005,
-  ft = 4040,
-  G;
-function K() {
+  G = (e, t, n) => st(e, typeof t == `symbol` ? t : t + ``, n),
+  ct = 1e3,
+  lt = 1001,
+  ut = 1005,
+  dt = 4040,
+  K;
+function q() {
   return (
-    G === void 0 && (G = Date.now()),
+    K === void 0 && (K = Date.now()),
     typeof performance > `u` || !performance.now
       ? Date.now()
-      : Math.round(G + performance.now())
+      : Math.round(K + performance.now())
   );
 }
-function pt() {
-  return `t=${Math.round((K() - G) / 100) / 10}s`;
+function ft() {
+  return `t=${Math.round((q() - K) / 100) / 10}s`;
 }
-var mt = {
+var pt = {
   InternalServerError: { timeout: 1e3 },
   SubscriptionsWorkerFullError: { timeout: 3e3 },
   TooManyConcurrentRequests: { timeout: 3e3 },
@@ -1292,35 +1292,35 @@ var mt = {
   SearchIndexTooLarge: { timeout: 3e3 },
   TooManyWritesInTimePeriod: { timeout: 3e3 },
 };
-function ht(e) {
+function mt(e) {
   if (e === void 0) return `Unknown`;
-  for (let t of Object.keys(mt)) if (e.startsWith(t)) return t;
+  for (let t of Object.keys(pt)) if (e.startsWith(t)) return t;
   return `Unknown`;
 }
-var gt = class {
+var ht = class {
   constructor(e, t, n, r, i, a) {
     ((this.markConnectionStateDirty = i),
       (this.debug = a),
-      W(this, `socket`),
-      W(this, `connectionCount`),
-      W(this, `_hasEverConnected`, !1),
-      W(this, `lastCloseReason`),
-      W(this, `transitionChunkBuffer`, null),
-      W(this, `defaultInitialBackoff`),
-      W(this, `maxBackoff`),
-      W(this, `retries`),
-      W(this, `serverInactivityThreshold`),
-      W(this, `reconnectDueToServerInactivityTimeout`),
-      W(this, `scheduledReconnect`, null),
-      W(this, `networkOnlineHandler`, null),
-      W(this, `pendingNetworkRecoveryInfo`, null),
-      W(this, `uri`),
-      W(this, `onOpen`),
-      W(this, `onResume`),
-      W(this, `onMessage`),
-      W(this, `webSocketConstructor`),
-      W(this, `logger`),
-      W(this, `onServerDisconnectError`),
+      G(this, `socket`),
+      G(this, `connectionCount`),
+      G(this, `_hasEverConnected`, !1),
+      G(this, `lastCloseReason`),
+      G(this, `transitionChunkBuffer`, null),
+      G(this, `defaultInitialBackoff`),
+      G(this, `maxBackoff`),
+      G(this, `retries`),
+      G(this, `serverInactivityThreshold`),
+      G(this, `reconnectDueToServerInactivityTimeout`),
+      G(this, `scheduledReconnect`, null),
+      G(this, `networkOnlineHandler`, null),
+      G(this, `pendingNetworkRecoveryInfo`, null),
+      G(this, `uri`),
+      G(this, `onOpen`),
+      G(this, `onResume`),
+      G(this, `onMessage`),
+      G(this, `webSocketConstructor`),
+      G(this, `logger`),
+      G(this, `onServerDisconnectError`),
       (this.webSocketConstructor = n),
       (this.socket = { state: `disconnected` }),
       (this.connectionCount = 0),
@@ -1401,7 +1401,7 @@ var gt = class {
     ) {
       let e = this.transitionChunkBuffer.chunks.join(``);
       this.transitionChunkBuffer = null;
-      let t = at(JSON.parse(e));
+      let t = it(JSON.parse(e));
       if (t.type !== `Transition`)
         throw Error(
           `Expected Transition, got ${t.type} after assembling chunks`,
@@ -1438,17 +1438,17 @@ var gt = class {
             this.onOpen({
               connectionCount: this.connectionCount,
               lastCloseReason: this.lastCloseReason,
-              clientTs: K(),
+              clientTs: q(),
             })),
           this.lastCloseReason !== `InitialConnect` &&
             (this.lastCloseReason
               ? this.logger.log(
                   `WebSocket reconnected at`,
-                  pt(),
+                  ft(),
                   `after disconnect due to`,
                   this.lastCloseReason,
                 )
-              : this.logger.log(`WebSocket reconnected at`, pt())),
+              : this.logger.log(`WebSocket reconnected at`, ft())),
           (this.connectionCount += 1),
           (this.lastCloseReason = null),
           this.pendingNetworkRecoveryInfo !== null)
@@ -1473,7 +1473,7 @@ var gt = class {
       (e.onmessage = (e) => {
         this.resetServerInactivityTimeout();
         let t = e.data.length,
-          n = at(JSON.parse(e.data));
+          n = it(JSON.parse(e.data));
         if (
           (this._logVerbose(`received ws message with type ${n.type}`),
           n.type !== `Ping`)
@@ -1501,7 +1501,7 @@ var gt = class {
           (this.transitionChunkBuffer = null),
           this.lastCloseReason === null &&
             (this.lastCloseReason = e.reason || `closed with code ${e.code}`),
-          e.code !== lt && e.code !== ut && e.code !== dt && e.code !== ft)
+          e.code !== ct && e.code !== lt && e.code !== ut && e.code !== dt)
         ) {
           let t = `WebSocket closed with code ${e.code}`;
           (e.reason && (t += `: ${e.reason}`),
@@ -1510,7 +1510,7 @@ var gt = class {
               e.reason &&
               this.onServerDisconnectError(t));
         }
-        let t = ht(e.reason);
+        let t = mt(e.reason);
         this.scheduleReconnect(t);
       }));
   }
@@ -1525,7 +1525,7 @@ var gt = class {
         : {}),
     };
     if (this.socket.state === `ready` && this.socket.paused === `no`) {
-      let n = ot(e),
+      let n = at(e),
         r = JSON.stringify(n),
         i = !1;
       try {
@@ -1566,7 +1566,7 @@ var gt = class {
     let t = this.nextBackoff(e);
     (this.markConnectionStateDirty(),
       this.logger.log(`Attempting reconnect in ${Math.round(t)}ms`));
-    let n = K(),
+    let n = q(),
       r = setTimeout(() => {
         this.scheduledReconnect?.timeout === r &&
           ((this.scheduledReconnect = null), this.connect());
@@ -1713,7 +1713,7 @@ var gt = class {
     }
     let e = null;
     if (this.scheduledReconnect) {
-      let t = K() - this.scheduledReconnect.scheduledAt;
+      let t = q() - this.scheduledReconnect.scheduledAt;
       ((e = Math.max(0, this.scheduledReconnect.backoffMs - t)),
         this._logVerbose(
           `would have waited ${Math.round(e)}ms more (backoff was ${Math.round(this.scheduledReconnect.backoffMs)}ms, elapsed ${Math.round(t)}ms)`,
@@ -1739,7 +1739,7 @@ var gt = class {
             this.onOpen({
               connectionCount: this.connectionCount,
               lastCloseReason: this.lastCloseReason,
-              clientTs: K(),
+              clientTs: q(),
             }))
           : this.socket.paused === `yes` &&
             ((this.socket = { ...this.socket, paused: `no` }), this.onResume());
@@ -1770,7 +1770,7 @@ var gt = class {
         ? 100
         : e === `Unknown`
           ? this.defaultInitialBackoff
-          : mt[e].timeout) *
+          : pt[e].timeout) *
       2 ** this.retries;
     this.retries += 1;
     let n = Math.min(t, this.maxBackoff);
@@ -1778,7 +1778,7 @@ var gt = class {
   }
   reportLargeTransition({ transition: e, messageLength: t }) {
     if (e.clientClockSkew === void 0 || e.serverTs === void 0) return;
-    let n = K() - e.clientClockSkew - e.serverTs / 1e6,
+    let n = q() - e.clientClockSkew - e.serverTs / 1e6,
       r = `${Math.round(n)}ms`,
       i = `${Math.round(t / 1e4) / 100}MB`,
       a = t / (n / 1e3),
@@ -1800,18 +1800,18 @@ var gt = class {
         }));
   }
 };
-function _t() {
-  return vt();
+function gt() {
+  return _t();
 }
-function vt() {
+function _t() {
   return `xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx`.replace(/[xy]/g, (e) => {
     let t = (Math.random() * 16) | 0;
     return (e === `x` ? t : (t & 3) | 8).toString(16);
   });
 }
-var q = class extends Error {};
-q.prototype.name = `InvalidTokenError`;
-function yt(e) {
+var J = class extends Error {};
+J.prototype.name = `InvalidTokenError`;
+function vt(e) {
   return decodeURIComponent(
     atob(e).replace(/(.)/g, (e, t) => {
       let n = t.charCodeAt(0).toString(16).toUpperCase();
@@ -1819,7 +1819,7 @@ function yt(e) {
     }),
   );
 }
-function bt(e) {
+function yt(e) {
   let t = e.replace(/-/g, `+`).replace(/_/g, `/`);
   switch (t.length % 4) {
     case 0:
@@ -1834,59 +1834,59 @@ function bt(e) {
       throw Error(`base64 string is not of the correct length`);
   }
   try {
-    return yt(t);
+    return vt(t);
   } catch {
     return atob(t);
   }
 }
-function xt(e, t) {
+function bt(e, t) {
   if (typeof e != `string`)
-    throw new q(`Invalid token specified: must be a string`);
+    throw new J(`Invalid token specified: must be a string`);
   t ||= {};
   let n = t.header === !0 ? 0 : 1,
     r = e.split(`.`)[n];
   if (typeof r != `string`)
-    throw new q(`Invalid token specified: missing part #${n + 1}`);
+    throw new J(`Invalid token specified: missing part #${n + 1}`);
   let i;
   try {
-    i = bt(r);
+    i = yt(r);
   } catch (e) {
-    throw new q(
+    throw new J(
       `Invalid token specified: invalid base64 for part #${n + 1} (${e.message})`,
     );
   }
   try {
     return JSON.parse(i);
   } catch (e) {
-    throw new q(
+    throw new J(
       `Invalid token specified: invalid json for part #${n + 1} (${e.message})`,
     );
   }
 }
-var St = Object.defineProperty,
-  Ct = (e, t, n) =>
+var xt = Object.defineProperty,
+  St = (e, t, n) =>
     t in e
-      ? St(e, t, { enumerable: !0, configurable: !0, writable: !0, value: n })
+      ? xt(e, t, { enumerable: !0, configurable: !0, writable: !0, value: n })
       : (e[t] = n),
-  J = (e, t, n) => Ct(e, typeof t == `symbol` ? t : t + ``, n),
-  wt = 1728e6,
-  Tt = 2,
-  Et = class {
+  Y = (e, t, n) => St(e, typeof t == `symbol` ? t : t + ``, n),
+  Ct = 1728e6,
+  wt = 2,
+  Tt = class {
     constructor(e, t, n) {
-      (J(this, `authState`, { state: `noAuth` }),
-        J(this, `configVersion`, 0),
-        J(this, `syncState`),
-        J(this, `authenticate`),
-        J(this, `stopSocket`),
-        J(this, `tryRestartSocket`),
-        J(this, `pauseSocket`),
-        J(this, `resumeSocket`),
-        J(this, `clearAuth`),
-        J(this, `logger`),
-        J(this, `refreshTokenLeewaySeconds`),
-        J(this, `initialAuthTokenReuse`),
-        J(this, `lastRefreshChange`),
-        J(this, `tokenConfirmationAttempts`, 0),
+      (Y(this, `authState`, { state: `noAuth` }),
+        Y(this, `configVersion`, 0),
+        Y(this, `syncState`),
+        Y(this, `authenticate`),
+        Y(this, `stopSocket`),
+        Y(this, `tryRestartSocket`),
+        Y(this, `pauseSocket`),
+        Y(this, `resumeSocket`),
+        Y(this, `clearAuth`),
+        Y(this, `logger`),
+        Y(this, `refreshTokenLeewaySeconds`),
+        Y(this, `initialAuthTokenReuse`),
+        Y(this, `lastRefreshChange`),
+        Y(this, `tokenConfirmationAttempts`, 0),
         (this.syncState = e),
         (this.authenticate = t.authenticate),
         (this.stopSocket = t.stopSocket),
@@ -1975,7 +1975,7 @@ var St = Object.defineProperty,
         this.authState.state === `noAuth` ||
           (this.authState.state ===
             `waitingForServerConfirmationOfFreshToken` &&
-            this.tokenConfirmationAttempts >= Tt))
+            this.tokenConfirmationAttempts >= wt))
       ) {
         (this.logger.error(
           `Failed to authenticate: "${e.error}", check your server auth config`,
@@ -1989,7 +1989,7 @@ var St = Object.defineProperty,
         (this.authState.state === `waitingForServerConfirmationOfFreshToken` &&
           (this.tokenConfirmationAttempts++,
           this._logVerbose(
-            `retrying reauthentication, ${Tt - this.tokenConfirmationAttempts} attempts remaining`,
+            `retrying reauthentication, ${wt - this.tokenConfirmationAttempts} attempts remaining`,
           )),
         this.notifyRefreshChange(!0),
         await this.stopSocket(),
@@ -2074,7 +2074,7 @@ var St = Object.defineProperty,
       t === void 0
         ? (o = a)
         : ((o = i - (Date.now() - t) / 1e3), o <= 0 && (o = 0));
-      let s = Math.min(wt, (o - this.refreshTokenLeewaySeconds) * 1e3);
+      let s = Math.min(Ct, (o - this.refreshTokenLeewaySeconds) * 1e3);
       s <= 0 &&
         (this.logger.warn(
           `Refetching auth token immediately, configured leeway ${this.refreshTokenLeewaySeconds}s is larger than the token's lifetime ${o}s`,
@@ -2139,7 +2139,7 @@ var St = Object.defineProperty,
     }
     decodeToken(e) {
       try {
-        return xt(e);
+        return bt(e);
       } catch (e) {
         return (
           this._logVerbose(
@@ -2153,64 +2153,64 @@ var St = Object.defineProperty,
       this.logger.logVerbose(`${e} [v${this.configVersion}]`);
     }
   },
-  Dt = [
+  Et = [
     `convexClientConstructed`,
     `convexWebSocketOpen`,
     `convexFirstMessageReceived`,
   ];
-function Ot(e, t) {
+function Dt(e, t) {
   let n = { sessionId: t };
   typeof performance < `u` &&
     performance.mark &&
     performance.mark(e, { detail: n });
 }
-function kt(e) {
+function Ot(e) {
   let t = e.name.slice(6);
   return (
     (t = t.charAt(0).toLowerCase() + t.slice(1)),
     { name: t, startTime: e.startTime }
   );
 }
-function At(e) {
+function kt(e) {
   if (typeof performance > `u` || !performance.getEntriesByName) return [];
   let t = [];
-  for (let n of Dt) {
+  for (let n of Et) {
     let r = performance
       .getEntriesByName(n)
       .filter((e) => e.entryType === `mark`)
       .filter((t) => t.detail.sessionId === e);
     t.push(...r);
   }
-  return t.map(kt);
+  return t.map(Ot);
 }
-var jt = Object.defineProperty,
-  Mt = (e, t, n) =>
+var At = Object.defineProperty,
+  jt = (e, t, n) =>
     t in e
-      ? jt(e, t, { enumerable: !0, configurable: !0, writable: !0, value: n })
+      ? At(e, t, { enumerable: !0, configurable: !0, writable: !0, value: n })
       : (e[t] = n),
-  Y = (e, t, n) => Mt(e, typeof t == `symbol` ? t : t + ``, n),
-  Nt = class {
+  X = (e, t, n) => jt(e, typeof t == `symbol` ? t : t + ``, n),
+  Mt = class {
     constructor(e, t, n) {
       if (
-        (Y(this, `address`),
-        Y(this, `state`),
-        Y(this, `requestManager`),
-        Y(this, `webSocketManager`),
-        Y(this, `authenticationManager`),
-        Y(this, `remoteQuerySet`),
-        Y(this, `optimisticQueryResults`),
-        Y(this, `_transitionHandlerCounter`, 0),
-        Y(this, `_nextRequestId`),
-        Y(this, `_onTransitionFns`, new Map()),
-        Y(this, `_sessionId`),
-        Y(this, `firstMessageReceived`, !1),
-        Y(this, `debug`),
-        Y(this, `logger`),
-        Y(this, `maxObservedTimestamp`),
-        Y(this, `connectionStateSubscribers`, new Map()),
-        Y(this, `nextConnectionStateSubscriberId`, 0),
-        Y(this, `_lastPublishedConnectionState`),
-        Y(this, `markConnectionStateDirty`, () => {
+        (X(this, `address`),
+        X(this, `state`),
+        X(this, `requestManager`),
+        X(this, `webSocketManager`),
+        X(this, `authenticationManager`),
+        X(this, `remoteQuerySet`),
+        X(this, `optimisticQueryResults`),
+        X(this, `_transitionHandlerCounter`, 0),
+        X(this, `_nextRequestId`),
+        X(this, `_onTransitionFns`, new Map()),
+        X(this, `_sessionId`),
+        X(this, `firstMessageReceived`, !1),
+        X(this, `debug`),
+        X(this, `logger`),
+        X(this, `maxObservedTimestamp`),
+        X(this, `connectionStateSubscribers`, new Map()),
+        X(this, `nextConnectionStateSubscriberId`, 0),
+        X(this, `_lastPublishedConnectionState`),
+        X(this, `markConnectionStateDirty`, () => {
           Promise.resolve().then(() => {
             let e = this.connectionState();
             if (
@@ -2222,15 +2222,15 @@ var jt = Object.defineProperty,
             }
           });
         }),
-        Y(this, `mark`, (e) => {
-          this.debug && Ot(e, this.sessionId);
+        X(this, `mark`, (e) => {
+          this.debug && Dt(e, this.sessionId);
         }),
         typeof e == `object`)
       )
         throw Error(
           `Passing a ClientConfig object is no longer supported. Pass the URL of the Convex deployment as a string directly.`,
         );
-      (n?.skipConvexDeploymentUrlCheck !== !0 && ee(e), (n = { ...n }));
+      (n?.skipConvexDeploymentUrlCheck !== !0 && _(e), (n = { ...n }));
       let r = n.authRefreshTokenLeewaySeconds ?? 10,
         i = n.webSocketConstructor;
       if (!i && typeof WebSocket > `u`)
@@ -2242,10 +2242,10 @@ var jt = Object.defineProperty,
         (this.address = e),
         (this.logger =
           n.logger === !1
-            ? Ae({ verbose: n.verbose ?? !1 })
+            ? Oe({ verbose: n.verbose ?? !1 })
             : n.logger !== !0 && n.logger
               ? n.logger
-              : ke({ verbose: n.verbose ?? !1 })));
+              : De({ verbose: n.verbose ?? !1 })));
       let a = e.search(`://`);
       if (a === -1) throw Error(`Provided address was not an absolute URL.`);
       let o = e.substring(a + 3),
@@ -2254,20 +2254,20 @@ var jt = Object.defineProperty,
       if (s === `http`) c = `ws`;
       else if (s === `https`) c = `wss`;
       else throw Error(`Unknown parent protocol ${s}`);
-      let l = `${c}://${o}/api/${Se}/sync`;
-      ((this.state = new Fe()),
-        (this.remoteQuerySet = new rt(
+      let l = `${c}://${o}/api/${be}/sync`;
+      ((this.state = new Ne()),
+        (this.remoteQuerySet = new tt(
           (e) => this.state.queryPath(e),
           this.logger,
         )),
-        (this.requestManager = new Re(
+        (this.requestManager = new Ie(
           this.logger,
           this.markConnectionStateDirty,
         )));
       let u = () => {
         (this.webSocketManager.pause(), this.state.pause());
       };
-      ((this.authenticationManager = new Et(
+      ((this.authenticationManager = new Tt(
         this.state,
         {
           authenticate: (e) => {
@@ -2288,12 +2288,12 @@ var jt = Object.defineProperty,
           initialAuthTokenReuse: n.initialAuthTokenReuse ?? !1,
         },
       )),
-        (this.optimisticQueryResults = new Je()),
+        (this.optimisticQueryResults = new Ke()),
         this.addOnTransitionHandler((e) => {
           t(e.queries.map((e) => e.token));
         }),
         (this._nextRequestId = 0),
-        (this._sessionId = _t()));
+        (this._sessionId = gt()));
       let { unsavedChangesWarning: d } = n;
       if (typeof window > `u` || window.addEventListener === void 0) {
         if (d === !0)
@@ -2309,7 +2309,7 @@ var jt = Object.defineProperty,
               return (((e || window.event).returnValue = t), t);
             }
           });
-      ((this.webSocketManager = new gt(
+      ((this.webSocketManager = new ht(
         l,
         {
           onOpen: (e) => {
@@ -2320,7 +2320,7 @@ var jt = Object.defineProperty,
                 sessionId: this._sessionId,
                 maxObservedTimestamp: this.maxObservedTimestamp,
               }),
-              (this.remoteQuerySet = new rt(
+              (this.remoteQuerySet = new tt(
                 (e) => this.state.queryPath(e),
                 this.logger,
               )));
@@ -2372,7 +2372,7 @@ var jt = Object.defineProperty,
                 this.authenticationManager.onAuthError(e);
                 break;
               case `FatalError`: {
-                let t = je(this.logger, e.error);
+                let t = ke(this.logger, e.error);
                 throw (this.webSocketManager.terminate(), t);
               }
             }
@@ -2452,7 +2452,7 @@ var jt = Object.defineProperty,
         t = {};
       if (e && e.tokenType === `User`)
         try {
-          t = e ? xt(e.value) : {};
+          t = e ? bt(e.value) : {};
         } catch {
           t = {};
         }
@@ -2492,7 +2492,7 @@ var jt = Object.defineProperty,
       );
     }
     localQueryResult(e, t) {
-      let n = N(e, g(t));
+      let n = F(e, g(t));
       return this.optimisticQueryResults.queryResult(n);
     }
     localQueryResultByToken(e) {
@@ -2502,11 +2502,11 @@ var jt = Object.defineProperty,
       return this.optimisticQueryResults.hasQueryResult(e);
     }
     localQueryLogs(e, t) {
-      let n = N(e, g(t));
+      let n = F(e, g(t));
       return this.optimisticQueryResults.queryLogs(n);
     }
     queryJournal(e, t) {
-      let n = N(e, g(t));
+      let n = F(e, g(t));
       return this.state.queryJournal(n);
     }
     connectionState() {
@@ -2536,8 +2536,8 @@ var jt = Object.defineProperty,
       let r = await this.mutationInternal(e, t, n);
       if (!r.success)
         throw r.errorData === void 0
-          ? Error(A(`mutation`, e, r))
-          : j(r, new O(A(`mutation`, e, r)));
+          ? Error(M(`mutation`, e, r))
+          : N(r, new A(M(`mutation`, e, r)));
       return r.value;
     }
     async mutationInternal(e, t, n, r) {
@@ -2583,7 +2583,7 @@ var jt = Object.defineProperty,
           requestId: a,
           udfPath: e,
           componentPath: r,
-          args: [D(i)],
+          args: [k(i)],
         },
         s = this.webSocketManager.sendMessage(o);
       return {
@@ -2595,8 +2595,8 @@ var jt = Object.defineProperty,
       let n = await this.actionInternal(e, t);
       if (!n.success)
         throw n.errorData === void 0
-          ? Error(A(`action`, e, n))
-          : j(n, new O(A(`action`, e, n)));
+          ? Error(M(`action`, e, n))
+          : N(n, new A(M(`action`, e, n)));
       return n.value;
     }
     async actionInternal(e, t, n) {
@@ -2608,7 +2608,7 @@ var jt = Object.defineProperty,
           requestId: i,
           udfPath: e,
           componentPath: n,
-          args: [D(r)],
+          args: [k(r)],
         },
         o = this.webSocketManager.sendMessage(a);
       return this.requestManager.request(a, o);
@@ -2630,7 +2630,7 @@ var jt = Object.defineProperty,
     }
     reportMarks() {
       if (this.debug) {
-        let e = At(this.sessionId);
+        let e = kt(this.sessionId);
         this.webSocketManager.sendMessage({
           type: `Event`,
           eventType: `ClientConnect`,
@@ -2647,7 +2647,7 @@ var jt = Object.defineProperty,
         method: `POST`,
         headers: {
           "Content-Type": `application/json`,
-          "Convex-Client": `npm-${Se}`,
+          "Convex-Client": `npm-${be}`,
         },
         body: JSON.stringify({ event: `LongWebsocketDisconnect` }),
       })
@@ -2660,7 +2660,7 @@ var jt = Object.defineProperty,
         });
     }
   };
-function X(e) {
+function Nt(e) {
   if (
     typeof e != `object` ||
     !e ||
@@ -2683,12 +2683,12 @@ var Pt = Object.defineProperty,
         (this.onTransition = t),
         It(this, `paginatedQuerySet`, new Map()),
         It(this, `lastTransitionTs`),
-        (this.lastTransitionTs = B.fromNumber(0)),
+        (this.lastTransitionTs = H.fromNumber(0)),
         this.client.addOnTransitionHandler((e) => this.onBaseTransition(e)));
     }
     subscribe(e, t, n) {
-      let r = M(e),
-        i = Me(r, t, n),
+      let r = P(e),
+        i = Ae(r, t, n),
         a = () => this.removePaginatedQuerySubscriber(i),
         o = this.paginatedQuerySet.get(i);
       return o
@@ -2710,7 +2710,7 @@ var Pt = Object.defineProperty,
           { paginatedQueryToken: i, unsubscribe: a });
     }
     localQueryResult(e, t, n) {
-      let r = Me(M(e), t, n);
+      let r = Ae(P(e), t, n);
       return this.localQueryResultByToken(r);
     }
     localQueryResultByToken(e) {
@@ -2732,7 +2732,7 @@ var Pt = Object.defineProperty,
           ((i = !0), (a = !1));
           continue;
         }
-        let n = X(t);
+        let n = Nt(t);
         ((r = r.concat(n.page)), (a = !!n.isDone));
       }
       let o;
@@ -2774,7 +2774,7 @@ var Pt = Object.defineProperty,
       let n = this.queryTokenForLastPageOfPaginatedQuery(e),
         r = this.client.localQueryResultByToken(n);
       if (!r) return !1;
-      let i = X(r);
+      let i = Nt(r);
       if (i.isDone) return !1;
       this.addPageToPaginatedQuery(e, i.continueCursor, t);
       let a = {
@@ -2819,7 +2819,7 @@ var Pt = Object.defineProperty,
           if (!a) throw Error(`No page query for active pageKey ${n}`);
           let o = t(a.queryToken);
           if (!o) continue;
-          let s = X(o);
+          let s = Nt(o);
           s.splitCursor &&
             (s.pageStatus === `SplitRecommended` ||
               s.pageStatus === `SplitRequired` ||
@@ -2931,10 +2931,10 @@ If running locally, make sure to run \`convex dev\` and ensure the .env.local fi
       (this.listeners = new Map()),
       (this._logger =
         t?.logger === !1
-          ? Ae({ verbose: t?.verbose ?? !1 })
+          ? Oe({ verbose: t?.verbose ?? !1 })
           : t?.logger !== !0 && t?.logger
             ? t.logger
-            : ke({ verbose: t?.verbose ?? !1 })),
+            : De({ verbose: t?.verbose ?? !1 })),
       (this.options = { ...t, logger: this._logger }));
   }
   get url() {
@@ -2946,7 +2946,7 @@ If running locally, make sure to run \`convex dev\` and ensure the .env.local fi
       this.cachedSync ||
         ((this.cachedSync =
           this.options.baseClient ??
-          new Nt(this.address, () => {}, this.options)),
+          new Mt(this.address, () => {}, this.options)),
         this.adminAuth &&
           this.cachedSync.setAdminAuth(this.adminAuth, this.fakeUserIdentity),
         (this.cachedPaginatedQueryClient = new Lt(this.cachedSync, (e) =>
@@ -2977,7 +2977,7 @@ If running locally, make sure to run \`convex dev\` and ensure the .env.local fi
   }
   watchQuery(e, ...t) {
     let [n, r] = t,
-      i = L(e);
+      i = z(e);
     return {
       onUpdate: (e) => {
         let { queryToken: t, unsubscribe: a } = this.sync.subscribe(i, n, r),
@@ -3008,7 +3008,7 @@ If running locally, make sure to run \`convex dev\` and ensure the .env.local fi
     setTimeout(n, t);
   }
   watchPaginatedQuery(e, t, n) {
-    let r = L(e);
+    let r = z(e);
     return {
       onUpdate: (e) => {
         let { paginatedQueryToken: i, unsubscribe: a } =
@@ -3029,11 +3029,11 @@ If running locally, make sure to run \`convex dev\` and ensure the .env.local fi
   }
   mutation(e, ...t) {
     let [n, r] = t,
-      i = L(e);
+      i = z(e);
     return this.sync.mutation(i, n, r);
   }
   action(e, ...t) {
-    let n = L(e);
+    let n = z(e);
     return this.sync.action(n, ...t);
   }
   query(e, ...t) {
@@ -3085,14 +3085,15 @@ If running locally, make sure to run \`convex dev\` and ensure the .env.local fi
   }
 };
 Rt.createContext(void 0);
-var Ut = We,
+var Ut = He,
   Wt = 6e4,
   Gt = 500,
   Kt = 1e4,
-  qt = 1e3,
-  Jt = 3e4,
-  Yt = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-function Xt(e) {
+  qt = 500,
+  Jt = 1e3,
+  Yt = 3e4,
+  Xt = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function Zt(e) {
   if (typeof e != `object` || !e) return null;
   let t = e;
   if (
@@ -3108,13 +3109,13 @@ function Xt(e) {
   }
   return { mode: t.mode, tokens: n };
 }
-function Zt(e) {
+function Qt(e) {
   let t = document.documentElement;
   for (let [n, r] of Object.entries(e.tokens)) t.style.setProperty(n, r);
   (t.classList.toggle(`light`, e.mode === `light`),
     t.classList.toggle(`dark`, e.mode === `dark`));
 }
-function Qt(e) {
+function $t(e) {
   if (typeof e != `object` || !e) return !1;
   let t = e;
   if (
@@ -3144,7 +3145,24 @@ function Qt(e) {
   }
   return !1;
 }
-function $t() {
+function en(e) {
+  if (e === null) return !0;
+  if (typeof e != `object` || Array.isArray(e)) return !1;
+  let { content: t, structuredContent: n } = e;
+  return (
+    (t === void 0 ||
+      (Array.isArray(t) &&
+        t.every(
+          (e) =>
+            typeof e == `object` &&
+            !!e &&
+            e.type === `text` &&
+            typeof e.text == `string`,
+        ))) &&
+    (n === void 0 || (typeof n == `object` && !!n && !Array.isArray(n)))
+  );
+}
+function tn() {
   let e = window.location.hash.slice(1);
   if (!e)
     throw Error(
@@ -3165,11 +3183,11 @@ function $t() {
   }
   if ((o.protocol !== `http:` && o.protocol !== `https:`) || o.origin !== i)
     throw Error(`Invalid host bridge parent origin`);
-  if (!Yt.test(a)) throw Error(`Invalid host bridge nonce`);
+  if (!Xt.test(a)) throw Error(`Invalid host bridge nonce`);
   return { parentOrigin: i, nonce: a };
 }
-async function en() {
-  let { parentOrigin: e, nonce: t } = $t(),
+async function nn() {
+  let { parentOrigin: e, nonce: t } = tn(),
     n = ``,
     r = ``,
     i = 0,
@@ -3178,43 +3196,47 @@ async function en() {
     s = null,
     c = new Set(),
     l = new Map(),
-    u = new Map(),
-    d = null;
-  async function f() {
-    return Date.now() >= i - Wt ? p() : r;
+    u = null,
+    d = null,
+    f = null,
+    p,
+    m = new Map(),
+    h = null;
+  async function g() {
+    return Date.now() >= i - Wt ? _() : r;
   }
-  function p() {
-    if (d) return d;
+  function _() {
+    if (h) return h;
     let n = crypto.randomUUID();
     return (
-      (d = new Promise((r, i) => {
+      (h = new Promise((r, i) => {
         let a = setTimeout(() => {
-          (u.delete(n), i(Error(`Plugin frame token refresh timed out`)));
+          (m.delete(n), i(Error(`Plugin frame token refresh timed out`)));
         }, Kt);
-        u.set(n, { resolve: r, reject: i, timeout: a });
+        m.set(n, { resolve: r, reject: i, timeout: a });
         try {
           window.parent.postMessage(
             { type: `bonobo:token-refresh-request`, nonce: t, requestId: n },
             e,
           );
         } catch (e) {
-          (clearTimeout(a), u.delete(n), i(e));
+          (clearTimeout(a), m.delete(n), i(e));
         }
       }).finally(() => {
-        d = null;
+        h = null;
       })),
-      d
+      h
     );
   }
-  let m = () => a !== `` && Date.now() < o - Wt,
-    h = (e) => {
+  let v = () => a !== `` && Date.now() < o - Wt,
+    y = (e) => {
       typeof e.jwt == `string` &&
       typeof e.jwtExpiresAt == `number` &&
       Number.isFinite(e.jwtExpiresAt)
         ? ((a = e.jwt), (o = e.jwtExpiresAt))
         : ((a = ``), (o = 0));
     };
-  async function g(e, t, i) {
+  async function b(e, t, i) {
     let a = JSON.stringify(t),
       o = (t) => {
         let r = new Headers(i?.headers);
@@ -3230,18 +3252,18 @@ async function en() {
           })
         );
       },
-      s = await f(),
+      s = await g(),
       c = await o(s);
     return (
       c.status === 401 &&
-        (await c.body?.cancel(), (c = await o(r === s ? await p() : r))),
+        (await c.body?.cancel(), (c = await o(r === s ? await _() : r))),
       c
     );
   }
-  async function ee(e, t, n) {
+  async function x(e, t, n) {
     let r = new Headers(n?.headers);
     r.set(`Accept`, `application/json`);
-    let i = await g(e, t, { ...n, headers: r }),
+    let i = await b(e, t, { ...n, headers: r }),
       a = await i.text(),
       o = null;
     try {
@@ -3249,25 +3271,25 @@ async function en() {
     } catch {}
     return { status: i.status, body: o };
   }
-  async function te(e) {
+  async function S(e) {
     let t = new Headers(e);
-    return (t.set(`Authorization`, `Bearer ${await f()}`), t);
+    return (t.set(`Authorization`, `Bearer ${await g()}`), t);
   }
-  let _ = (e) =>
+  let C = (e) =>
     fetch(n + `/plugins-ui/session-jwt`, {
       method: `POST`,
       headers: { "Content-Type": `application/json` },
       body: JSON.stringify({ token: e }),
     });
-  async function v(e) {
+  async function w(e) {
     let t = e?.forceRefreshToken === !0;
     for (let e = 0; ; e += 1) {
-      if (m() && !t) return a;
+      if (v() && !t) return a;
       let n = null;
       try {
-        if (a !== `` && (await p(), m())) return a;
-        ((n = await _(await f())),
-          n.status === 401 && (n = await _(await p())));
+        if (a !== `` && (await _(), v())) return a;
+        ((n = await C(await g())),
+          n.status === 401 && (n = await C(await _())));
       } catch {
         n = null;
       }
@@ -3286,66 +3308,66 @@ async function en() {
   }
   return new Promise((a) => {
     let o = !1,
-      d,
-      m = () => {
+      h,
+      v = () => {
         window.parent.postMessage({ type: `bonobo:ready`, nonce: t }, e);
       },
-      _ = () => {
-        clearInterval(d);
+      C = () => {
+        clearInterval(h);
       };
-    (window.addEventListener(`message`, (d) => {
-      if (d.source !== window.parent || d.origin !== e) return;
-      let m = d.data;
-      if (typeof m == `object` && m) {
+    (window.addEventListener(`message`, (h) => {
+      if (h.source !== window.parent || h.origin !== e) return;
+      let v = h.data;
+      if (typeof v == `object` && v) {
         if (
-          m.type === `bonobo:init` &&
+          v.type === `bonobo:init` &&
           !o &&
-          m.nonce === t &&
-          typeof m.apiOrigin == `string` &&
-          typeof m.convexUrl == `string` &&
-          typeof m.token == `string` &&
-          typeof m.tokenExpiresAt == `number` &&
-          Number.isFinite(m.tokenExpiresAt) &&
-          Qt(m.context)
+          v.nonce === t &&
+          typeof v.apiOrigin == `string` &&
+          typeof v.convexUrl == `string` &&
+          typeof v.token == `string` &&
+          typeof v.tokenExpiresAt == `number` &&
+          Number.isFinite(v.tokenExpiresAt) &&
+          $t(v.context)
         ) {
           ((o = !0),
-            _(),
-            window.removeEventListener(`pagehide`, _),
-            (n = m.apiOrigin),
-            (r = m.token),
-            (i = m.tokenExpiresAt),
-            h(m));
-          let e = new Ht(m.convexUrl, {
+            C(),
+            window.removeEventListener(`pagehide`, C),
+            (n = v.apiOrigin),
+            (r = v.token),
+            (i = v.tokenExpiresAt),
+            y(v));
+          let m = new Ht(v.convexUrl, {
               expectAuth: !0,
               unsavedChangesWarning: !1,
               initialAuthTokenReuse: !0,
             }),
-            t = Date.now(),
-            u = setInterval(() => {
-              let n = Date.now();
-              (n - t >= Jt && e.setAuth(v), (t = n));
-            }, qt);
-          (e.setAuth(v),
+            h = Date.now(),
+            T = setInterval(() => {
+              let e = Date.now();
+              (e - h >= Yt && m.setAuth(w), (h = e));
+            }, Jt);
+          (m.setAuth(w),
             window.addEventListener(
               `pagehide`,
               () => {
-                (clearInterval(u), e.close());
+                (clearInterval(T), m.close());
               },
               { once: !0 },
             ),
-            (s = Xt(m.theme)),
-            s && Zt(s),
+            (s = Zt(v.theme)),
+            s && Qt(s),
             a({
-              context: m.context,
+              context: v.context,
               apiOrigin: n,
-              getToken: f,
-              refreshToken: p,
-              fetchRaw: g,
-              fetchJson: ee,
-              authorize: te,
-              convex: e,
+              getToken: g,
+              refreshToken: _,
+              fetchRaw: b,
+              fetchJson: x,
+              authorize: S,
+              convex: m,
               api: Ut,
-              session: { expiresAt: () => i, fetchJwt: v },
+              session: { expiresAt: () => i, fetchJwt: w },
               theme: {
                 current: () => s,
                 subscribe(e) {
@@ -3366,51 +3388,103 @@ async function en() {
                     }
                   );
                 },
+                setContext(n) {
+                  if (!en(n))
+                    throw TypeError(
+                      `setContext needs null or { content?: [{ type: "text", text }], structuredContent?: object }`,
+                    );
+                  ((f = JSON.stringify(n)),
+                    p === void 0 &&
+                      (p = setTimeout(() => {
+                        ((p = void 0),
+                          f !== null &&
+                            f !== d &&
+                            ((d = f),
+                            window.parent.postMessage(
+                              {
+                                type: `bonobo:update-model-context`,
+                                nonce: t,
+                                context: JSON.parse(f),
+                              },
+                              e,
+                            )));
+                      }, qt)));
+                },
+                setContextProvider(n) {
+                  if (n !== null && typeof n != `function`)
+                    throw TypeError(
+                      `setContextProvider needs a function or null`,
+                    );
+                  return (
+                    (u = n),
+                    window.parent.postMessage(
+                      {
+                        type: `bonobo:context-provider`,
+                        nonce: t,
+                        enabled: n !== null,
+                      },
+                      e,
+                    ),
+                    () => {
+                      n !== null &&
+                        u === n &&
+                        ((u = null),
+                        window.parent.postMessage(
+                          {
+                            type: `bonobo:context-provider`,
+                            nonce: t,
+                            enabled: !1,
+                          },
+                          e,
+                        ));
+                    }
+                  );
+                },
               },
             }));
         } else if (
           o &&
-          m.nonce === t &&
-          m.type === `bonobo:token` &&
-          typeof m.requestId == `string` &&
-          typeof m.token == `string` &&
-          typeof m.tokenExpiresAt == `number` &&
-          Number.isFinite(m.tokenExpiresAt)
+          v.nonce === t &&
+          v.type === `bonobo:token` &&
+          typeof v.requestId == `string` &&
+          typeof v.token == `string` &&
+          typeof v.tokenExpiresAt == `number` &&
+          Number.isFinite(v.tokenExpiresAt)
         ) {
-          let e = u.get(m.requestId);
+          let e = m.get(v.requestId);
           e &&
-            (u.delete(m.requestId),
+            (m.delete(v.requestId),
             clearTimeout(e.timeout),
-            (r = m.token),
-            (i = m.tokenExpiresAt),
-            h(m),
-            e.resolve(m.token));
-        } else if (o && m.nonce === t && m.type === `bonobo:theme`) {
-          let e = Xt(m.theme);
+            (r = v.token),
+            (i = v.tokenExpiresAt),
+            y(v),
+            e.resolve(v.token));
+        } else if (o && v.nonce === t && v.type === `bonobo:theme`) {
+          let e = Zt(v.theme);
           if (e) {
-            ((s = e), Zt(e));
+            ((s = e), Qt(e));
             for (let t of c) t(e);
           }
         } else if (
           o &&
-          m.nonce === t &&
-          m.type === `bonobo:token-error` &&
-          typeof m.requestId == `string` &&
-          typeof m.message == `string`
+          v.nonce === t &&
+          v.type === `bonobo:token-error` &&
+          typeof v.requestId == `string` &&
+          typeof v.message == `string`
         ) {
-          let e = u.get(m.requestId);
+          let e = m.get(v.requestId);
           e &&
-            (u.delete(m.requestId),
+            (m.delete(v.requestId),
             clearTimeout(e.timeout),
-            e.reject(Error(m.message)));
+            e.reject(Error(v.message)));
         } else if (
           o &&
-          m.nonce === t &&
-          m.type === `bonobo:agent-tool-call` &&
-          typeof m.callId == `string` &&
-          typeof m.toolName == `string`
+          v.nonce === t &&
+          v.type === `bonobo:agent-tool-call` &&
+          typeof v.callId == `string` &&
+          typeof v.toolName == `string`
         ) {
-          let n = m.callId,
+          let n = v.callId,
             r = (r) => {
               try {
                 window.parent.postMessage(
@@ -3435,10 +3509,10 @@ async function en() {
                 );
               }
             },
-            i = l.get(m.toolName);
+            i = l.get(v.toolName);
           i
             ? Promise.resolve()
-                .then(() => i(m.input))
+                .then(() => i(v.input))
                 .then(
                   (e) => r({ ok: !0, output: e }),
                   (e) =>
@@ -3447,26 +3521,78 @@ async function en() {
                       error: e instanceof Error ? e.message : String(e),
                     }),
                 )
-            : r({ ok: !1, error: `This page has no tool named ${m.toolName}` });
+            : r({ ok: !1, error: `This page has no tool named ${v.toolName}` });
+        } else if (
+          o &&
+          v.nonce === t &&
+          v.type === `bonobo:context-request` &&
+          typeof v.requestId == `string`
+        ) {
+          let n = v.requestId,
+            r = (r) => {
+              try {
+                window.parent.postMessage(
+                  {
+                    type: `bonobo:context-result`,
+                    nonce: t,
+                    requestId: n,
+                    ...r,
+                  },
+                  e,
+                );
+              } catch {
+                window.parent.postMessage(
+                  {
+                    type: `bonobo:context-result`,
+                    nonce: t,
+                    requestId: n,
+                    ok: !1,
+                    error: `The view context could not be sent`,
+                  },
+                  e,
+                );
+              }
+            },
+            i = u;
+          i
+            ? Promise.resolve()
+                .then(() => i())
+                .then(
+                  (e) =>
+                    r(
+                      en(e)
+                        ? { ok: !0, context: e }
+                        : {
+                            ok: !1,
+                            error: `The context provider returned a bad value`,
+                          },
+                    ),
+                  (e) =>
+                    r({
+                      ok: !1,
+                      error: e instanceof Error ? e.message : String(e),
+                    }),
+                )
+            : r({ ok: !1, error: `No context provider` });
         }
       }
     }),
-      window.addEventListener(`pagehide`, _, { once: !0 }),
-      m(),
-      (d = setInterval(m, Gt)));
+      window.addEventListener(`pagehide`, C, { once: !0 }),
+      v(),
+      (h = setInterval(v, Gt)));
   });
 }
-var tn = t(),
+var rn = t(),
   Q = r(),
-  nn = `modulepreload`,
-  rn = function (e, t) {
+  an = `modulepreload`,
+  on = function (e, t) {
     return new URL(e, t).href;
   },
-  an = {},
-  on = function (e) {
+  sn = {},
+  cn = function (e) {
     return e.pathname.endsWith(`.css`);
   },
-  sn = function (e, t, n) {
+  ln = function (e, t, n) {
     if (t in e) return e[t];
     let r = n();
     if (!r) {
@@ -3483,7 +3609,7 @@ var tn = t(),
     );
     return ((e[t] = i), i);
   },
-  cn = function (e, t, n) {
+  un = function (e, t, n) {
     let r = Promise.resolve();
     if (t && t.length > 0) {
       let e,
@@ -3507,10 +3633,10 @@ var tn = t(),
       r = o(
         t
           .map((t) => {
-            t = rn(t, n);
+            t = on(t, n);
             let r = s(t),
-              i = on(r);
-            return sn(an, r.href, () => {
+              i = cn(r);
+            return ln(sn, r.href, () => {
               if (e === void 0) {
                 e = { all: new Set(), styles: new Set() };
                 let t = document.getElementsByTagName(`link`);
@@ -3523,7 +3649,7 @@ var tn = t(),
               if ((i ? e.styles : e.all).has(r.href)) return;
               let t = document.createElement(`link`);
               if (
-                ((t.rel = i ? `stylesheet` : nn),
+                ((t.rel = i ? `stylesheet` : an),
                 i || (t.as = `script`),
                 (t.crossOrigin = ``),
                 (t.href = r.href),
@@ -3552,23 +3678,23 @@ var tn = t(),
       return e().catch(i);
     });
   },
-  ln = document.getElementById(`root`);
-if (!ln) throw Error(`index.html is missing the #root element`);
-var $ = (0, tn.createRoot)(ln);
+  dn = document.getElementById(`root`);
+if (!dn) throw Error(`index.html is missing the #root element`);
+var $ = (0, rn.createRoot)(dn);
 ($.render(
   (0, Q.jsx)(`main`, {
     role: `status`,
     children: `Connecting to Bonobo Senate…`,
   }),
 ),
-  en()
+  nn()
     .then(
       async (e) => {
         if (
           (e.context.kind === `page` && (document.title = e.context.pageTitle),
           e.context.kind === `page` && e.context.pageId === `mail`)
         ) {
-          let { MailApp: t } = await cn(
+          let { MailApp: t } = await un(
             async () => {
               let { MailApp: e } = await import(`./mail-app.js`);
               return { MailApp: e };
@@ -3578,7 +3704,7 @@ var $ = (0, tn.createRoot)(ln);
           );
           $.render((0, Q.jsx)(t, { client: e }));
         } else {
-          let { GmailPage: t } = await cn(
+          let { GmailPage: t } = await un(
             async () => {
               let { GmailPage: e } = await import(`./gmail-page.js`);
               return { GmailPage: e };

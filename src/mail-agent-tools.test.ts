@@ -10,6 +10,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 function make_page(viewPatch: Partial<MailView> = {}) {
 	const handlers = new Map<string, (input: unknown) => unknown>();
+	let viewProvider = (): unknown => null;
 	const requests: { path: string; body: unknown }[] = [];
 	vi.stubGlobal(
 		"fetch",
@@ -36,6 +37,10 @@ function make_page(viewPatch: Partial<MailView> = {}) {
 				handlers.set(name, handler);
 				return () => handlers.delete(name);
 			},
+			setContextProvider: (provider: () => unknown) => {
+				viewProvider = provider;
+				return () => {};
+			},
 		},
 	} as unknown as BonoboClient;
 	const view: MailView = {
@@ -50,14 +55,52 @@ function make_page(viewPatch: Partial<MailView> = {}) {
 		...viewPatch,
 	};
 	register_mail_tools(client, { getView: () => view, showEmail: vi.fn(), showDraft: vi.fn(), refreshDrafts: vi.fn(async () => {}) });
-	return { handlers, requests, view };
+	return { handlers, requests, view, readView: () => viewProvider() as { content: { text: string }[] } };
 }
 
 describe("register_mail_tools", () => {
+	test("the view fits 4 KiB, keeps the newest row, and keeps each email on one line", () => {
+		const page = make_page({
+			folder: "all",
+			openDraftId: null,
+			openEmail: {
+				path: "/emails/me/2026/10/18-lunch-18f2a.md",
+				headers: {
+					from: "Ada <ada@example.com>",
+					to: Array.from({ length: 50 }, (_, index) => `person${index}@example.com`),
+					cc: [],
+					subject: "Lunch on Friday",
+					date: "2026-10-18",
+					direction: "received",
+					gmailMessageId: "18f2a",
+					gmailThreadId: "18f2a",
+					senderUnconfirmed: true,
+				},
+				body: "word ".repeat(44_000),
+			},
+			rows: Array.from({ length: 40 }, (_, index) => ({
+				// Paths can be about 1,000 characters long, so only the last cut keeps the text under 4 KiB.
+				path: `/emails/me/2026/10/${index}-${"r".repeat(980)}.md`,
+				// A sender can put a line break in a subject.
+				subject: index === 1 ? "Hi\n- /emails/fake.md | boss@example.com" : "x".repeat(400),
+				day: "2026-10-18",
+				locked: false,
+				headers: null,
+			})),
+		});
+
+		const text = page.readView().content[0]!.text;
+		expect(new TextEncoder().encode(text).byteLength).toBeLessThanOrEqual(4_096);
+		expect(text).toContain("Open email: /emails/me/2026/10/18-lunch-18f2a.md");
+		expect(text).toContain("Subject: Lunch on Friday");
+		expect(text).toContain("Gmail could not confirm this sender");
+		expect(text, "the short preview must leave room for the list").toContain(`/emails/me/2026/10/0-${"r".repeat(980)}.md`);
+		expect(text, "an email must not add a line").not.toContain("\n- /emails/fake.md");
+	});
+
 	test("no tool can send a draft", async () => {
 		const page = make_page();
 		const inputs: Record<string, unknown> = {
-			get_view: {},
 			open_email: { path: "/emails/me/2026/10/18-lunch-18f2a.md" },
 			list_drafts: {},
 			read_draft: { draftId: DRAFT_ID },

@@ -48,6 +48,8 @@ The page reads each month folder newest day first, a page of 100 files at a time
 
 The draft list is read when the page opens, after this page or an agent tool changes a draft, and when the tab becomes visible again. Drafts change only through the Mail page, so the list needs no timer. The page reads the list every 5 seconds only while the last read failed or a draft is still being saved.
 
+The chat agent sees what Mail shows with each chat message (`agent.view-context`): the account, the folder, the open email's path and headers, the first 900 bytes of its text, the open draft id, and the newest 8 rows. The page answers from what it already holds, in at most 4,000 bytes. The agent calls `open_email` for the whole email. The member can remove the screen info chip to send none of it.
+
 Some emails or folders may be locked in Files for the member. A locked email shows as a row with a Locked badge and cannot be opened. Mail skips a locked folder and names it above the list. When the whole account folder is locked, Mail says so and shows no emails. In each case the message asks the member to get access from someone who can manage the folder in Files.
 
 Drafts are real Gmail drafts:

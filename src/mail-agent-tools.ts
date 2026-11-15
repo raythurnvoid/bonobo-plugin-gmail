@@ -21,10 +21,22 @@ import { get_error_message } from "./mail-retry";
 const MAX_TEXT_BYTES = 12_000;
 const MAX_PREVIEW_BYTES = 300;
 const MAX_LISTED_ADDRESSES = 10;
-const MAX_VIEW_ROWS = 25;
+
+/**
+ * The model reads at most 4 KiB of the view the host sends with each chat message, and an email from
+ * a stranger is untrusted text. So the view lists headers, a short preview and a few rows only, in at
+ * most 4,000 bytes. The agent calls open_email for the whole email.
+ */
+const MAX_VIEW_BYTES = 4_000;
+const MAX_VIEW_PREVIEW_BYTES = 900;
+const MAX_VIEW_FIELD_BYTES = 120;
+const MAX_VIEW_ADDRESSES = 3;
+const MAX_VIEW_ROWS = 8;
 
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
+
+const SENDER_WARNING = "Gmail could not confirm this sender. The From address may be fake.";
 
 const NOT_SENT_NOTE = "Saved as a Gmail draft and open in the Mail page. It was not sent. Only the member can send it.";
 
@@ -42,7 +54,8 @@ export type MailAccount = {
 };
 
 /**
- * What the page shows right now. The tools read it on each call, so they always see the latest view.
+ * What the page shows right now. The tools and the view provider read it on each call, so they always
+ * see the latest view.
  */
 export type MailView = {
 	account: MailAccount | null;
@@ -72,13 +85,11 @@ export type MailViewControls = {
 };
 
 /**
- * Cut text to at most `maxBytes` UTF-8 bytes. A character cut in half becomes U+FFFD.
+ * Cut text to at most `maxBytes` UTF-8 bytes and add `note`. A character cut in half becomes U+FFFD.
  */
-function cut(text: string, maxBytes: number) {
+function cut(text: string, maxBytes: number, note = "\n[Shortened. Open the file for the rest.]") {
 	const bytes = TEXT_ENCODER.encode(text);
-	return bytes.byteLength <= maxBytes
-		? text
-		: `${TEXT_DECODER.decode(bytes.slice(0, maxBytes))}\n[Shortened. Open the file for the rest.]`;
+	return bytes.byteLength <= maxBytes ? text : `${TEXT_DECODER.decode(bytes.slice(0, maxBytes))}${note}`;
 }
 
 function addresses(list: string[]) {
@@ -95,7 +106,7 @@ function describe_email(email: Email) {
 		date: email.headers.date,
 		direction: email.headers.direction,
 		threadId: email.headers.gmailThreadId,
-		senderWarning: email.headers.senderUnconfirmed ? "Gmail could not confirm this sender. The From address may be fake." : null,
+		senderWarning: email.headers.senderUnconfirmed ? SENDER_WARNING : null,
 		body: cut(email.body, MAX_TEXT_BYTES),
 	};
 }
@@ -121,6 +132,51 @@ function describe_draft(draft: DraftText) {
 		isReply: draft.isReply,
 		editedByAgent: draft.agentEditedAt !== null,
 	};
+}
+
+/**
+ * Describe what Mail shows for the chat agent. Read only what the page already holds, so the host
+ * gets its answer at once.
+ *
+ * Senders control From, Subject and the body. Keep each of them on one line, so an email cannot add a
+ * line that looks like another row or a warning.
+ */
+function describe_view(view: MailView) {
+	const oneLine = (text: string, maxBytes: number) => cut(text.replace(/\s+/g, " "), maxBytes, "…");
+	const field = (text: string) => oneLine(text, MAX_VIEW_FIELD_BYTES);
+	const lines = [
+		view.account ? `Gmail account: ${view.account.emailAddress} (${view.account.canCompose ? "can write drafts" : "cannot write drafts"})` : "No Gmail account is connected.",
+		`Folder: ${view.folder === "drafts" ? "Drafts" : "All mail"}`,
+	];
+
+	if (view.openEmail) {
+		const { headers } = view.openEmail;
+		const moreTo = headers.to.length > MAX_VIEW_ADDRESSES ? ` and ${headers.to.length - MAX_VIEW_ADDRESSES} more` : "";
+		lines.push(
+			`Open email: ${view.openEmail.path}`,
+			`From: ${field(headers.from)}`,
+			`To: ${headers.to.slice(0, MAX_VIEW_ADDRESSES).map(field).join(", ")}${moreTo}`,
+			`Subject: ${field(headers.subject)}`,
+			`Date: ${headers.date}${headers.direction ? ` (${headers.direction})` : ""}`,
+		);
+		if (headers.senderUnconfirmed) {
+			lines.push(`Warning: ${SENDER_WARNING}`);
+		}
+		lines.push(`Start of the email (call open_email for all of it): ${oneLine(view.openEmail.body, MAX_VIEW_PREVIEW_BYTES)}`);
+	}
+
+	if (view.openDraftId) {
+		lines.push(`Open draft: ${view.openDraftId} (call read_draft to read it)`);
+	}
+
+	lines.push(`Newest emails in All mail (${view.rows.length} loaded):`);
+	for (const row of view.rows.slice(0, MAX_VIEW_ROWS)) {
+		const from = row.headers ? `${field(row.headers.from)} | ` : "";
+		lines.push(`- ${row.path} | ${from}${field(row.headers?.subject ?? row.subject)} | ${row.headers?.date ?? row.day}${row.locked ? " | locked" : ""}`);
+	}
+	lines.push(`Drafts: ${view.drafts.length}`);
+
+	return { content: [{ type: "text" as const, text: cut(lines.join("\n"), MAX_VIEW_BYTES, "\n[Shortened.]") }] };
 }
 
 // The model writes tool input, so check every field before use, even with the manifest schema.
@@ -203,31 +259,8 @@ export function register_mail_tools(client: BonoboClient, controls: MailViewCont
 		});
 
 	const unregister = [
-		register("get_view", async () => {
-			const view = controls.getView();
-			// The open draft's text lives in Gmail. A draft that cannot be read now shows as null.
-			const openDraft =
-				view.account && view.openDraftId
-					? await get_draft(client, view.account.accountId, view.openDraftId).catch(() => null)
-					: null;
-			return {
-				account: view.account?.emailAddress ?? null,
-				canWriteDrafts: view.account?.canCompose ?? false,
-				folder: view.folder,
-				openEmail: view.openEmail ? describe_email(view.openEmail) : null,
-				openDraft: openDraft ? describe_draft(openDraft) : null,
-				emails: view.rows.slice(0, MAX_VIEW_ROWS).map((row) => ({
-					path: row.path,
-					from: row.headers ? cut(row.headers.from, MAX_PREVIEW_BYTES) : null,
-					subject: cut(row.headers?.subject ?? row.subject, MAX_PREVIEW_BYTES),
-					date: row.headers?.date ?? row.day,
-					direction: row.headers?.direction ?? null,
-					// The member cannot open a locked email in Files, so open_email fails for it.
-					locked: row.locked,
-				})),
-				draftCount: view.drafts.length,
-			};
-		}),
+		// Send what Mail shows with each chat message, so the agent sees it without a tool call.
+		client.agent.setContextProvider(() => describe_view(controls.getView())),
 
 		register("open_email", async (input) => {
 			const path = require_value(read_string(read_object(input), "path"), "path");

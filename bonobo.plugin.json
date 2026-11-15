@@ -2,7 +2,7 @@
 	"schemaVersion": 1,
 	"name": "gmail",
 	"displayName": "Gmail",
-	"version": "0.4.4",
+	"version": "0.5.0",
 	"description": "Save sent and received Gmail emails and attachments in Bonobo Senate Files. Read them in Mail, and write Gmail drafts with the chat agent.",
 	"compatibility": { "bonoboPluginRuntime": "1" },
 	"events": [],
@@ -19,17 +19,8 @@
 			"agent": {
 				"tools": [
 					{
-						"name": "get_view",
-						"description": "Show what the member sees in Mail right now: the account, the mailbox folder, the open email or draft, and the newest emails in the list.",
-						"inputSchema": {
-							"type": "object",
-							"properties": {},
-							"additionalProperties": false
-						}
-					},
-					{
 						"name": "open_email",
-						"description": "Open one email in the Mail page and return its headers and text. Use a path from get_view or from the Files tools, for example /emails/me-example-com/2026/10/18-hello-18f2a.md. The answer has a threadId. To read the whole conversation, search Files for frontmatter.gmail-thread-id:<threadId>, then read each file it finds. senderWarning is set when Gmail's DMARC check of the sender failed; tell the member before you trust the email. A null senderWarning does not prove the sender is real.",
+						"description": "Open one email in the Mail page and return its headers and text. Use a path from the Mail view sent with the chat message or from the Files tools, for example /emails/me-example-com/2026/10/18-hello-18f2a.md. The answer has a threadId. To read the whole conversation, search Files for frontmatter.gmail-thread-id:<threadId>, then read each file it finds. senderWarning is set when Gmail's DMARC check of the sender failed; tell the member before you trust the email. A null senderWarning does not prove the sender is real.",
 						"inputSchema": {
 							"type": "object",
 							"properties": {
@@ -165,17 +156,17 @@
 			}
 		}
 	],
-	"capabilities": ["plugin.service.connect", "ui.outbound.fetch", "workspace.files.read", "workspace.files.write", "agent.page-tools"],
+	"capabilities": ["plugin.service.connect", "ui.outbound.fetch", "workspace.files.read", "workspace.files.write", "agent.page-tools", "agent.view-context"],
 	"outboundOrigins": [],
 	"uiOutboundOrigins": ["https://kindhearted-mallard-511.convex.site"],
 	"files": [
 		{ "path": "dist/frontend/index.html", "sha256": "sha256:0f1543e7d0ad370fe64039ff2d49ff01174d9239e7257de765e0eb775aa3a96a", "bytes": 437, "contentType": "text/html" },
-		{ "path": "dist/frontend/assets/index.js", "sha256": "sha256:2009bfd33398062c7e8b438257a4510c5e1f32bb78ea7ce4bfb3d34471b52a25", "bytes": 111307, "contentType": "application/javascript" },
+		{ "path": "dist/frontend/assets/index.js", "sha256": "sha256:539b535fdab3610817791bfcde3f31583eb03b69bfbcb3811681ada73f77155d", "bytes": 115417, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/gmail-page.css", "sha256": "sha256:a60d5d64b951a700be557962abdf5624201985f464dd32b718f8d43d6c771b97", "bytes": 1576, "contentType": "text/css" },
 		{ "path": "dist/frontend/assets/mail-app.css", "sha256": "sha256:f7b52cbcb504bdab1e177300611f45cc087bcb94bee84b824e6812761cab0ff2", "bytes": 6396, "contentType": "text/css" },
 		{ "path": "dist/frontend/assets/gmail-api.js", "sha256": "sha256:c0e6d64f5f07f2d2acfbf59fee0489cd74e58b39914f03b045d48af1a3a66709", "bytes": 6316, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/gmail-page.js", "sha256": "sha256:23e10e7311628d67d6db15684a80e43ca2e751da80f195089bedec53d2142a12", "bytes": 32487, "contentType": "application/javascript" },
-		{ "path": "dist/frontend/assets/mail-app.js", "sha256": "sha256:61be30c5fcf2fc46132d38147ca979293c72b440ee639375d3b8b48e3363fb6a", "bytes": 46181, "contentType": "application/javascript" },
+		{ "path": "dist/frontend/assets/mail-app.js", "sha256": "sha256:98086f2fda35558f13748649d7051d196f0095573bfb79effb2d5dcac10e8a0c", "bytes": 46945, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/react.js", "sha256": "sha256:8a04d33413e1af23d3da12f720c870e7841a63671a5657a60c063c5b522ae79f", "bytes": 421948, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/zod.js", "sha256": "sha256:6590790c7ddf201510d0d91cd868a5300928824d6b0783c1455ae8910df3b4cf", "bytes": 129182, "contentType": "application/javascript" },
 		{ "path": "dist/frontend/assets/rolldown-runtime.js", "sha256": "sha256:5388ca8b7a40c7dc758236649b52600b193fa7b2cfaac61c9030bdf3ac2523df", "bytes": 926, "contentType": "application/javascript" }

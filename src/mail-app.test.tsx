@@ -57,7 +57,7 @@ describe("MailApp", () => {
 			getToken: async () => "plu_test",
 			refreshToken: async () => "plu_new",
 			fetchJson: async () => ({ status: 404, body: { message: "Not found" } }),
-			agent: { registerTool: () => () => {} },
+			agent: { registerTool: () => () => {}, setContextProvider: () => () => {} },
 		} as unknown as BonoboClient;
 
 		render(<MailApp client={client} />);
@@ -92,7 +92,7 @@ describe("MailApp", () => {
 			getToken: async () => "plu_test",
 			refreshToken: async () => "plu_new",
 			fetchJson: async () => ({ status: 404, body: { message: "Not found" } }),
-			agent: { registerTool: () => () => {} },
+			agent: { registerTool: () => () => {}, setContextProvider: () => () => {} },
 		} as unknown as BonoboClient;
 		const draftReads = () => paths.filter((path) => path === "/page/drafts/list").length;
 
@@ -129,7 +129,7 @@ describe("MailApp", () => {
 			getToken: async () => "plu_test",
 			refreshToken: async () => "plu_new",
 			fetchJson: async () => ({ status: 404, body: { message: "Not found" } }),
-			agent: { registerTool: () => () => {} },
+			agent: { registerTool: () => () => {}, setContextProvider: () => () => {} },
 		} as unknown as BonoboClient;
 		const draftReads = () => paths.filter((path) => path === "/page/drafts/list").length;
 
@@ -187,7 +187,7 @@ describe("MailApp", () => {
 					},
 				};
 			},
-			agent: { registerTool: () => () => {} },
+			agent: { registerTool: () => () => {}, setContextProvider: () => () => {} },
 		} as unknown as BonoboClient;
 
 		render(<MailApp client={client} />);
@@ -238,6 +238,7 @@ describe("MailApp", () => {
 					tools.set(name, handler);
 					return () => tools.delete(name);
 				},
+				setContextProvider: () => () => {},
 			},
 		} as unknown as BonoboClient;
 
