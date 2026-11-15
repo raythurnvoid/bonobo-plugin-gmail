@@ -93,13 +93,11 @@ const list_response = z.object({
   nextPageToken: z.string().max(2048).optional(),
 });
 const upload_root = "/api/v1/files/service-uploads/" as const;
-const collision = "A file already exists at this path";
-const released = [
-  "This target was already released",
-  "This target's upload expired",
-];
-const plan_refusals = ["This workspace's plan does not include file uploads"];
-const storage_refusals = ["This workspace has reached its storage limit"];
+// Host errorCode values that gmail_HostError carries as its reason.
+const collision = "file_exists";
+const released = ["upload_released", "upload_expired"];
+const plan_refusals = ["plan_required"];
+const storage_refusals = ["storage_full"];
 
 function checkpoint(account: Doc<"gmail_accounts">): Traversal {
   return {

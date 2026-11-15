@@ -645,7 +645,7 @@ describe("work_account_slice", () => {
 			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
 			if (path.endsWith("/create-target")) return Response.json({ ...transport, uploadUrlExpiresAt: now + 3600_000 });
 			if (path.endsWith("/finalize") && ++finalizes === 1) return step === "frozen"
-				? Response.json({ message: "Target not found" }, { status: 404 }) : Response.json(pending);
+				? Response.json({ message: "Target not found", errorCode: "not_found" }, { status: 404 }) : Response.json(pending);
 			if (path.endsWith("/finalize")) return Response.json(committed);
 			if (path === "/object") return new Response(null, { status: 200 });
 			return Response.json({}, { status: 500 });
@@ -1474,7 +1474,7 @@ describe("work_account_slice", () => {
 					throw new TypeError("Save reply lost");
 				}
 				if (path.endsWith("/files/write")) return replay
-					? Response.json({ message: "A file already exists at this path" }, { status: 409 })
+					? Response.json({ message: "A file already exists at this path", errorCode: "file_exists" }, { status: 409 })
 					: Response.json({ nodeId: "email-node" });
 				return Response.json({ ...transport, uploadUrlExpiresAt: now + 3600_000 });
 			}
@@ -1732,7 +1732,7 @@ describe("work_account_slice", () => {
 	test("a fresh file refusal holds the row without spending failure or delivery attempts", async () => {
 		const f = await fixture({ fresh: true });
 		const calls = network((path) =>
-			path.endsWith("/messages/ab") ? Response.json(source) : Response.json({ message: "Forbidden" }, { status: 403 }),
+			path.endsWith("/messages/ab") ? Response.json(source) : Response.json({ message: "Forbidden", errorCode: "permission_denied" }, { status: 403 }),
 		);
 		await f.t.action(internal.gmail_worker.work_account_slice, {
 			work: f.work,
@@ -1761,7 +1761,7 @@ describe("work_account_slice", () => {
 			path.endsWith("/messages/ab")
 				? Response.json(plain)
 				: refused
-					? Response.json({ message: "Forbidden" }, { status: 403 })
+					? Response.json({ message: "Forbidden", errorCode: "permission_denied" }, { status: 403 })
 					: path.endsWith("/files/write")
 						? Response.json({ nodeId: "email-node" })
 						: Response.json({}),
@@ -1784,7 +1784,7 @@ describe("work_account_slice", () => {
 		let claimedDeadline = 0;
 		const calls = network(async () => {
 			claimedDeadline = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!.permissionProbeNotBefore!;
-			return Response.json({ message: "Forbidden" }, { status: 403 });
+			return Response.json({ message: "Forbidden", errorCode: "permission_denied" }, { status: 403 });
 		});
 		await f.t.action(internal.gmail_worker.work_account_slice, {
 			work: f.work,
@@ -1850,11 +1850,11 @@ describe("work_account_slice", () => {
 		expect((await f.t.run((ctx) => ctx.db.get(f.accountId)))!.permissionProbeNotBefore).toBeGreaterThan(Date.now());
 	});
 	test.each([
-		["released", "ready", 200, null], ["missing", "ready", 404, "Not found"],
-		["cancelled", "ready", 409, "This target was already released"], ["expired", "ready", 409, "This target's upload expired"],
-		["released", "revoked", 200, null], ["missing", "revoked", 404, "Not found"],
-		["cancelled", "revoked", 409, "This target was already released"], ["expired", "revoked", 409, "This target's upload expired"],
-	] as const)("a stop after an accepted %s result with %s source keeps its final skip", async (_kind, sourceAccess, status, message) => {
+		["released", "ready", 200, null], ["missing", "ready", 404, "not_found"],
+		["cancelled", "ready", 409, "upload_released"], ["expired", "ready", 409, "upload_expired"],
+		["released", "revoked", 200, null], ["missing", "revoked", 404, "not_found"],
+		["cancelled", "revoked", 409, "upload_released"], ["expired", "revoked", 409, "upload_expired"],
+	] as const)("a stop after an accepted %s result with %s source keeps its final skip", async (_kind, sourceAccess, status, errorCode) => {
 		let now = Date.now();
 		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -1873,7 +1873,7 @@ describe("work_account_slice", () => {
 			if (path.endsWith("/finalize")) {
 				if (!release) return Response.json(pending);
 				releasedReply = true;
-				return status === 200 ? Response.json({ ...pending, state: "released" }) : Response.json({ message }, { status });
+				return status === 200 ? Response.json({ ...pending, state: "released" }) : Response.json({ message: "Refused", errorCode }, { status });
 			}
 			return Response.json({}, { status: 500 });
 		});
@@ -1966,10 +1966,10 @@ describe("work_account_slice", () => {
 		expect(tokenFailures).toBe(sourceAccess === "ready" ? 0 : 1);
 	});
 	test.each([
-		["create", "cancelled", "This target was already released"], ["create", "expired", "This target's upload expired"],
-		["remint", "cancelled", "This target was already released"], ["remint", "expired", "This target's upload expired"],
+		["create", "cancelled", "upload_released"], ["create", "expired", "upload_expired"],
+		["remint", "cancelled", "upload_released"], ["remint", "expired", "upload_expired"],
 		["finalize", "released", null],
-	] as const)("a stop after %s returns %s keeps the accepted upload final", async (route, _kind, message) => {
+	] as const)("a stop after %s returns %s keeps the accepted upload final", async (route, _kind, errorCode) => {
 		let now = Date.now();
 		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -1988,7 +1988,7 @@ describe("work_account_slice", () => {
 			if (release && path.endsWith(route === "create" ? "/create-target" : `/${route}`)) {
 				beforeReleased = (await f.t.run(ctx => ctx.db.get(f.ledgerId)))!;
 				releasedReply = true;
-				return route === "finalize" ? Response.json({ ...pending, state: "released" }) : Response.json({ message }, { status: 409 });
+				return route === "finalize" ? Response.json({ ...pending, state: "released" }) : Response.json({ message: "Refused", errorCode }, { status: 409 });
 			}
 			if (path.endsWith("/create-target")) return Response.json({ ...transport, uploadUrlExpiresAt: now + 3600_000 });
 			if (path.endsWith("/finalize")) return Response.json(pending);
@@ -2066,7 +2066,7 @@ describe("work_account_slice", () => {
 					syncError: null,
 				}),
 			);
-			return Response.json({ message: "Expired" }, { status: 401 });
+			return Response.json({ message: "Expired", errorCode: "unauthenticated" }, { status: 401 });
 		});
 		await f.t.action(internal.gmail_worker.work_account_slice, {
 			work: f.work,
@@ -2449,6 +2449,7 @@ describe("work_account_slice", () => {
 					: Response.json(
 							{
 								message: "This workspace's plan does not include file uploads",
+								errorCode: "plan_required",
 							},
 							{ status: 403 },
 						),
@@ -2468,11 +2469,11 @@ describe("work_account_slice", () => {
 		});
 	});
 	test.each([
-		["plan", "refusal", "This workspace's plan does not include file uploads"],
-		["storage", "refusal", "This workspace has reached its storage limit"],
-		["plan", "clear", "This workspace's plan does not include file uploads"],
-		["storage", "clear", "This workspace has reached its storage limit"],
-	] as const)("a stop at the %s %s note keeps its message result", async (reason, step, message) => {
+		["plan", "refusal", "plan_required"],
+		["storage", "refusal", "storage_full"],
+		["plan", "clear", "plan_required"],
+		["storage", "clear", "storage_full"],
+	] as const)("a stop at the %s %s note keeps its message result", async (reason, step, errorCode) => {
 		let now = Date.now();
 		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -2492,7 +2493,7 @@ describe("work_account_slice", () => {
 				? [{ id: "11", messagesAdded: [{ message: { id: "ef" } }] }] : [] });
 			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
 			if (path.endsWith("/create-target")) {
-				if (refused) { refusalReply = true; return Response.json({ message }, { status: 403 }); }
+				if (refused) { refusalReply = true; return Response.json({ message: "Refused", errorCode }, { status: 403 }); }
 				acceptedReply = true;
 				return Response.json({ ...transport, uploadUrlExpiresAt: now + 3600_000 });
 			}
@@ -2572,7 +2573,7 @@ describe("work_account_slice", () => {
 				? Response.json(pending)
 				: path.endsWith("/messages/ab")
 					? Response.json(source)
-					: Response.json({ message: "This workspace has reached its storage limit" }, { status: 403 }),
+					: Response.json({ message: "This workspace has reached its storage limit", errorCode: "storage_full" }, { status: 403 }),
 		);
 		await f.t.action(internal.gmail_worker.work_account_slice, {
 			work: f.work,
@@ -2610,9 +2611,9 @@ describe("work_account_slice", () => {
 		expect(calls.slice(before).map((call) => call.path)).toEqual(["/api/v1/files/service-uploads/finalize"]);
 	});
 	test.each([
-		["plan", "This workspace's plan does not include file uploads"],
-		["storage", "This workspace has reached its storage limit"],
-	] as const)("a %s refusal skips a new part and keeps two accepted receipts through stops", async (reason, message) => {
+		["plan", "plan_required"],
+		["storage", "storage_full"],
+	] as const)("a %s refusal skips a new part and keeps two accepted receipts through stops", async (reason, errorCode) => {
 		let now = Date.now();
 		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -2638,7 +2639,7 @@ describe("work_account_slice", () => {
 				if (body === null || typeof body !== "object" || !("targetKey" in body) || typeof body.targetKey !== "string") throw new Error("Missing target key");
 				const key = body.targetKey;
 				if (path.endsWith("/create-target")) {
-					if (key === "ab:att-2") { refusalReply = true; return Response.json({ message }, { status: 403 }); }
+					if (key === "ab:att-2") { refusalReply = true; return Response.json({ message: "Refused", errorCode }, { status: 403 }); }
 					if (!("path" in body) || typeof body.path !== "string" || !("size" in body) || typeof body.size !== "number") throw new Error("Invalid create request");
 					expect(receipts.has(key)).toBe(false);
 					receipts.set(key, { path: body.path, size: body.size, uploads: 0 });
@@ -2742,15 +2743,15 @@ describe("work_account_slice", () => {
 			ledgerCounts: { done: 2, pending: 0, given_up: 0, permissionHeld: 0 }, syncRequestId: null, syncWorkId: null });
 	});
 	test.each([
-		["before", "plan", "create", "This workspace's plan does not include file uploads"],
-		["after", "plan", "create", "This workspace's plan does not include file uploads"],
-		["before", "storage", "create", "This workspace has reached its storage limit"],
-		["after", "storage", "create", "This workspace has reached its storage limit"],
-		["before", "plan", "remint", "This workspace's plan does not include file uploads"],
-		["after", "plan", "remint", "This workspace's plan does not include file uploads"],
-		["before", "storage", "remint", "This workspace has reached its storage limit"],
-		["after", "storage", "remint", "This workspace has reached its storage limit"],
-	] as const)("a stop %s accepted %s %s refusal keeps its receipt through five checks", async (phase, reason, route, message) => {
+		["before", "plan", "create", "plan_required"],
+		["after", "plan", "create", "plan_required"],
+		["before", "storage", "create", "storage_full"],
+		["after", "storage", "create", "storage_full"],
+		["before", "plan", "remint", "plan_required"],
+		["after", "plan", "remint", "plan_required"],
+		["before", "storage", "remint", "storage_full"],
+		["after", "storage", "remint", "storage_full"],
+	] as const)("a stop %s accepted %s %s refusal keeps its receipt through five checks", async (phase, reason, route, errorCode) => {
 		let now = Date.now();
 		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -2774,7 +2775,7 @@ describe("work_account_slice", () => {
 				if (refused) {
 					refusalReply = true;
 					refusalDoc = (await f.t.run(ctx => ctx.db.get(f.ledgerId)))!;
-					return Response.json({ message }, { status: 403 });
+					return Response.json({ message: "Refused", errorCode }, { status: 403 });
 				}
 				return Response.json({ ...transport, uploadUrlExpiresAt: now + 3600_000 });
 			}
@@ -2925,9 +2926,9 @@ describe("work_account_slice", () => {
 			ledgerCounts: { done: 2, pending: 0, given_up: 0, permissionHeld: 0 }, syncRequestId: null, syncWorkId: null });
 	});
 	test.each([
-		["plan", "This workspace's plan does not include file uploads"],
-		["storage", "This workspace has reached its storage limit"],
-	] as const)("an accepted %s refusal stays finalize-only through repeated pending replies", async (reason, message) => {
+		["plan", "plan_required"],
+		["storage", "storage_full"],
+	] as const)("an accepted %s refusal stays finalize-only through repeated pending replies", async (reason, errorCode) => {
 		let now = Date.now();
 		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		const f = await fixture({ fresh: true });
@@ -2940,7 +2941,7 @@ describe("work_account_slice", () => {
 			if (path.endsWith("/files/write")) return Response.json({ nodeId: "email-node" });
 			if (path.endsWith("/finalize")) return Response.json(complete ? committed : pending);
 			if (path.endsWith("/create-target") || path.endsWith("/remint")) {
-				return refused ? Response.json({ message }, { status: 403 }) : Response.json({ ...transport, uploadUrlExpiresAt: now + 3600_000 });
+				return refused ? Response.json({ message: "Refused", errorCode }, { status: 403 }) : Response.json({ ...transport, uploadUrlExpiresAt: now + 3600_000 });
 			}
 			if (path === "/object") return new Response(null, { status: 200 });
 			return Response.json({}, { status: 500 });
@@ -3035,7 +3036,7 @@ describe("work_account_slice", () => {
 			if (/\/messages\/(ab|ac)$/.test(path)) return Response.json({ ...source, id: path.split("/").at(-1),
 				internalDate: String(path.endsWith("/ab") ? Date.UTC(2026, 9, 5) : Date.UTC(2026, 10, 5)), payload: source.payload.parts[0] });
 			const file = body as { path: string };
-			return file.path.includes("/2026/10/") ? Response.json({ message: "Forbidden" }, { status: 403 }) : Response.json({ nodeId: "email-node" });
+			return file.path.includes("/2026/10/") ? Response.json({ message: "Forbidden", errorCode: "permission_denied" }, { status: 403 }) : Response.json({ nodeId: "email-node" });
 		});
 		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
 		expect(await f.t.run((ctx) => ctx.db.get(f.ledgerId))).toMatchObject({ permissionHeld: true, attempts: 0 });
@@ -3062,7 +3063,7 @@ describe("work_account_slice", () => {
 				const target = body as { idempotencyKey: string; targetKey: string };
 				const targets = runs.get(target.idempotencyKey) ?? new Set<string>();
 				targets.add(target.targetKey); runs.set(target.idempotencyKey, targets);
-				return targets.size > 16 ? Response.json({ message: "Target limit" }, { status: 409 }) : Response.json(committed);
+				return targets.size > 16 ? Response.json({ message: "Target limit", errorCode: "conflict" }, { status: 409 }) : Response.json(committed);
 			}
 			return Response.json({}, { status: 500 });
 		});
@@ -3082,7 +3083,7 @@ describe("work_account_slice", () => {
 			path.endsWith("/messages/ab")
 				? Response.json(source)
 				: path.endsWith("/files/write")
-					? Response.json({ message: "A file already exists at this path" }, { status: 409 })
+					? Response.json({ message: "A file already exists at this path", errorCode: "file_exists" }, { status: 409 })
 					: path.endsWith("/create-target")
 						? Response.json(committed)
 						: Response.json({}, { status: 500 }),
@@ -3141,7 +3142,7 @@ describe("work_account_slice", () => {
 					path: string;
 				};
 				const key = `${target.idempotencyKey}:${target.targetKey}`;
-				if (receipts.has(key)) return Response.json({ message: "A different target already exists" }, { status: 409 });
+				if (receipts.has(key)) return Response.json({ message: "A different target already exists", errorCode: "conflict" }, { status: 409 });
 				receipts.set(key, target);
 				return Response.json({ ...committed, path: target.path });
 			}
@@ -3274,7 +3275,7 @@ describe("work_account_slice", () => {
 				});
 				expect(body).toMatchObject({ path: expect.stringContaining(`invoice-${creates + 1}.pdf`) });
 				return creates === 1
-					? Response.json({ message: "A file already exists at this path" }, { status: 409 })
+					? Response.json({ message: "A file already exists at this path", errorCode: "file_exists" }, { status: 409 })
 					: Response.json(transport);
 			}
 			if (path === "/object") {
@@ -3297,10 +3298,10 @@ describe("work_account_slice", () => {
 		});
 	});
 	test.each([
-		[409, "This item is read-only."],
-		[409, "Request fingerprint does not match"],
-		[403, "Forbidden"],
-	])("reinstall refusal %i %s cannot advance the suffix or release its claim", async (status, message) => {
+		[409, "read_only"],
+		[409, "conflict"],
+		[403, "permission_denied"],
+	])("reinstall refusal %i %s cannot advance the suffix or release its claim", async (status, errorCode) => {
 		const f = await fixture({ held: true });
 		await f.t.run(async (ctx) => {
 			const row = (await ctx.db.get(f.ledgerId))!;
@@ -3313,7 +3314,7 @@ describe("work_account_slice", () => {
 			if (path.endsWith("/messages/ab")) return Response.json(source);
 			if (path.endsWith("/create-target")) {
 				deadline = (await f.t.run((ctx) => ctx.db.get(f.accountId)))!.permissionProbeNotBefore!;
-				return Response.json({ message }, { status });
+				return Response.json({ message: "Refused", errorCode }, { status });
 			}
 			return Response.json({}, { status: 500 });
 		});
@@ -3756,7 +3757,7 @@ describe("work_account_slice", () => {
 			now += 600;
 			if (path.endsWith("/messages/ab")) return Response.json({ ...source, payload: { ...source.payload, parts: [source.payload.parts[0]] } });
 			if (path.endsWith("/files/write")) return refused
-				? Response.json({ message: "A different conflict" }, { status: 409 }) : Response.json({ nodeId: "email-node" });
+				? Response.json({ message: "A different conflict", errorCode: "conflict" }, { status: 409 }) : Response.json({ nodeId: "email-node" });
 			if (path.endsWith("/history")) return Response.json({ historyId: "20", history: [{ id: "11", messagesAdded: [{ message: { id: "ab" } }] }] });
 			return Response.json({}, { status: 500 });
 		});
@@ -4190,7 +4191,7 @@ describe("permission guards", () => {
 				return Response.json({ ...actor, token: path.endsWith("/exchange") ? interactive : sealed,
 					expiresAt: now + 6 * 24 * 3600_000, scopes: ["files:write"] });
 			if (path.endsWith("/finalize")) {
-				if (!reinstalled) return Response.json({ message: "Forbidden" }, { status: 403 });
+				if (!reinstalled) return Response.json({ message: "Forbidden", errorCode: "permission_denied" }, { status: 403 });
 				return newTarget ? Response.json({ ...committed, path: replacementPath }) : Response.json({}, { status: 404 });
 			}
 			if (path.endsWith("/create-target")) {
@@ -4394,11 +4395,11 @@ describe("permission guards", () => {
 			now += 600;
 			if (path.endsWith("/messages/ab")) return Response.json(source);
 			if (path.endsWith("/files/write")) return deny && kind === "email"
-				? Response.json({ message: "Forbidden" }, { status: 403 }) : Response.json({ nodeId: "email-node" });
+				? Response.json({ message: "Forbidden", errorCode: "permission_denied" }, { status: 403 }) : Response.json({ nodeId: "email-node" });
 			if (path.endsWith("/create-target")) return Response.json({ ...transport, uploadUrlExpiresAt: now + 3600_000 });
 			if (path === "/object") return new Response(null, { status: 200 });
 			if (path.endsWith("/finalize")) return deny
-				? Response.json({ message: "Forbidden" }, { status: 403 }) : Response.json(committed);
+				? Response.json({ message: "Forbidden", errorCode: "permission_denied" }, { status: 403 }) : Response.json(committed);
 			if (path.endsWith("/history")) return Response.json({ historyId: "11", history: [] });
 			return Response.json({}, { status: 500 });
 		});
@@ -4518,15 +4519,15 @@ describe("permission guards", () => {
 			now += 600;
 			if (path.endsWith("/messages/ab")) return Response.json(source);
 			if (path.endsWith("/files/write")) {
-				if (deny && kind === "email") return Response.json({ message: "Forbidden" }, { status: 403 });
-				if (emailStored) return Response.json({ message: "A file already exists at this path" }, { status: 409 });
+				if (deny && kind === "email") return Response.json({ message: "Forbidden", errorCode: "permission_denied" }, { status: 403 });
+				if (emailStored) return Response.json({ message: "A file already exists at this path", errorCode: "file_exists" }, { status: 409 });
 				emailStored = true;
 				emailSaves++;
 				if (!deny && kind === "email") proofReply = true;
 				return Response.json({ nodeId: "email-node" });
 			}
 			if (path.endsWith("/create-target")) {
-				if (deny && kind === "pending create") return Response.json({ message: "Forbidden" }, { status: 403 });
+				if (deny && kind === "pending create") return Response.json({ message: "Forbidden", errorCode: "permission_denied" }, { status: 403 });
 				targetAccepted = true;
 				if (!deny && kind === "pending create") proofReply = true;
 				return Response.json({ ...transport, uploadUrlExpiresAt: now + 3600_000 });
@@ -4534,7 +4535,7 @@ describe("permission guards", () => {
 			if (path === "/object") { uploaded = true; return new Response(null, { status: 200 }); }
 			if (path.endsWith("/finalize")) {
 				if (!targetAccepted) return Response.json({}, { status: 404 });
-				if (deny && kind.includes("finalize")) return Response.json({ message: "Forbidden" }, { status: 403 });
+				if (deny && kind.includes("finalize")) return Response.json({ message: "Forbidden", errorCode: "permission_denied" }, { status: 403 });
 				const answer = pendingFinalize && !proofReply ? pending : uploaded ? committed : pending;
 				if (!deny && kind.includes("finalize")) proofReply = true;
 				return Response.json(answer);
@@ -4658,7 +4659,7 @@ describe("permission guards", () => {
 			if (path.endsWith("/create-target")) return Response.json({ ...transport, uploadUrlExpiresAt: now + 3600_000 });
 			if (path === "/object") return new Response(null, { status: 200 });
 			if (path.endsWith("/finalize")) {
-				if (deny) return Response.json({ message: "Forbidden" }, { status: 403 });
+				if (deny) return Response.json({ message: "Forbidden", errorCode: "permission_denied" }, { status: 403 });
 				if (proofBoundary) proofReply = true;
 				return Response.json(commit ? committed : pending);
 			}
@@ -4824,7 +4825,7 @@ describe("permission guards", () => {
 				rowId: peer,
 			}),
 		).toBeNull();
-		const calls = network(() => Response.json({ message: "Forbidden" }, { status: 403 }));
+		const calls = network(() => Response.json({ message: "Forbidden", errorCode: "permission_denied" }, { status: 403 }));
 		await f.t.action(internal.gmail_worker.work_account_slice, {
 			work: f.work,
 		});
@@ -5061,7 +5062,7 @@ describe("worker budget and completion", () => {
 			if (path.endsWith("/finalize")) {
 				if (reject) {
 					rejected = true;
-					return Response.json({ message: kind, ...(status === 429 ? { retryAfterMs: delay } : {}) }, { status });
+					return Response.json({ message: kind, errorCode: status === 429 ? "rate_limited" : status === 402 ? "insufficient_funds" : "internal_error", ...(status === 429 ? { retryAfterMs: delay } : {}) }, { status });
 				}
 				return Response.json(complete ? committed : pending);
 			}
@@ -5191,7 +5192,7 @@ describe("worker budget and completion", () => {
 			if (path.endsWith("/create-target")) return Response.json({ ...transport, uploadUrlExpiresAt: Date.now() + 3600_000 });
 			if (path.endsWith("/history")) return Response.json({ historyId: "11", history: [] });
 			if (path.endsWith("/finalize")) return reject
-				? Response.json({ message: kind, ...(status === 429 ? { retryAfterMs: delay } : {}) }, { status })
+				? Response.json({ message: kind, errorCode: status === 429 ? "rate_limited" : status === 402 ? "insufficient_funds" : "internal_error", ...(status === 429 ? { retryAfterMs: delay } : {}) }, { status })
 				: Response.json(complete ? committed : pending);
 			if (path === "/object") return new Response(null);
 			return Response.json({}, { status: 500 });
@@ -6233,7 +6234,7 @@ describe("idle wait", () => {
 		vi.spyOn(Date, "now").mockImplementation(() => (now = Math.ceil(now)));
 		const f = await fixture();
 		await f.t.run((ctx) => ctx.db.patch(f.accountId, { nextSliceKind: "history" }));
-		network((path) => (path.endsWith("/history") ? Response.json(empty_history) : Response.json({ message: "Unavailable" }, { status: 503 })));
+		network((path) => (path.endsWith("/history") ? Response.json(empty_history) : Response.json({ message: "Unavailable", errorCode: "internal_error" }, { status: 503 })));
 		now += 1000;
 		await f.t.action(internal.gmail_worker.work_account_slice, { work: f.work });
 		expect(await f.t.run((ctx) => ctx.db.get(f.accountId))).toMatchObject({ syncError: "press_temporary", lastSyncedAt: now });

@@ -72,12 +72,13 @@ export async function gmail_host_post<Path extends PressPath, T>(
 ): Promise<T> {
 	const response = await press_post(path, body, token);
 	if (response.status !== 200) {
+		// Use the host's errorCode as the reason. The message text is for people and can change.
 		const parsed = z
-			.object({ message: z.string(), retryAfterMs: z.number().finite().positive().optional() })
+			.object({ errorCode: z.string(), retryAfterMs: z.number().finite().positive().optional() })
 			.safeParse(response.body);
 		throw new gmail_HostError(
 			response.status,
-			parsed.success ? parsed.data.message : "invalid_response",
+			parsed.success ? parsed.data.errorCode : "invalid_response",
 			parsed.success ? (parsed.data.retryAfterMs ?? null) : null,
 		);
 	}
