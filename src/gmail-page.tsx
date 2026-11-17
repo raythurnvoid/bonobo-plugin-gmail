@@ -195,6 +195,9 @@ export function GmailPage({
         keep_start(null);
       for (const account of value.accounts) {
         const key = `${account.accountId}:${account.connectionGeneration}`;
+        // Repair keeps the generation. Forget the key once the grant works again, so a later refusal
+        // (for example after the next plugin update) is repaired too.
+        if (!account.canRepair) repaired.current.delete(key);
         if (account.canRepair && !repaired.current.has(key)) {
           repaired.current.add(key);
           try {

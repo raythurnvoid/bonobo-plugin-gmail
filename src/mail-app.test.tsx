@@ -73,6 +73,41 @@ describe("MailApp", () => {
 		expect(repairs[0].body).toMatchObject({ accountId: "account", expectedGeneration: 1 });
 	});
 
+	test("renews the grant again when it is refused again after a repair, while the page stays open", async () => {
+		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+		// Repair keeps the connection generation. A second plugin update refuses the new grant too.
+		let canRepair = true;
+		const requests: string[] = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL) => {
+				const path = new URL(String(input)).pathname;
+				requests.push(path);
+				if (path === "/page/status") {
+					const binding = { organizationId: "org", workspaceId: "workspace", installationId: "installation", actorUserId: "actor" };
+					return Response.json({ binding, canWrite: true, cursor: null, attempt: null, backfillMaxDays: null, accounts: [{ ...account, canRepair }] });
+				}
+				return Response.json(path === "/page/drafts/list" ? { drafts: [], cursor: null } : {});
+			}),
+		);
+		const client = {
+			getToken: async () => "plu_test",
+			refreshToken: async () => "plu_new",
+			fetchJson: async () => ({ status: 404, body: { message: "Not found" } }),
+			agent: { registerTool: () => () => {}, setContextProvider: () => () => {} },
+		} as unknown as BonoboClient;
+
+		render(<MailApp client={client} />);
+		await vi.waitFor(() => expect(requests).toContain("/page/press-repair"));
+
+		// The repair worked, so the next status read shows no repair.
+		canRepair = false;
+		await vi.advanceTimersByTimeAsync(60_000);
+		canRepair = true;
+		await vi.advanceTimersByTimeAsync(60_000);
+		await vi.waitFor(() => expect(requests.filter((path) => path === "/page/press-repair")).toHaveLength(2));
+	});
+
 	test("reads drafts again when the page becomes visible, not on a timer", async () => {
 		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
 		const paths: string[] = [];

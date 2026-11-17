@@ -226,6 +226,28 @@ describe("GmailPage", () => {
     expect(screen.queryByText("Finishing Bonobo Senate connection")).toBeNull();
     expect(screen.queryByText(/Checking for new mail/)).toBeNull();
   });
+  test("repairs the grant again when it is refused again after a repair", async () => {
+    // Repair keeps the connection generation. A second plugin update refuses the new grant too.
+    let canRepair = true;
+    const paths: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        paths.push(new URL(String(input)).pathname);
+        return Response.json({
+          ...status(),
+          accounts: [{ ...account(), syncStatus: "blocked", syncError: "press_reconnect_needed", canRepair }],
+        });
+      }),
+    );
+    render(<GmailPage client={client} />);
+    await settle();
+    canRepair = false;
+    await act(() => vi.advanceTimersByTimeAsync(60_000));
+    canRepair = true;
+    await act(() => vi.advanceTimersByTimeAsync(60_000));
+    expect(paths.filter((path) => path === "/page/press-repair")).toHaveLength(2);
+  });
   test("queued work cannot hide an old completed check", async () => {
     vi.stubGlobal(
       "fetch",

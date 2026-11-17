@@ -128,8 +128,8 @@ function compose_block(account: MailAccount) {
  * Press ties each grant to the installed version, and only an open plugin page can get a new one.
  * The Gmail page does the same, so sync keeps running for a member who only opens Mail. The sync
  * notices a refused grant only at its next Press write, which can be minutes after the page loaded,
- * so the new-mail check calls this too. Like the Gmail page, renew once per account connection while
- * the page is open (`repaired`).
+ * so the new-mail check calls this too. Like the Gmail page, renew once each time an account connection
+ * needs repair while the page is open (`repaired`).
  *
  * `newestEmailAt` maps each account id to the Gmail time of its newest saved email, or 0 before the
  * first one. Backfill saves older mail, so only newer mail makes it grow.
@@ -142,6 +142,9 @@ async function list_accounts(client: Pick<BonoboClient, "getToken" | "refreshTok
 		const page: z.infer<typeof gmail_status_response> = await gmail_page_post(client, "/page/status", { cursor }, gmail_status_response);
 		for (const account of page.accounts) {
 			const repairKey = `${account.accountId}:${account.connectionGeneration}`;
+			// Repair keeps the generation. Forget the key once the grant works again, so a later refusal
+			// (for example after the next plugin update) is repaired too.
+			if (!account.canRepair) repaired.delete(repairKey);
 			if (account.canRepair && !repaired.has(repairKey)) {
 				repaired.add(repairKey);
 				gmail_page_post(
@@ -211,7 +214,7 @@ export function MailApp(props: { client: BonoboClient }) {
 	const rowReadsActiveRef = useRef(0);
 	// The email the member asked for last. A slower read of an older click is dropped.
 	const requestedEmailRef = useRef<string | null>(null);
-	// Account connections whose Press grant this page already renewed.
+	// Account connections whose Press grant this page renewed and that still need repair.
 	const repairedRef = useRef(new Set<string>());
 
 	// The agent tools run outside React. Give them the latest view on every call.

@@ -652,24 +652,25 @@ async function je(e, t) {
     let a = await u(e, `/page/status`, { cursor: i }, l);
     for (let i of a.accounts) {
       let a = `${i.accountId}:${i.connectionGeneration}`;
-      (i.canRepair &&
-        !t.has(a) &&
-        (t.add(a),
-        u(
-          e,
-          `/page/press-repair`,
-          {
-            accountId: i.accountId,
-            expectedGeneration: i.connectionGeneration,
-            clientRequestId: c(),
-          },
-          s({}),
-        ).catch((e) => {
-          console.error(
-            `[MailApp.list_accounts] Failed to renew the Bonobo Senate grant`,
-            { error: e, accountId: i.accountId },
-          );
-        })),
+      (i.canRepair || t.delete(a),
+        i.canRepair &&
+          !t.has(a) &&
+          (t.add(a),
+          u(
+            e,
+            `/page/press-repair`,
+            {
+              accountId: i.accountId,
+              expectedGeneration: i.connectionGeneration,
+              clientRequestId: c(),
+            },
+            s({}),
+          ).catch((e) => {
+            console.error(
+              `[MailApp.list_accounts] Failed to renew the Bonobo Senate grant`,
+              { error: e, accountId: i.accountId },
+            );
+          })),
         i.syncStatus !== `disconnected` &&
           (n.push({
             accountId: i.accountId,

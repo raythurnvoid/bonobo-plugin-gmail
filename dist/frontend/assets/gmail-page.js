@@ -139,7 +139,9 @@ function v({ client: e }) {
       } else !r.attempt && R.current?.attemptId && q(null);
       for (let t of r.accounts) {
         let n = `${t.accountId}:${t.connectionGeneration}`;
-        if (t.canRepair && !V.current.has(n)) {
+        if (
+          (t.canRepair || V.current.delete(n), t.canRepair && !V.current.has(n))
+        ) {
           V.current.add(n);
           try {
             await l(
